@@ -112,7 +112,7 @@ export default async function AllProjectsReportPage() {
             {projects.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-3 py-6 text-center text-sm text-zinc-500">
-                  You aren’t a member of any project yet. Create one from the sidebar, or ask a project admin to invite you.
+                  You aren’t a member of any project yet. Create one from the sidebar, or ask a project’s Owner to invite you.
                 </td>
               </tr>
             ) : (
@@ -126,7 +126,7 @@ export default async function AllProjectsReportPage() {
                       </Link>
                     </th>
                     <td className={TD}>
-                      <ProjectStatusBadge status={p.status} note={p.statusNote} />
+                      <ProjectStatusBadge status={p.status} note={p.statusNote} unset={!update} />
                     </td>
                     <td className={`${TD} max-w-64 text-xs`}>
                       {update ? (

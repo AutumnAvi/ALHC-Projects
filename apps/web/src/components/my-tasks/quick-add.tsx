@@ -37,19 +37,27 @@ export function QuickAddBar({
   workWeek,
   placeholder = "Add a task — try “Send the report fri #Project @person every week”",
   compact = false,
+  initialText = "",
+  autoFocus = false,
+  onAdded,
 }: {
   projects: QuickAddProject[];
   people: QuickAddPerson[];
   workWeek?: readonly number[];
   placeholder?: string;
   compact?: boolean;
+  // Create → Task (Nov 10 audit, C75): text to start with (the current project's "#Name "), focus on
+  // open, and what to do once a task is added instead of the toast.
+  initialText?: string;
+  autoFocus?: boolean;
+  onAdded?: (taskId: string | null, summary: string) => void;
 }) {
   const id = useId();
   const today = useToday();
   const notify = useNotify();
   const [, run] = useServerAction();
-  const [text, setText] = useState("");
-  const [caret, setCaret] = useState(0);
+  const [text, setText] = useState(initialText);
+  const [caret, setCaret] = useState(initialText.length);
   const [ignored, setIgnored] = useState<string[]>([]);
   const [active, setActive] = useState(0);
   const [suggestionsClosed, setSuggestionsClosed] = useState(false);
@@ -123,7 +131,9 @@ export function QuickAddBar({
         what.person ? `with ${what.person.name} following` : null,
         what.dueOn && today ? `due ${checklistDueLabel(what.dueOn, today)}` : null,
       ].filter(Boolean);
-      notify(result.note ?? `Added “${what.title}”${where.length ? ` ${where.join(", ")}` : ""}`);
+      const summary = result.note ?? `Added “${what.title}”${where.length ? ` ${where.join(", ")}` : ""}`;
+      if (onAdded) onAdded(result.taskId ?? null, summary);
+      else notify(summary);
       return result;
     });
   }
@@ -150,6 +160,7 @@ export function QuickAddBar({
           aria-activedescendant={listOpen ? `${listId}-${Math.min(active, suggestions.length - 1)}` : undefined}
           aria-describedby={`${id}-hint`}
           autoComplete="off"
+          autoFocus={autoFocus}
           maxLength={1000}
           value={text}
           placeholder={placeholder}

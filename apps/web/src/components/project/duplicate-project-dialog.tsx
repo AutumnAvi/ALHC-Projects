@@ -14,7 +14,7 @@ const TOGGLES: { key: Toggle; label: string; hint: string; needsTasks?: boolean 
   { key: "dates", label: "Due and start dates", hint: "Times and repeat rules are not copied", needsTasks: true },
   { key: "rules", label: "Automations", hint: "Copied turned off; Slack and webhook URLs are not copied" },
   { key: "forms", label: "Forms", hint: "Copied closed to new responses" },
-  { key: "members", label: "Members", hint: "Same roles; owners join as admins and you stay the owner" },
+  { key: "members", label: "Members", hint: "Same roles; other owners join as Editors and you stay the owner" },
 ];
 
 // Sections, custom fields, saved views, and Req # settings are always copied. The copy fires no rules

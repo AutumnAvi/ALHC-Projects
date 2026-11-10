@@ -6,7 +6,7 @@
 // `ignored`). Pure and dependency-free so the unit tests can pin it. Dates are local days (YYYY-MM-DD).
 
 import { isoDate, parseDateInput, shiftDays, weekdayOf } from "./date-input";
-import { dateChips } from "./checklist";
+import { nextWeekWorkday, thisWeekDay } from "./checklist";
 import type { Frequency } from "./recurrence";
 import { titleMentionHandle } from "./title-mentions";
 
@@ -81,10 +81,12 @@ type Found = { kind: QuickAddPart["kind"]; start: number; end: number; apply: (o
 function findDate(text: string, ctx: Context, taken: (start: number, end: number) => boolean): Found | null {
   const { today } = ctx;
   const patterns: { re: RegExp; day: (m: RegExpExecArray) => string | null }[] = [
-    { re: /\b(?:due |by |on )?(today|tod)\b/gi, day: () => today },
-    { re: /\b(?:due |by |on )?(tomorrow|tmrw?|tmr)\b/gi, day: () => shiftDays(today, 1) },
-    { re: /\b(?:due |by )?(this week|end of (?:the )?week)\b/gi, day: () => dateChips(today, ctx.workWeek)[2].day },
-    { re: /\b(?:due |by )?next week\b/gi, day: () => nextWeekday(today, 1) },
+    // A date word followed by an apostrophe is part of the name ("Draft today's newsletter").
+    { re: /\b(?:due |by |on )?(today|tod)\b(?!['’])/gi, day: () => today },
+    { re: /\b(?:due |by |on )?(tomorrow|tmrw?|tmr)\b(?!['’])/gi, day: () => shiftDays(today, 1) },
+    // "This week" / "next week": the workspace's workdays, as the checklist's chips (checklist.ts).
+    { re: /\b(?:due |by )?(this week|end of (?:the )?week)\b(?!['’])/gi, day: () => thisWeekDay(today, ctx.workWeek) },
+    { re: /\b(?:due |by )?next week\b(?!['’])/gi, day: () => nextWeekWorkday(today, ctx.workWeek) },
     { re: /\b(?:due |by )?in (\d{1,3}|a|an|one|two|three) (day|days|week|weeks|month|months)\b/gi, day: (m) => {
         const words: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3 };
         const n = words[m[1].toLowerCase()] ?? Number(m[1]);
@@ -100,7 +102,7 @@ function findDate(text: string, ctx: Context, taken: (start: number, end: number
     { re: new RegExp(`\\b(?:due |by |on )?(${MONTH_WORD}\\.? \\d{1,2}(?:st|nd|rd|th)?(?:,? \\d{4})?)\\b`, "gi"), day: (m) => futureDay(m[1], today) },
     { re: new RegExp(`\\b(?:due |by |on )?(\\d{1,2}(?:st|nd|rd|th)? ${MONTH_WORD}\\.?(?: \\d{4})?)\\b`, "gi"), day: (m) => futureDay(m[1], today) },
     { re: /(?:^|\s)((?:due |by |on )?(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?))(?=$|[\s.,;:!?])/g, day: (m) => futureDay(m[2], today) },
-    { re: new RegExp(`\\b(?:due |by |on )?(?:next |this )?${WEEKDAY_WORD}\\b`, "gi"), day: (m) => {
+    { re: new RegExp(`\\b(?:due |by |on )?(?:next |this )?${WEEKDAY_WORD}\\b(?!['’])`, "gi"), day: (m) => {
         const i = weekdayIndex(m[1]);
         return i < 0 ? null : nextWeekday(today, i, /\bthis\b/i.test(m[0]));
       } },

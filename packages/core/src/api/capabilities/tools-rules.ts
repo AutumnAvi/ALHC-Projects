@@ -293,7 +293,7 @@ async function portfolioAdmin(env: ToolEnv, portfolioId: string, what: string) {
   const p = maybe(await env.ctx.db.from("portfolios").select("id, name, workspace_id").eq("id", portfolioId).is("deleted_at", null).maybeSingle(), "portfolio");
   if (!p || p.workspace_id !== env.workspaceId) refuse(`${what}: that portfolio isn’t in the Testing data workspace`);
   const role = (await env.ctx.db.rpc("portfolio_role", { target_portfolio: portfolioId })).data as string | null;
-  if ((PORTFOLIO_RANK[role ?? ""] ?? 0) < PORTFOLIO_RANK.admin) refuse(`${what}: only Owners and Admins of “${p!.name}” change its automations`);
+  if ((PORTFOLIO_RANK[role ?? ""] ?? 0) < PORTFOLIO_RANK.editor) refuse(`${what}: only Owners and Editors of “${p!.name}” change its automations`);
   return p!;
 }
 async function portfolioRuleArg(env: ToolEnv, value: unknown, what: string) {
@@ -314,7 +314,7 @@ async function verifyPortfolioAdmin(ctx: ApiContext, ws: string, op: StagedOp) {
   const p = maybe(await ctx.db.from("portfolios").select("workspace_id").eq("id", portfolioId).maybeSingle(), "portfolio");
   if (!p || p.workspace_id !== ws) throw new ApiError("forbidden", "That portfolio isn’t in the Testing data workspace");
   const role = (await ctx.db.rpc("portfolio_role", { target_portfolio: portfolioId })).data as string | null;
-  if ((PORTFOLIO_RANK[role ?? ""] ?? 0) < PORTFOLIO_RANK.admin) throw new ApiError("forbidden", "Only the portfolio’s Owners and Admins change its automations");
+  if ((PORTFOLIO_RANK[role ?? ""] ?? 0) < PORTFOLIO_RANK.editor) throw new ApiError("forbidden", "Only the portfolio’s Owners and Editors change its automations");
 }
 const portfolioInput = (rule: AiRuleBody, enabled: boolean, tz: string | undefined) => ({ ...myInput(rule, enabled, tz) });
 

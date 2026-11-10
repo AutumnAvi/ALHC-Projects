@@ -9,6 +9,7 @@ import {
   probeUrl,
   readShellInfo,
   retryDelaySeconds,
+  unreachableText,
 } from "../src/launcher";
 
 const APP = "https://alhc-projects.vercel.app";
@@ -66,4 +67,12 @@ test("an engine without :has(), color-mix(), or Safari 16.4's JavaScript is too 
     }),
     true,
   );
+});
+
+test("the can't-reach screen counts down and blames the internet only when offline", () => {
+  assert.equal(unreachableText(true, 4).title, "Can’t reach the ALHC Projects server");
+  assert.match(unreachableText(true, 4).detail, /Trying again in 4 seconds\./);
+  assert.match(unreachableText(true, 1).detail, /in 1 second\./);
+  assert.match(unreachableText(false, 2).detail, /internet connection/);
+  assert.equal(unreachableText(false, 2).title, "You’re offline");
 });

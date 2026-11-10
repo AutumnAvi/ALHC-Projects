@@ -302,8 +302,14 @@ export function WorkloadModeSwitch({ mode }: { mode: "people" | "grid" }) {
           const params = new URLSearchParams(searchParams.toString());
           params.delete("task");
           params.delete("person");
-          if (next === "grid") params.set("view", "grid");
-          else params.delete("view");
+          // "Day by day" opens day columns (the grid's own default is weeks; Nov 10 audit, C58).
+          if (next === "grid") {
+            params.set("view", "grid");
+            params.set("wl", "day");
+          } else {
+            params.delete("view");
+            params.delete("wl");
+          }
           const query = params.toString();
           startNavigation(() => router.push(query ? `${pathname}?${query}` : pathname, { scroll: false }));
         }}

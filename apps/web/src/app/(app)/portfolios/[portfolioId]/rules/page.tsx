@@ -27,7 +27,7 @@ export default async function PortfolioRulesPage({ params }: PageProps<"/portfol
       rules={rules}
       runs={runs}
       ctx={ctx}
-      canEdit={hasPortfolioRole(role, "admin")}
+      canEdit={hasPortfolioRole(role, "editor")}
       canRun={hasPortfolioRole(role, "editor")}
     />
   );

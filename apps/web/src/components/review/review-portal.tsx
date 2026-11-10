@@ -88,6 +88,7 @@ import { type ReviewProgress } from "@alhc/core/api/reviews/model";
 import { uploadReviewFile } from "@alhc/core/api/client/storage";
 import { createApiContext } from "@alhc/core/api/core/context";
 import { createAnonBrowserClient } from "@/lib/supabase/anon-browser";
+import { BRAND_LOGO_ALT } from "@/lib/email-design";
 
 // Oct 26 notes (batch 3), reworked in Oct 27 notes (batch 5): the public review page (no sign-in; the
 // link's token is the only key). One file at a time ("File 2 of 5", Previous / Next, a file list), click to
@@ -100,6 +101,9 @@ import { createAnonBrowserClient } from "@/lib/supabase/anon-browser";
 // goes through the token-checked Server Actions and routes.
 
 type SentAnswer = { decision: ReviewStatus; note: string | null; pins: ReviewPin[]; fileResults: ReviewFileResult[] | null };
+
+// C33 (Nov 10): the send buttons are the brand's orange, like the review emails' buttons.
+const BRAND_BUTTON = "bg-[#ff6800] hover:bg-[#e65e00]";
 
 const STATUS_WORDS: Record<FileStatus, string> = {
   approved: "Approved",
@@ -676,7 +680,7 @@ export function ReviewPortal({
                   {confirmQuestion(review.assets, work)} You can’t change it afterwards.
                 </p>
                 <div className="flex gap-2">
-                  <button type="button" disabled={pending} onClick={send} className="btn-primary h-10 flex-1 px-3">
+                  <button type="button" disabled={pending} onClick={send} className={`btn-primary h-10 flex-1 px-3 ${BRAND_BUTTON}`}>
                     <Check className="size-4" aria-hidden />
                     {pending ? "Sending…" : "Yes, send it"}
                   </button>
@@ -695,7 +699,7 @@ export function ReviewPortal({
                     disabled={pending || Boolean(problem)}
                     aria-describedby={problem ? problemId : undefined}
                     onClick={askToSend}
-                    className="btn-primary h-10 w-full px-3"
+                    className={`btn-primary h-10 w-full px-3 ${BRAND_BUTTON}`}
                   >
                     <Send className="size-4" aria-hidden />
                     {submitLabel(decision)}
@@ -746,11 +750,11 @@ function ReviewHeader({
   onHowItWorks: () => void;
 }) {
   return (
-    <header className="border-b border-zinc-200 bg-white">
+    <header className="border-b border-t-4 border-b-zinc-200 border-t-[#751c1b] bg-white">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-4">
         {logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- the workspace's public logo
-          <img src={logoUrl} alt={review.workspaceName ?? "Logo"} className="h-8 w-auto max-w-40 object-contain" />
+          // eslint-disable-next-line @next/next/no-img-element -- the Autumn Lake brand logo (C33)
+          <img src={logoUrl} alt={BRAND_LOGO_ALT} className="h-8 w-auto max-w-40 object-contain" />
         ) : (
           <span className="text-sm font-semibold text-zinc-900">{review.workspaceName ?? "Review"}</span>
         )}

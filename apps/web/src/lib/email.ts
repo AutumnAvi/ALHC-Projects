@@ -51,6 +51,22 @@ import { WORKSPACE_ASSETS_BUCKET } from "@alhc/core/workspace";
 
 // The signed-in task link (never public or tokenized): the recipient's project, else My Tasks for a
 // private task. Null without a known app origin.
+// C71 (Nov 10): "Tue, Nov 10" for a YYYY-MM-DD date ("Tue, Nov 10, 2027" in another year), null otherwise.
+export function emailDay(value: string | null, now = new Date()): string | null {
+  const m = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(date.getTime())) return null;
+  const sameYear = date.getUTCFullYear() === now.getUTCFullYear();
+  return date.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+    timeZone: "UTC",
+  });
+}
+
 function taskLink(row: OutboxRow, projectId: string | null): string | null {
   const origin = backgroundOrigin();
   if (!origin || !row.task_id) return null;
@@ -328,7 +344,10 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null, 
       rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
       break;
     case "approval_decided":
-      heading = `${actor} ${DECISIONS[str(data.status) ?? ""] ?? "decided an approval on"} ${quoted}`;
+      // Nov 10 batch 36: an external reviewer's answer (a review check) is never worded as the approval.
+      heading = str(data.review_check_id)
+        ? `${actor} ${str(data.status) === "approved" ? "approved the external review of" : "requested changes in the external review of"} ${quoted}`
+        : `${actor} ${DECISIONS[str(data.status) ?? ""] ?? "decided an approval on"} ${quoted}`;
       rows.push({ label: "Project", value: context ?? "Private task (My tasks)" });
       break;
     case "mention":
@@ -393,6 +412,9 @@ export function renderEmail(
     requestWrap?: boolean;
     taskNumbers?: EmailNumber[] | null;
     approvalFiles?: ApprovalEmailFile[];
+    // C17 (Nov 10): the task's link for an automation email to a teammate (internal design), from the
+    // design context's project; else the My tasks link.
+    taskHref?: string | null;
   } = {},
 ): Rendered {
   const design = options.design ?? defaultAppliedDesign(guessDesignKind(row));
@@ -411,6 +433,11 @@ export function renderEmail(
   const message = str(p.message) === null ? null : resolveTaskLinkMarkers(str(p.message)!, origin);
   row = row.subject ? { ...row, subject: resolveTaskLinkMarkers(row.subject, origin) } : row;
   const reference = labelPrefix(prefix, wrap);
+  // C17: an automation email to a workspace person (the internal design) gets an Open task button.
+  const teammate = design.kind === "internal";
+  const openTask = teammate ? (options.taskHref ?? taskLink(row, null)) : null;
+  const action = openTask ? { label: "Open task", href: openTask } : null;
+  const dueOn = emailDay(str(p.due_on));
 
   switch (row.template) {
     case "form_confirmation": {
@@ -439,9 +466,9 @@ export function renderEmail(
         [message ?? `“${taskTitle}” is due tomorrow.`],
         [
           ...(str(p.project_name) ? [{ label: "Project", value: str(p.project_name)! }] : []),
-          ...(str(p.due_on) ? [{ label: "Due", value: str(p.due_on)! }] : []),
+          ...(dueOn ? [{ label: "Due", value: dueOn }] : []),
         ],
-        { subject: row.subject ?? `${reference}Due tomorrow: ${taskTitle}`, design },
+        { subject: row.subject ?? `${reference}Due tomorrow: ${taskTitle}`, design, action },
       );
     case "requester_update":
     case "custom":
@@ -451,9 +478,11 @@ export function renderEmail(
         ...(str(p.section_name) && row.template === "requester_update" ? [{ label: "Status", value: str(p.section_name)! }] : []),
         ...(field && str(field.name) && str(field.value) ? [{ label: str(field.name)!, value: str(field.value)! }] : []),
       ];
-      return layout(label ? `Update on ${label}` : "Update on your request", [message ?? `There's an update on “${taskTitle}”.`], rows, {
+      const heading = label ? `Update on ${label}` : teammate ? `Update on “${taskTitle}”` : "Update on your request";
+      return layout(heading, [message ?? `There's an update on “${taskTitle}”.`], rows, {
         subject: row.subject ?? `${reference}Update on ${taskTitle}`,
         design,
+        action,
       });
     }
   }
@@ -581,11 +610,11 @@ export function emailLogoUrl(path: string): string | null {
 async function designFor(
   row: OutboxRow,
   ctx: ApiContext,
-): Promise<{ design: AppliedDesign; requestWrap: boolean; taskNumbers: EmailNumber[] | null }> {
+): Promise<{ design: AppliedDesign; requestWrap: boolean; taskNumbers: EmailNumber[] | null; taskHref: string | null }> {
   const fallback = guessDesignKind(row);
   const context = await emailDesignContext(ctx, row.id);
   if (!context) {
-    return { design: defaultAppliedDesign(fallback), requestWrap: true, taskNumbers: null };
+    return { design: defaultAppliedDesign(fallback), requestWrap: true, taskNumbers: null, taskHref: null };
   }
   const kind = isEmailDesignKind(context.kind) ? context.kind : fallback;
   const v = context.values && typeof context.values === "object" && !Array.isArray(context.values) ? (context.values as Record<string, unknown>) : {};
@@ -621,7 +650,13 @@ async function designFor(
   );
   // The issuing project's bracket setting (absent before Oct 19's migration: brackets, as before), and the
   // numbers the email may show (Oct 29 notes, 55b; absent = the label it was queued with).
-  return { design, requestWrap: v.request_wrap !== false, taskNumbers: emailNumbersFrom(v.task_numbers) };
+  const taskHref =
+    kind === "internal" && origin && taskId
+      ? projectId
+        ? `${origin}/projects/${projectId}?task=${taskId}`
+        : `${origin}/my-tasks?task=${taskId}`
+      : null;
+  return { design, requestWrap: v.request_wrap !== false, taskNumbers: emailNumbersFrom(v.task_numbers), taskHref };
 }
 
 // A sample email of a kind with a design, for the editor's live preview and "Send me a test", rendered
@@ -855,7 +890,7 @@ async function deliver(
   let email: Rendered;
   let headers: Record<string, string> = {};
   let reply: string | null = null;
-  const { design, requestWrap, taskNumbers } = await designFor(row, ctx);
+  const { design, requestWrap, taskNumbers, taskHref } = await designFor(row, ctx);
   if (scheduled) {
     const rendered = await renderScheduled(row, scheduled, ctx, design);
     if ("error" in rendered) return { outcome: "error", error: rendered.error };
@@ -864,7 +899,7 @@ async function deliver(
   } else {
     reply = await replyTo(row, ctx);
     const approvalFiles = await approvalEmailFiles(row, ctx);
-    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers, approvalFiles });
+    email = renderEmail(row, { canReply: Boolean(reply), design, requestWrap, taskNumbers, approvalFiles, taskHref });
   }
   if (!isEmailConfigured()) {
     const template =

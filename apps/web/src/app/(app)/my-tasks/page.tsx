@@ -13,7 +13,7 @@ import { listMyTaskLayout, listSubtaskTrees } from "@/lib/data";
 import { type MyTask } from "@alhc/core/api/my-tasks/model";
 import { loadAppShell, loadMyTasksScreen } from "@/lib/screen-loaders";
 import { myTaskRuleContextFrom } from "@alhc/core/api/screens/model";
-import { MY_TASKS_LAYOUT_COOKIE, myTasksLayoutOf } from "@alhc/core/my-tasks";
+import { MY_TASKS_LAYOUT_COOKIE, isMyTasksLayout, myTasksLayoutOf } from "@alhc/core/my-tasks";
 import { permissionsFor } from "@alhc/core/permissions";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@alhc/core/workload";
@@ -21,10 +21,12 @@ import { todayIn } from "@alhc/core/workload";
 export const metadata: Metadata = { title: "My tasks" };
 
 export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks">) {
-  const { task } = await searchParams;
+  const { task, view } = await searchParams;
   const openTaskId = typeof task === "string" ? task : null;
   const member = await requireMember();
-  const layout = myTasksLayoutOf((await cookies()).get(MY_TASKS_LAYOUT_COOKIE)?.value);
+  // `?view=` opens one view whatever the cookie says (Home's "Set a date" needs the checklist; the link
+  // also saves the cookie, so the view stays the one the person picked from then on).
+  const layout = isMyTasksLayout(view) ? view : myTasksLayoutOf((await cookies()).get(MY_TASKS_LAYOUT_COOKIE)?.value);
 
   if (layout === "checklist") {
     const timeZone = await getViewerTimeZone();

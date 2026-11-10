@@ -132,7 +132,7 @@ export function PortfolioReport({
                     </th>
                     {showVia ? <td className={`${TD} text-zinc-500`}>{p.via ?? "—"}</td> : null}
                     <td className={TD}>
-                      <ProjectStatusBadge status={p.status} note={p.statusNote} />
+                      <ProjectStatusBadge status={p.status} note={p.statusNote} unset={!p.latest} />
                     </td>
                     <td className={`${TD} max-w-64 text-xs`}>
                       {p.latest ? (

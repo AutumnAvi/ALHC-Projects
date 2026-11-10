@@ -13,6 +13,7 @@ import {
   Copy,
   CopyPlus,
   ExternalLink,
+  Eye,
   FileInput,
   GitBranch,
   Globe,
@@ -49,6 +50,8 @@ import {
   branchOptions,
   brokenBranches,
   clearedBranchesMessage,
+  lostBranches,
+  lostBranchesMessage,
   fieldAccepts,
   isAnswerable,
   isBranchSource,
@@ -128,7 +131,7 @@ export function FormEditor({
   batch4: boolean;
   // Real features 1's database update: Attachment questions.
   real1: boolean;
-  // Admin+ (forms are managed by project admins); everyone else gets a read-only editor.
+  // Owners and Editors build forms (Nov 10); everyone else gets a read-only editor.
   canEdit: boolean;
   closeHref: string;
 }) {
@@ -153,6 +156,8 @@ export function FormEditor({
   // question it would sit before; null = the end; undefined = nowhere yet).
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropBefore, setDropBefore] = useState<string | null | undefined>(undefined);
+  // C107 (Nov 10): below 1024 px the preview and the editing side take turns (the header's Preview button).
+  const [narrowPreview, setNarrowPreview] = useState(false);
   // Read by the Escape handler: set as soon as a drag starts (the faded card waits a frame).
   const dragRef = useRef<string | null>(null);
   // Screen readers hear where a moved question went.
@@ -216,7 +221,35 @@ export function FormEditor({
     setDirty(true);
   }
 
+  // C36: a change that clears branch questions (a delete, a choice question changed to another type)
+  // says so, with Undo while nothing else changed since.
+  function commitWithUndo(next: FormQuestion[], message: string | null) {
+    const previous = questions;
+    const result = normalizeQuestions(next, fields);
+    setQuestions(result);
+    setDirty(true);
+    const lost = lostBranches(previous, result);
+    const text = lost.length ? (message ? `${message} ${lostBranchesMessage(lost)}` : lostBranchesMessage(lost)) : message;
+    if (!text) return;
+    notify(text, {
+      label: "Undo",
+      onClick: () => {
+        if (questionsRef.current !== result) return;
+        setQuestions(previous);
+        setDirty(true);
+      },
+    });
+  }
+
   function updateQuestion(id: string, next: FormQuestion) {
+    const before = questions.find((q) => q.id === id);
+    if (before && before.type !== next.type) {
+      commitWithUndo(
+        questions.map((q) => (q.id === id ? next : q)),
+        null,
+      );
+      return;
+    }
     changeQuestions((current) => current.map((q) => (q.id === id ? next : q)));
   }
 
@@ -310,7 +343,11 @@ export function FormEditor({
   }
 
   function removeQuestion(id: string) {
-    changeQuestions((current) => current.filter((q) => q.id !== id));
+    const removed = questions.find((q) => q.id === id);
+    commitWithUndo(
+      questions.filter((q) => q.id !== id),
+      `Deleted “${removed?.label.trim() || "Untitled question"}”.`,
+    );
     if (selectedId === id) setSelectedId(null);
   }
 
@@ -396,13 +433,24 @@ export function FormEditor({
             <p className="flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
               <span className="inline-flex items-center gap-1" data-tooltip="No sign-in needed. Signed-in people see their email filled in.">
                 <Globe className="size-3.5" aria-hidden />
-                Who can submit: Anyone with the link
+                Who can submit: {verifiedOnly ? "Verified-domain emails with the link" : "Anyone with the link"}
               </span>
               <span>{accepting ? "Taking responses" : "Not taking responses: visitors see a closed notice"}</span>
               {dirty ? <span className="text-amber-700">Unsaved changes</span> : null}
             </p>
           </div>
           {canEdit ? <FormLiveSwitch live={accepting} disabled={livePending} onChange={changeLive} /> : null}
+          {canEdit ? (
+            <button
+              type="button"
+              aria-pressed={narrowPreview}
+              onClick={() => setNarrowPreview((on) => !on)}
+              className="btn-ghost h-8 lg:hidden"
+            >
+              <Eye className="size-4" aria-hidden />
+              {narrowPreview ? "Edit" : "Preview"}
+            </button>
+          ) : null}
           <a href={publicUrl} target="_blank" rel="noreferrer" className="btn-ghost h-8">
             <ExternalLink className="size-4" aria-hidden />
             View form
@@ -422,8 +470,10 @@ export function FormEditor({
             {() => (
               <div className="flex flex-col gap-3">
                 <p className="text-xs text-zinc-500">
-                  Anyone with the link can submit while the form accepts responses. Link it from a request hub page, or
-                  embed it.
+                  {verifiedOnly
+                    ? "Anyone with the link whose email is on a verified domain can submit while the form accepts responses."
+                    : "Anyone with the link can submit while the form accepts responses."}{" "}
+                  Link it from a request hub page, or embed it.
                 </p>
                 <CopyRow label="Form link" value={publicUrl} onCopy={() => copy(publicUrl, "Form link")} />
                 <CopyRow label="Embed code" value={embedSnippet} multiline onCopy={() => copy(embedSnippet, "Embed code")} />
@@ -431,7 +481,7 @@ export function FormEditor({
                   <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
                     {canEdit
                       ? "The form is off: turn it on with the Live switch at the top before sharing it."
-                      : "The form is off: visitors see a closed notice until a project admin turns it on."}
+                      : "The form is off: visitors see a closed notice until one of the project’s Owners or Editors turns it on."}
                   </p>
                 ) : null}
               </div>
@@ -462,13 +512,14 @@ export function FormEditor({
         <div className={`grid min-h-0 flex-1 ${canEdit ? "lg:grid-cols-[minmax(0,1fr)_28rem]" : ""}`}>
           <section
             aria-label="Preview"
-            className={`min-h-0 overflow-y-auto bg-zinc-100 px-6 py-8 ${canEdit ? "hidden lg:block" : "block"}`}
+            className={`min-h-0 overflow-y-auto bg-zinc-100 px-6 py-8 ${canEdit ? (narrowPreview ? "block" : "hidden lg:block") : "block"}`}
           >
             <Preview
               projectId={form.projectId}
               title={title}
               description={description}
               accepting={accepting}
+              sendConfirmation={sendConfirmation}
               questions={questions}
               visible={visible}
               answers={answers}
@@ -488,7 +539,10 @@ export function FormEditor({
           </section>
           {/* Nov 1 notes (batch 11): below Admin the editing side isn't shown at all: the form reads as its preview. */}
           {canEdit ? (
-            <section aria-label="Edit the form" className="flex min-h-0 flex-col border-l border-zinc-200">
+            <section
+              aria-label="Edit the form"
+              className={`min-h-0 flex-col border-l border-zinc-200 ${narrowPreview ? "hidden lg:flex" : "flex"}`}
+            >
               <div role="tablist" aria-label="Form editor" className="tab-strip shrink-0 gap-1 px-4">
                 {(
                   [
@@ -641,6 +695,7 @@ function Preview({
   title,
   description,
   accepting,
+  sendConfirmation,
   questions,
   visible,
   answers,
@@ -652,6 +707,7 @@ function Preview({
   title: string;
   description: string;
   accepting: boolean;
+  sendConfirmation: boolean;
   questions: FormQuestion[];
   visible: Set<string>;
   answers: FormAnswers;
@@ -675,7 +731,9 @@ function Preview({
             Your email <span className="text-red-600">*</span>
           </label>
           <input id="preview-email" type="email" disabled placeholder="name@example.com" className="field h-auto w-full py-2" />
-          <p className="text-xs text-zinc-500">Asked on every form; confirmations and updates go here.</p>
+          <p className="text-xs text-zinc-500">
+            {sendConfirmation ? "Asked on every form; the confirmation email goes here." : "Asked on every form, so your team can follow up."}
+          </p>
         </div>
         <div className="mt-5 flex flex-col gap-2">
           {questions.map((question) => {
@@ -1278,7 +1336,7 @@ function MappingSelect({
         </p>
       ) : null}
       {question.maps_to?.target === "section" || (question.maps_to?.target === "field" && isChoice(question.type)) ? (
-        <p className="mt-1 text-xs text-zinc-500">Options match by id first, then by name.</p>
+        <p className="mt-1 text-xs text-zinc-500">Each option fills in the {question.maps_to?.target === "section" ? "section" : "field option"} with the same name.</p>
       ) : null}
     </div>
   );

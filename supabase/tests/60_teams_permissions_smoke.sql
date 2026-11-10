@@ -182,17 +182,17 @@ begin
   update public.projects set name = 'Renamed by editor' where id = p;
   get diagnostics affected = row_count;
   assert affected = 0, 'editor cannot change project settings';
-  begin
-    insert into public.rules (project_id, name, trigger_type, actions)
-    values (p, 'Editor rule', 'task_created', '[{"type": "add_followers", "people": ["assignee"]}]');
-    raise exception 'editor rule insert should fail';
-  exception when insufficient_privilege then null;
-  end;
-  begin
-    insert into public.forms (project_id, title) values (p, 'Editor form');
-    raise exception 'editor form insert should fail';
-  exception when insufficient_privilege then null;
-  end;
+  -- Nov 10 batch 36: Owners and Editors build automations and forms (removed again so later checks see
+  -- the same project).
+  insert into public.rules (project_id, name, trigger_type, actions)
+  values (p, 'Editor rule', 'task_created', '[{"type": "add_followers", "people": ["assignee"]}]');
+  update public.rules set deleted_at = now() where project_id = p and name = 'Editor rule';
+  get diagnostics affected = row_count;
+  assert affected = 1, 'editor builds and removes an automation';
+  insert into public.forms (project_id, title) values (p, 'Editor form');
+  update public.forms set deleted_at = now() where project_id = p and title = 'Editor form';
+  get diagnostics affected = row_count;
+  assert affected = 1, 'editor builds and removes a form';
   begin
     perform public.add_project_member(p, 'nonmember@example.com', 'viewer');
     raise exception 'editor invite should fail';
@@ -436,10 +436,11 @@ begin
     'the form submission landed in the project';
 
   perform public.transfer_project_ownership(p, '88888888-8888-4888-8888-888888888888');
-  assert public.project_role(p) = 'admin', 'the previous owner steps down to admin';
+  assert public.project_role(p) = 'editor', 'the previous owner stays on as an editor (Nov 10 batch 36)';
+  -- An Editor (Nov 10 batch 36): RLS leaves the row alone, or the owner guard refuses.
   begin
     update public.projects set deleted_at = now() where id = p;
-    raise exception 'a former owner cannot delete the project';
+    assert not exists (select 1 from public.projects where id = p and deleted_at is not null), 'a former owner cannot delete the project';
   exception when insufficient_privilege then null;
   end;
 end $$;

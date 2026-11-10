@@ -3,6 +3,8 @@
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MAX_RECENTS, type RecentRef, type ShellDialog } from "@alhc/core/shell";
+import { requestOpenShare } from "@/lib/open-share";
+import { DEFAULT_WORK_WEEK } from "@alhc/core/workdays";
 import { SIDEBAR_COOKIE, serializeSidebarPrefs, type SidebarGroup, type SidebarPrefs } from "@/lib/sidebar-prefs";
 
 export type ShellMember = { id: string; name: string; email: string };
@@ -13,6 +15,8 @@ type Shell = {
   workspace: { name: string; logoUrl: string | null };
   // Nov 2 notes (batch 13, note 88): whether the workspace uses Goals (off hides them in the shell).
   goalsEnabled: boolean;
+  // The workspace's workdays (Sunday–Thursday by default): "This week" / "Next week" date picks follow them.
+  workWeek: readonly number[];
   // Sidebar: hidden or shown on wide screens, open groups (remembered in a cookie), and the drawer on
   // narrow screens (open only on the page it was opened from, so following a link closes it).
   sidebar: SidebarPrefs;
@@ -34,6 +38,7 @@ export function ShellProvider({
   isWorkspaceAdmin,
   workspace,
   goalsEnabled = true,
+  workWeek = DEFAULT_WORK_WEEK,
   initialSidebar,
   children,
 }: {
@@ -41,6 +46,7 @@ export function ShellProvider({
   isWorkspaceAdmin: boolean;
   workspace: { name: string; logoUrl: string | null };
   goalsEnabled?: boolean;
+  workWeek?: readonly number[];
   initialSidebar: SidebarPrefs;
   children: ReactNode;
 }) {
@@ -60,6 +66,7 @@ export function ShellProvider({
       isWorkspaceAdmin,
       workspace,
       goalsEnabled,
+      workWeek,
       sidebar,
       setSidebarCollapsed: (collapsed) => save({ ...sidebar, collapsed }),
       setGroupOpen: (group, open) => save({ ...sidebar, groups: { ...sidebar.groups, [group]: open } }),
@@ -72,7 +79,7 @@ export function ShellProvider({
       },
       closeDialog: () => setDialogOn(null),
     }),
-    [member, isWorkspaceAdmin, workspace, goalsEnabled, sidebar, save, drawerOn, dialogOn, pathname],
+    [member, isWorkspaceAdmin, workspace, goalsEnabled, workWeek, sidebar, save, drawerOn, dialogOn, pathname],
   );
 
   return <ShellContext.Provider value={value}>{children}</ShellContext.Provider>;
@@ -82,6 +89,22 @@ export function useShell(): Shell {
   const shell = useContext(ShellContext);
   if (!shell) throw new Error("useShell() needs the app shell (ShellProvider)");
   return shell;
+}
+
+// Invite (sidebar, Create menu, avatar menu): workspace admins invite people to the workspace; anyone else
+// on a project page gets that project's Share (adding people is per project), else the Invite dialog
+// explains where to do it (Nov 10 audit, C13).
+export function useOpenInvite(): () => void {
+  const { isWorkspaceAdmin, openDialog } = useShell();
+  return () => {
+    if (!isWorkspaceAdmin && requestOpenShare()) return;
+    openDialog({ kind: "invite" });
+  };
+}
+
+// The workspace's workdays where the shell is mounted, else the default week (a component test).
+export function useWorkWeek(): readonly number[] {
+  return useContext(ShellContext)?.workWeek ?? DEFAULT_WORK_WEEK;
 }
 
 // The signed-in person's id where the shell is mounted (null outside it, e.g. a component test).

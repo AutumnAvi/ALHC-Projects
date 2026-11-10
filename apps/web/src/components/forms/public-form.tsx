@@ -167,7 +167,11 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
           aria-describedby={errors.email ? "form-email-error" : undefined}
           className={inputClass}
         />
-        <p className="text-xs text-zinc-500">We&apos;ll send a confirmation and updates here.</p>
+        <p className="text-xs text-zinc-500">
+          {form.sendsConfirmation === true
+            ? "We’ll send a confirmation here."
+            : "So the team can follow up on your request."}
+        </p>
         {form.verifiedDomains?.length ? (
           <p className="text-xs text-zinc-500">Use your work email at {domainsInWords(form.verifiedDomains)}.</p>
         ) : null}
@@ -212,7 +216,7 @@ export function PublicForm({ form }: { form: PublicFormDef }) {
       <button
         type="submit"
         disabled={pending || uploading > 0 || !form.acceptingResponses}
-        className="inline-flex items-center rounded-md bg-accent-500 px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
+        className="inline-flex items-center rounded-md bg-[#ff6800] px-4 py-2 text-sm font-medium text-white hover:bg-[#e65e00] disabled:opacity-50"
       >
         {pending ? "Submitting…" : uploading > 0 ? "Uploading files…" : "Submit"}
       </button>

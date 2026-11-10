@@ -1,6 +1,7 @@
 "use client";
 
 import { Clock, Send, X } from "lucide-react";
+import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
 import { cancelPendingInvite, resendPendingInvite } from "@/lib/actions/members";
@@ -21,7 +22,18 @@ export function PendingInvites({
   roleLabel: (role: string) => string;
 }) {
   const [pending, run] = useServerAction();
+  const confirm = useConfirm();
   if (invites.length === 0) return null;
+  // Nov 10 audit (C64): asks first, like Admin console → Users.
+  async function cancel(invite: PendingInvite) {
+    const ok = await confirm({
+      title: `Cancel the invite for ${invite.email}?`,
+      message: "They won’t join with this invite when they sign up. You can invite them again later.",
+      confirmLabel: "Cancel invite",
+      cancelLabel: "Keep it",
+    });
+    if (ok) run(() => cancelPendingInvite(invite.id));
+  }
   return (
     <div className="border-t border-zinc-100">
       <p className="px-5 pt-3 text-xs font-medium text-zinc-500">
@@ -51,7 +63,7 @@ export function PendingInvites({
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={() => run(() => cancelPendingInvite(invite.id))}
+                  onClick={() => cancel(invite)}
                   aria-label={`Cancel the invite for ${invite.email}`}
                   data-tooltip="Cancel invite"
                   className="btn-icon hover:bg-red-50 hover:text-red-700"

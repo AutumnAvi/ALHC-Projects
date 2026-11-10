@@ -1,6 +1,14 @@
 // The launcher page's DOM (docs/design/desktop.md): "Opening ALHC Projects…", then the app; or "Can't reach
 // ALHC Projects" with automatic retries and a Try again button. No Tauri API is used: the page needs no IPC.
-import { engineTooOld, launchTarget, probeUrl, readShellInfo, retryDelaySeconds, type ShellInfo } from "./launcher";
+import {
+  engineTooOld,
+  launchTarget,
+  probeUrl,
+  readShellInfo,
+  retryDelaySeconds,
+  unreachableText,
+  type ShellInfo,
+} from "./launcher";
 
 const PROBE_TIMEOUT_MS = 10_000;
 
@@ -31,13 +39,13 @@ async function reachable(url: string): Promise<boolean> {
 
 function startLauncher(shell: ShellInfo) {
   let failures = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
   let running = false;
 
   async function connect() {
     if (running) return;
     running = true;
-    clearTimeout(timer);
+    clearInterval(timer);
     show("Opening ALHC Projects…", "", false);
     const ok = await reachable(probeUrl(shell.appOrigin));
     running = false;
@@ -46,13 +54,20 @@ function startLauncher(shell: ShellInfo) {
       return;
     }
     failures += 1;
-    const seconds = retryDelaySeconds(failures);
-    show(
-      "Can’t reach ALHC Projects",
-      `Check your internet connection. The app needs to be online. Trying again in ${seconds} seconds.`,
-      true,
-    );
-    timer = setTimeout(connect, seconds * 1000);
+    // A live countdown to the next try (Nov 10 audit, C106).
+    let left = retryDelaySeconds(failures);
+    const render = () => {
+      const text = unreachableText(navigator.onLine, left);
+      show(text.title, text.detail, true);
+    };
+    render();
+    timer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(timer);
+        void connect();
+      } else render();
+    }, 1000);
   }
 
   retry.addEventListener("click", () => void connect());

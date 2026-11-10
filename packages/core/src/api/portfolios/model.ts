@@ -49,6 +49,8 @@ export type PortfolioTimelineRow = RollupProject & {
   startOn: string | null;
   dueOn: string | null;
   openTasks: number;
+  // Nov 10 batch 36 (C14): nobody ever set the project's status (it reads "No status", grey).
+  statusUnset?: boolean;
 };
 
 export type PortfolioMilestone = { projectId: string; taskId: string; title: string; dueOn: string };

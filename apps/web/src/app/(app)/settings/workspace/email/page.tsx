@@ -11,7 +11,7 @@ import { hasRole } from "@alhc/core/roles";
 export const metadata: Metadata = { title: "Email · Workspace settings" };
 
 // Settings → Workspace → Email (members): the sender name (read-only), delivery status, and where the
-// delivery logs are (per project, Settings → Deliveries, for project admins). Workspace admins see this
+// delivery logs are (per project, Settings → Deliveries, for project Owners). Workspace admins see this
 // in Admin console → Email.
 export default async function WorkspaceEmailPage() {
   if (await isWorkspaceAdmin()) redirect(ADMIN_PATH_FOR_SETTINGS["/settings/workspace/email"]);
@@ -28,12 +28,12 @@ export default async function WorkspaceEmailPage() {
       <SettingsCard
         id="workspace-deliveries"
         title="Deliveries log"
-        description="Every project keeps its own log of emails, Slack messages, and webhooks (status, attempts, last error) under Settings → Deliveries, for that project’s admins."
+        description="Every project keeps its own log of emails, Slack messages, and webhooks (status, attempts, last error) under Settings → Deliveries, for that project’s Owners."
         isAdmin={false}
         flush
       >
         {administered.length === 0 ? (
-          <p className="px-5 py-4 text-sm text-zinc-500">You don’t administer any project yet, so there’s no log for you to open.</p>
+          <p className="px-5 py-4 text-sm text-zinc-500">You don’t own any project yet, so there’s no log for you to open.</p>
         ) : (
           <ul className="divide-y divide-zinc-100">
             {administered.map((p) => (

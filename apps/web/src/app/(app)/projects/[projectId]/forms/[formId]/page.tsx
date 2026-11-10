@@ -5,7 +5,7 @@ import { FormsList } from "@/components/forms/forms-list";
 import { getForm, getProjectRole, listProjectFields, listProjectForms, listSections } from "@/lib/data";
 import { isUuid } from "@alhc/core/ids";
 import { requestOrigin } from "@/lib/origin";
-import { hasRole } from "@alhc/core/roles";
+import { permissionsFor } from "@alhc/core/permissions";
 
 export async function generateMetadata({
   params,
@@ -15,10 +15,18 @@ export async function generateMetadata({
   return { title: form ? `${form.title} · Form` : "Form" };
 }
 
+// ?back= (a page of this project, e.g. where Customize was open) is where closing goes; else the forms list.
+function formBackHref(projectId: string, back: string | string[] | undefined): string {
+  const base = `/projects/${projectId}`;
+  return typeof back === "string" && (back === base || back.startsWith(`${base}/`)) && !back.startsWith(`${base}/forms/`)
+    ? back
+    : `${base}/forms`;
+}
+
 // The form editor (Asana parity, batch 4): a large modal over the project's forms list. Closing it goes
 // back to the list.
-export default async function FormEditorPage({ params }: PageProps<"/projects/[projectId]/forms/[formId]">) {
-  const { projectId, formId } = await params;
+export default async function FormEditorPage({ params, searchParams }: PageProps<"/projects/[projectId]/forms/[formId]">) {
+  const [{ projectId, formId }, { back }] = await Promise.all([params, searchParams]);
   if (!isUuid(formId)) notFound();
   const [form, forms, sections, fields, origin, role] = await Promise.all([
     getForm(formId),
@@ -41,8 +49,8 @@ export default async function FormEditorPage({ params }: PageProps<"/projects/[p
         origin={origin}
         batch4
         real1
-        canEdit={hasRole(role, "admin")}
-        closeHref={`/projects/${projectId}/forms`}
+        canEdit={permissionsFor(role).canBuild}
+        closeHref={formBackHref(projectId, back)}
       />
     </main>
   );

@@ -189,7 +189,7 @@ export function StatusUpdatePanel({
                 className="field mt-1 h-auto w-full resize-y py-2 leading-relaxed"
               />
               <p className="mt-1 text-xs text-zinc-500">
-                Everyone in the project sees it on the Overview tab; portfolios show the latest one.
+                Everyone in the project sees it on the Overview tab, and members get a notification. Portfolios show the latest one.
               </p>
             </div>
           </fieldset>

@@ -20,6 +20,7 @@ import {
 } from "@/lib/actions/portfolios";
 import type { Portfolio, PortfolioMember } from "@alhc/core/api/portfolios/model";
 import {
+  OFFERED_PORTFOLIO_ROLES,
   PORTFOLIO_ROLES,
   PORTFOLIO_ROLE_DESCRIPTIONS,
   PORTFOLIO_ROLE_LABELS,
@@ -201,7 +202,7 @@ export function PortfolioMembersManager({
                         if (
                           await confirm({
                             title: `Make ${name} the owner?`,
-                            message: "You'll become an Admin and can no longer delete the portfolio.",
+                            message: "You'll become an Editor and can no longer delete the portfolio or manage its members.",
                             confirmLabel: "Make owner",
                             tone: "danger",
                           })
@@ -272,7 +273,7 @@ export function PortfolioMembersManager({
           Roles
         </h2>
         <dl className="mt-2 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
-          {PORTFOLIO_ROLES.map((role) => (
+          {OFFERED_PORTFOLIO_ROLES.map((role) => (
             <div key={role} className="contents">
               <dt className="font-medium text-zinc-800">{PORTFOLIO_ROLE_LABELS[role]}</dt>
               <dd className="text-zinc-600">{PORTFOLIO_ROLE_DESCRIPTIONS[role]}</dd>
@@ -291,8 +292,8 @@ export function PortfolioMembersManager({
             Delete portfolio
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Removes the portfolio for everyone. Its projects and tasks are not touched, and the portfolio stays
-            recoverable in the database.
+            Removes the portfolio for everyone. Its projects and tasks are not touched. This can’t be undone from the
+            app.
           </p>
           <button
             type="button"
@@ -301,7 +302,7 @@ export function PortfolioMembersManager({
               if (
                 await confirm({
                   title: `Delete the portfolio “${portfolio.name}”?`,
-                  message: "Its projects are not affected.",
+                  message: "This removes it for everyone and can’t be undone from the app. Its projects are not affected.",
                   confirmLabel: "Delete",
                   tone: "danger",
                 })

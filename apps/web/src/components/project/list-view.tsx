@@ -52,10 +52,12 @@ import { displayTaskTitle, type RequestLabel } from "@alhc/core/request-numbers"
 import { TaskTitleText } from "@/components/task/title-text";
 import { OPTION_COLOR_CLASSES, fieldLockManageable, fieldLockedFor, type FieldDef } from "@alhc/core/fields";
 import type { Json } from "@alhc/core/supabase/database.types";
+import { plural } from "@alhc/core/rule-feedback";
 import {
   columnsOf,
   completionOf,
   fieldRef,
+  fieldSortable,
   groupOf,
   hasActiveFilters,
   refFieldId,
@@ -154,12 +156,13 @@ const SECTION_DRAG = "application/x-alhc-section";
 // The grid, the pinned Name cell, and the Name cell's leading controls are defined once for the header
 // and every row (list-grid.ts; Oct 29 notes, batch 7, item 53).
 
-// What a column sorts by (Name = title); Section and Tags columns have no sort.
+// What a column sorts by (Name = title); Section and Tags columns (and People / Multi-select fields) have no sort.
 function sortKeyFor(column: ColumnKey | "task", fieldsById: Map<string, FieldDef>): SortKey | null {
   if (column === "task") return "title";
   if (column === "assignee" || column === "due" || column === "start") return column;
   const field = fieldsById.get(refFieldId(column) ?? "");
-  return field && !field.boundToSections ? fieldRef(field.id) : null;
+  // People and Multi-select fields have no readable order (flaw audit C41).
+  return field && fieldSortable(field) ? fieldRef(field.id) : null;
 }
 
 export function ListView({
@@ -726,7 +729,7 @@ export function ListView({
       {filtered && optimisticTasks.length === 0 ? (
         <div className="mt-6">
           <EmptyState icon={SearchX} title="No tasks match this view’s filters" size="inline">
-            Remove a filter chip above, or use Reset to go back to the saved view.
+            Change the Filter or the search in the toolbar, or turn on Show completed to see finished tasks.
           </EmptyState>
         </div>
       ) : null}
@@ -1003,7 +1006,7 @@ function DropLine() {
 function columnLabel(column: ColumnKey, fieldsById: Map<string, FieldDef>) {
   if (column === "assignee") return "Assignee";
   if (column === "due") return "Due date";
-  if (column === "start") return "Start";
+  if (column === "start") return "Start date";
   if (column === "section") return "Section";
   if (column === "tags") return "Tags";
   return fieldsById.get(refFieldId(column) ?? "")?.name ?? "";
@@ -1778,7 +1781,7 @@ function SubtaskRow({
             <span className={LIST_NAME_BADGES}>
               <span
                 className="inline-flex items-center text-xs tabular-nums text-zinc-500"
-                title={`${subtask.subtaskDoneCount} of ${subtask.subtaskCount} subtasks done`}
+                title={`${subtask.subtaskDoneCount} of ${plural(subtask.subtaskCount, "subtask")} done`}
               >
                 {subtask.subtaskDoneCount}/{subtask.subtaskCount}
               </span>

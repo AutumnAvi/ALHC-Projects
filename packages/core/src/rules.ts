@@ -160,11 +160,11 @@ export const ACTIONS = [
   { value: "notify", label: "Send inbox notification", group: "Communication", description: "Puts a message in people's Inbox.", keywords: ["alert", "inbox", "ping", "tell"] },
   { value: "send_email", label: "Send email", group: "Communication", description: "Emails the submitter, the assignee, an address in a field, or a fixed address.", keywords: ["mail", "requester", "submitter"] },
   { value: "request_approval", label: "Request approval (approval subtask)", group: "Approvals", description: "Asks someone to approve, with an approval subtask.", keywords: ["approve", "review", "sign off"] },
-  { value: "send_slack", label: "Send Slack message", group: "Integrations", description: "Posts to a Slack channel through an incoming webhook.", keywords: ["chat", "channel"] },
+  { value: "send_slack", label: "Send Slack message", group: "Integrations", description: "Posts to a Slack channel connected in Admin console → Integrations.", keywords: ["chat", "channel", "webhook"] },
   { value: "call_webhook", label: "Call webhook", group: "Integrations", description: "POSTs a JSON summary of the task to an https:// address.", keywords: ["api", "zapier", "make", "http"] },
   { value: "delay", label: "Wait, then continue", group: "Flow", description: "Pauses for some hours, then runs the remaining actions.", keywords: ["delay", "later", "pause", "hours"] },
   // Automations V2.
-  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes the task. Approval tasks are skipped until they’re approved.", keywords: ["done", "finish", "close"] },
+  { value: "complete_task", label: "Mark complete", group: "Task", description: "Completes the task. Approval tasks are skipped: only their approvers complete them.", keywords: ["done", "finish", "close"] },
   { value: "reopen_task", label: "Mark incomplete", group: "Task", description: "Reopens a completed task.", keywords: ["reopen", "undo", "incomplete"] },
   { value: "set_title", label: "Rename task", group: "Task", description: "Changes the task's name (placeholders work here).", keywords: ["title", "name", "prefix"] },
   { value: "create_subtasks", label: "Create subtasks", group: "Task", description: "Adds a checklist of subtasks, optionally assigned.", keywords: ["checklist", "steps", "children", "todo"] },
@@ -188,6 +188,11 @@ export const ACTIONS = [
 ] as const;
 
 export type ActionType = (typeof ACTIONS)[number]["value"];
+
+// Nov 10: actions no picker offers for a new step any more. An automation that already uses one still
+// shows it (its own step's picker keeps it) and runs it. Request approval (approval subtask) overlaps
+// Task type → Approval and Send review check (note 180).
+export const RETIRED_ACTIONS: ReadonlySet<string> = new Set(["request_approval"]);
 
 export const APPROVAL_DECISIONS = [
   { value: "approved", label: "Approved" },

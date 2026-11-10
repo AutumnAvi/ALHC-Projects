@@ -32,6 +32,7 @@ test("the pill shows the real name, not the raw token", () => {
   assert.match(html, />@Ann Lee</);
   assert.doesNotMatch(html, />@ann\.lee</);
   assert.match(html, /aria-label="@Ann Lee, ann\.lee@example\.com, Editor"/);
+  assert.match(html, /href="\/people\/a"/, "a click opens their profile");
 });
 
 test("the hover card has the avatar, name, email, and role", () => {
@@ -41,6 +42,7 @@ test("the hover card has the avatar, name, email, and role", () => {
   assert.match(html, /ann\.lee@example\.com/);
   assert.match(html, /Editor in this task’s project/);
   assert.match(html, />AL</, "initials avatar");
+  assert.match(html, /View profile/);
 });
 
 const design = {
@@ -65,12 +67,12 @@ test("@Team Name becomes a team mention; a person with the same name wins", () =
   assert.deepEqual(clash, [{ type: "mention", profileId: "a", raw: "@Ann Lee" }]);
 });
 
-test("a team pill shows the name; its card lists the members, with nothing to click", () => {
+test("a team pill shows the name and opens the team; its card lists the members", () => {
   const html = renderToStaticMarkup(<MentionText body="cc @design team" people={[]} teams={[design]} />);
   assert.match(html, /data-team-mention="t1"/);
   assert.match(html, />@Design Team</);
   assert.match(html, /aria-label="@Design Team, team of 2"/);
-  assert.doesNotMatch(html, /<a /);
+  assert.match(html, /href="\/teams\/t1"/);
   const card = renderToStaticMarkup(<TeamCard team={design} />);
   assert.match(card, /data-team-card/);
   assert.match(card, /Design Team/);

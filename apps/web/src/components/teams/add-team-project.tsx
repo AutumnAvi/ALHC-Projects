@@ -69,14 +69,14 @@ export function AddTeamProject({
       disabled={pending}
       panelWidth={320}
       className="h-8 border border-zinc-200 bg-white px-3 text-zinc-700 hover:border-zinc-300"
-      emptyText="No projects to add. Projects in other teams where you’re an owner or admin show up here."
+      emptyText="No projects to add. Projects in other teams that you own show up here."
       renderValue={() => (
         <>
           <FolderPlus className="size-4" aria-hidden />
           Add existing project
         </>
       )}
-      footer="Projects in other teams where you’re an owner or admin. A project you add keeps its members and privacy."
+      footer="Projects in other teams that you own. A project you add keeps its members and privacy."
     />
   );
 }

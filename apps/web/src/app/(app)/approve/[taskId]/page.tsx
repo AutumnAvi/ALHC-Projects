@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ThumbsUp } from "lucide-react";
 import { ApproverReviewPage } from "@/components/task/approver-review-page";
+import { ExternalReviewSteps } from "@/components/task/external-review-steps";
+import { reviewComesAfterApproval } from "@alhc/core/external-review";
 import { ReviewTaskDetails } from "@/components/task/review-task-details";
 import { TaskLiveRefresh } from "@/components/task/task-live-refresh";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -35,6 +37,9 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
     redirect(backHref);
   }
   const details = reviewTaskDetails(task);
+  // Nov 10 batch 36: with an external reviewer too, the steps (and, once approved, "Send to …") show here.
+  const twoStep = reviewComesAfterApproval(task) && Boolean(task.externalReview?.reviewer);
+  const steps = twoStep ? <ExternalReviewSteps task={task} memberId={member.id} /> : null;
   return (
     <main className="flex min-h-0 flex-1 flex-col">
       <TaskLiveRefresh taskId={task.id} />
@@ -51,6 +56,8 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-gutter py-5">
         {myRequest && latest ? (
+          <div className="space-y-4">
+          {steps ? <div className="mx-auto max-w-3xl">{steps}</div> : null}
           <ApproverReviewPage
             taskId={task.id}
             requestId={myRequest.id}
@@ -58,13 +65,18 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
             attachments={task.attachments}
             backHref={backHref}
             details={details}
+            stayAfterApproval={twoStep}
           />
+          </div>
         ) : (
           <div className="mx-auto max-w-3xl space-y-4">
+            {steps}
             <ReviewTaskDetails details={details} />
-            <EmptyState icon={ThumbsUp} title="Nothing to review here" size="page">
-              You aren’t asked to approve this task right now, or the decision was already made.
-            </EmptyState>
+            {steps ? null : (
+              <EmptyState icon={ThumbsUp} title="Nothing to review here" size="page">
+                You aren’t asked to approve this task right now, or the decision was already made.
+              </EmptyState>
+            )}
           </div>
         )}
       </div>

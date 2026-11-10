@@ -18,5 +18,5 @@ export default async function PortfolioRulePage({ params }: PageProps<"/portfoli
     loadPortfolioRuleContext(portfolioId),
   ]);
   if (!portfolio || !role || !rule || rule.portfolioId !== portfolio.id) notFound();
-  return <PortfolioRuleBuilder portfolioId={portfolio.id} rule={rule} runs={runs} ctx={ctx} canEdit={hasPortfolioRole(role, "admin")} />;
+  return <PortfolioRuleBuilder portfolioId={portfolio.id} rule={rule} runs={runs} ctx={ctx} canEdit={hasPortfolioRole(role, "editor")} />;
 }

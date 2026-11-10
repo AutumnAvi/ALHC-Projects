@@ -54,6 +54,7 @@ import {
   sortOptions,
   withCompletionOf,
   withFilters,
+  withSearchOf,
   withShowCompleted,
   type ColumnKey,
   type GroupBy,
@@ -117,8 +118,11 @@ export function ViewToolbar({
   // it was changed some other way (the Filter's completion choice).
   function withoutPersonalCompletion(config: ViewConfig) {
     if (!view) return config;
-    const personal = showCompleted !== null && completionOf(config.filters) === (showCompleted ? "all" : "incomplete");
-    return personal ? withCompletionOf(config, sharedConfig ?? view.config) : config;
+    const saved = sharedConfig ?? view.config;
+    // The toolbar's search is temporary (flaw audit C40): never saved into a view.
+    const searchless = withSearchOf(config, saved);
+    const personal = showCompleted !== null && completionOf(searchless.filters) === (showCompleted ? "all" : "incomplete");
+    return personal ? withCompletionOf(searchless, saved) : searchless;
   }
 
   function saveForMe() {
@@ -157,8 +161,9 @@ export function ViewToolbar({
     });
   }
 
-  // Show completed is a view option with its own button (93 / 102): never counted or drawn as a filter.
-  const optionCompletion = layout === "list" || layout === "board";
+  // Show completed is a view option with its own button (93 / 102): never counted or drawn as a filter —
+  // in every layout since Nov 10 (flaw audit C24: one Show completed control, the toolbar switch).
+  const optionCompletion = true;
   const activeCount = filterChips(filters, context, { completionIsViewOption: optionCompletion }).length;
   const sorts = sortOf(current);
   const sorted = sorts[0]?.key !== "manual";
@@ -219,7 +224,8 @@ export function ViewToolbar({
             </>
           ) : null}
 
-          {layout === "list" || layout === "board" ? (
+          {/* Hidden on a "Completed only" view (the Filter's choice): there's nothing for it to switch. */}
+          {completionOf(filters) !== "completed" ? (
             <CompletedToggle
               completion={completionOf(filters)}
               onChange={(show) =>
@@ -250,7 +256,9 @@ export function ViewToolbar({
               </>
             }
           >
-            {() => <FilterEditor filters={filters} onChange={setFilters} context={context} idPrefix="view-filter" />}
+            {() => (
+              <FilterEditor filters={filters} onChange={setFilters} context={context} idPrefix="view-filter" completionIsViewOption />
+            )}
           </Popover>
 
           {layout !== "calendar" ? (
@@ -280,12 +288,16 @@ export function ViewToolbar({
                           value={sort.key}
                           onChange={(value) => {
                             const next = [...sorts];
-                            next[index] = { ...sort, key: value as SortKey };
+                            // Manual order has no direction (it's the drag order).
+                            next[index] = value === "manual" ? { key: "manual", dir: "asc" } : { ...sort, key: value as SortKey };
                             apply({ ...current, sort: next });
                           }}
                           className="min-w-0 flex-1 px-1.5"
                           options={sortChoices.map((s) => ({ value: s.value, label: s.label }))}
                         />
+                        {/* Manual order is the drag order, always top to bottom (flaw audit C42). */}
+                        {sort.key === "manual" ? null : (
+                        <>
                         <label className="sr-only" htmlFor={`sort-dir-${index}`}>
                           Direction
                         </label>
@@ -305,6 +317,8 @@ export function ViewToolbar({
                             { value: "desc", label: "Descending" },
                           ]}
                         />
+                        </>
+                        )}
                         {sorts.length > 1 ? (
                           <button
                             type="button"
@@ -527,21 +541,22 @@ function OptionsMenu({
   const viewConfig = useViewConfig();
   const [, run] = useServerAction();
   const [page, setPage] = useState<"main" | "columns" | "save">("main");
-  // Editors+ may add a shared tab; anyone can save a view of their own (Oct 26 notes, batch 4).
-  const [personal, setPersonal] = useState(!canSave);
+  // Editors+ add a shared tab here; anyone else saves a view of their own (Oct 26 notes, batch 4). A tab
+  // only you see is "+ → Just for you" (flaw audit C68: one personal-view model).
   const tagsOn = useTagsEnabled();
   if (!viewConfig) return null;
   const { current, apply } = viewConfig;
-  const filters = current.filters ?? {};
-  const completion = completionOf(filters);
   const columns = columnsOf(current, context.fields, tagsOn);
+  // Board cards always show their tags and never a section chip, so Card fields leaves both out (flaw
+  // audit C39).
+  const board = layout === "board";
   const columnChoices: { value: ColumnKey; label: string }[] = [
     { value: "assignee", label: "Assignee" },
     { value: "due", label: "Due date" },
     { value: "start", label: "Start date" },
-    { value: "section", label: "Section" },
+    ...(board ? [] : [{ value: "section" as const, label: "Section" }]),
     ...context.fields.map((f) => ({ value: fieldRef(f.id), label: f.name })),
-    ...(tagsOn ? [{ value: "tags" as const, label: "Tags" }] : []),
+    ...(tagsOn && !board ? [{ value: "tags" as const, label: "Tags" }] : []),
   ];
   const columnsLabel = layout === "board" ? "Card fields" : "Columns";
 
@@ -580,7 +595,7 @@ function OptionsMenu({
           const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
           if (!name) return;
           close();
-          run(() => createView(projectId, { name, layout, config: current, personal: personal || !canSave }));
+          run(() => createView(projectId, { name, layout, config: withSearchOf(current, {}), personal: !canSave }));
         }}
       >
         <SubHeader title="Save as new view" onBack={() => setPage("main")} />
@@ -597,29 +612,8 @@ function OptionsMenu({
             placeholder="e.g. Incomplete by assignee"
             className="control w-full"
           />
-          {canSave ? (
-            <div role="radiogroup" aria-label="Who sees it" className="grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-0.5">
-              {[
-                { value: false, label: "Everyone" },
-                { value: true, label: "Only me" },
-              ].map((choice) => (
-                <button
-                  key={choice.label}
-                  type="button"
-                  role="radio"
-                  aria-checked={personal === choice.value}
-                  onClick={() => setPersonal(choice.value)}
-                  className={`rounded px-2 py-1 text-xs font-medium ${
-                    personal === choice.value ? "bg-white text-zinc-900 shadow-xs" : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
           <p className="text-2xs text-zinc-500">
-            {personal || !canSave
+            {!canSave
               ? `Your own view with ${isDraft ? "these" : "the current"} filters, sorting, grouping, and columns. Only you see it, next to the project's tabs.`
               : `A new tab for everyone with ${isDraft ? "these" : "the current"} filters, sorting, grouping, and columns.`}
           </p>
@@ -633,19 +627,6 @@ function OptionsMenu({
 
   return (
     <div>
-      {layout === "list" || layout === "board" ? null : (
-      <Toggle
-        label="Show completed tasks"
-        checked={completion !== "incomplete"}
-        onChange={(checked) => {
-          const next = { ...filters };
-          delete next.completed_within_days;
-          if (checked) next.completion = "all";
-          else delete next.completion;
-          apply(withFilters(current, next));
-        }}
-      />
-      )}
       {layout === "list" ? (
         <Toggle
           label="Show subtasks"
@@ -662,18 +643,19 @@ function OptionsMenu({
         <button type="button" onClick={() => setPage("columns")} className={menuRow}>
           <Columns3 className="size-4 text-zinc-500" aria-hidden />
           <span className="flex-1">{columnsLabel}</span>
-          <span className="text-xs tabular-nums text-zinc-400">{columns.length}</span>
+          <span className="text-xs tabular-nums text-zinc-400">{columns.filter((c) => columnChoices.some((choice) => choice.value === c)).length}</span>
           <ChevronRight className="size-3.5 text-zinc-400" aria-hidden />
         </button>
       ) : null}
       {layout === "list" ? (
-        // CSV of what the List shows: the current (or draft) filters, order, and columns.
+        // CSV of what the List shows: always the on-screen config (your version, Show completed, and any
+        // unsaved change), never the shared view's saved one (flaw audit C22).
         <div className="flex">
           <ExportLink
             href={`/export/list?${new URLSearchParams({
               project: projectId,
               ...(view ? { view: view.id } : {}),
-              ...(isDraft ? { f: encodeConfig(current) } : {}),
+              f: encodeConfig(current),
             }).toString()}`}
             className={`${menuRow} [&>svg]:text-zinc-500`}
           />

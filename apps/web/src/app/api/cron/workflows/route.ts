@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { drainOutbox } from "@/lib/email";
 import { removeStaleFormUploads } from "@/lib/form-uploads";
+import { sendReviewNudges } from "@/lib/review-nudges";
 import { removePurgedFiles } from "@/lib/trash-files";
 import { drainIntegrationOutbox } from "@/lib/integrations";
 import { queueScheduledEmails, workflowTick } from "@alhc/core/api/system/mutations";
@@ -36,7 +37,9 @@ export async function GET(request: Request) {
   if (queued.error && queued.error.code !== "PGRST202") console.error("Queueing digests and reports failed", queued.error.code);
   const email = await drainOutbox({ max: 50 });
   const integrations = await drainIntegrationOutbox({ max: 50 });
+  // Nov 10 batch 36: the one automatic reminder to external reviewers who haven't answered in 24 hours.
+  const reviewReminders = await sendReviewNudges(ctx).catch(() => null);
   const formUploads = await removeStaleFormUploads(ctx);
   const trashFiles = await removePurgedFiles(ctx);
-  return Response.json({ tick: tick.data, scheduled: queued.data ?? null, email, integrations, formUploads, trashFiles });
+  return Response.json({ tick: tick.data, scheduled: queued.data ?? null, email, integrations, reviewReminders, formUploads, trashFiles });
 }

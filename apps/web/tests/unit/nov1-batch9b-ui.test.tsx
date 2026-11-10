@@ -100,7 +100,8 @@ test("64: one list in automatic date groups, No date last and prominent", () => 
 test("64: no-date rows have one-tap chips; new dateless assignments ask for a date", () => {
   const html = checklist("sink");
   const none = html.slice(html.indexOf('id="checklist-none"'));
-  for (const label of [">Today<", ">Tomorrow<", ">This week<", "Pick date"]) assert.ok(none.includes(label), `chip ${label}`);
+  // Nov 10 audit (C8): the third chip names the day it sets ("This week · Thu" / "Next week · Sun").
+  for (const label of [">Today<", ">Tomorrow<", "week · ", "Pick date"]) assert.ok(none.includes(label), `chip ${label}`);
   assert.ok(html.includes("1 new task has"), "the Set a date banner");
   assert.ok(none.indexOf("New from Dana") < none.indexOf("No date thing"), "new dateless assignments first");
   assert.ok(none.includes("New · Set a date") && none.includes("Not now"));
@@ -188,7 +189,7 @@ test("65: Needs you lists approvals, mentions, Inbox items, and new tasks withou
     />,
     "/",
   );
-  order(html, "2 new tasks need a date", "Approvals waiting on you", "Approve banner", "Mentions", "Dana Diaz");
+  order(html, "2 new tasks need a date", "Waiting on you to approve", "Approve banner", "Mentions", "Dana Diaz");
   assert.ok(html.includes("mentioned you on"));
   assert.ok(html.includes("Inbox · 12 unread"));
 });

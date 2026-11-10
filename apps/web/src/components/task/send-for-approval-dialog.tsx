@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { AlertCircle, Copy, Loader2, Upload, X } from "lucide-react";
+import { AlertCircle, Loader2, Upload, X } from "lucide-react";
 import { displayName } from "@alhc/core/people";
 import { Dialog } from "@/components/dialog";
 import { SmartPicker } from "@/components/smart-picker";
@@ -14,15 +14,15 @@ import { sendForApproval } from "@/lib/actions/approvals";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
-import { MAX_REVIEW_ASSETS } from "@alhc/core/review-checks";
-import { sendReviewCheck } from "@/lib/actions/reviews";
+import { reviewerLabel } from "@alhc/core/external-review";
 import type { AfterApproval } from "@alhc/core/task-kinds";
 
 // Oct 27 notes (batch 6, items 45 / 45b): "Ready for approval". The assignee (or an Editor) sends the
 // approvers the final text and/or the files to approve — at least one of them — and says what happens
 // when it's approved: complete the task (the default), or, with "More steps after approval", move it to
-// a section or just notify them. Optionally a review check of the chosen files goes to the first
-// approver too (created after the approval request, with the existing review check flow).
+// a section or just notify them. Nov 10 batch 36 (C25): no more "also send a review check to the first
+// approver" — it emailed the internal approver a public link and replaced a client's open review. When the
+// task has an external reviewer, the dialog says that step comes after the internal approval.
 
 export type AfterApprovalChoice = "move_section" | "notify";
 
@@ -89,10 +89,8 @@ export function SendForApprovalDialog({
   const [moveSectionId, setMoveSectionId] = useState<string | null>(
     planned === "move_section" ? (task.approval?.followUp?.sectionId ?? null) : (latest?.moveSectionId ?? null),
   );
-  const [withReview, setWithReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
-  const [reviewLink, setReviewLink] = useState<{ link: string; email: string } | null>(null);
 
   const profilesById = new Map(profiles.map((p) => [p.id, p]));
   const approvers = (task.approval?.approverIds ?? [])
@@ -100,9 +98,7 @@ export function SendForApprovalDialog({
     .filter((p): p is Profile => Boolean(p));
   const approverNames = approvers.map(displayName);
   const mode = task.approval?.mode ?? "any";
-  const firstApprover = approvers[0] ?? null;
-  // Review checks are made by Editors+ (create_review_check).
-  const canReview = taskPermissions(task).canEdit && Boolean(firstApprover);
+  const externalReviewer = task.externalReview?.reviewer ?? null;
   // Nov 2 notes (batch 15, 113): files can be uploaded right here (Editors+: uploading is an edit); each
   // is attached to the task and picked. Thumbnails preview like the review dialog's.
   const canUpload = taskPermissions(task).canEdit;
@@ -166,66 +162,9 @@ export function SendForApprovalDialog({
         return;
       }
       const who = approverNames.length ? joinNames(approverNames) : "the approvers";
-      if (withReview && canReview && firstApprover && attachmentIds.length) {
-        const review = await sendReviewCheck({
-          taskId: task.id,
-          attachmentIds: attachmentIds.slice(0, MAX_REVIEW_ASSETS),
-          recipientEmail: firstApprover.email,
-          recipientName: displayName(firstApprover),
-          message: finalText.trim().slice(0, 2000) || null,
-        });
-        if (review.error) {
-          notify(`Sent to ${who} for approval. The review check wasn’t sent: ${review.error}`);
-        } else if (!review.emailed && review.link) {
-          notify(`Sent to ${who} for approval`);
-          setReviewLink({ link: review.link, email: firstApprover.email });
-          return;
-        } else {
-          notify(`Sent to ${who} for approval, with a review check`);
-        }
-      } else {
-        notify(`Sent to ${who} for approval`);
-      }
+      notify(`Sent to ${who} for approval`);
       onClose();
     });
-  }
-
-  if (reviewLink) {
-    return (
-      <Dialog title="Review check created" onClose={onClose}>
-        <p className="text-sm text-zinc-700">
-          The approval request went out, but no review email could be sent from here. Send this link to {reviewLink.email} yourself.
-          It’s shown only now, and anyone with it can respond.
-        </p>
-        <div className="mt-3 flex gap-2">
-          <input
-            readOnly
-            value={reviewLink.link}
-            aria-label="Review link"
-            className="field h-9 min-w-0 flex-1 font-mono text-xs"
-            onFocus={(e) => e.currentTarget.select()}
-          />
-          <button
-            type="button"
-            className="btn-secondary h-9 px-3"
-            onClick={() => {
-              void navigator.clipboard.writeText(reviewLink.link).then(
-                () => notify("Review link copied"),
-                () => notify("Couldn’t copy. Select the link and copy it instead."),
-              );
-            }}
-          >
-            <Copy className="size-4" aria-hidden />
-            Copy
-          </button>
-        </div>
-        <div className="mt-4 flex justify-end">
-          <button type="button" onClick={onClose} className="btn-primary">
-            Done
-          </button>
-        </div>
-      </Dialog>
-    );
   }
 
   return (
@@ -345,22 +284,11 @@ export function SendForApprovalDialog({
           )}
         </div>
 
-        {canReview && attachmentIds.length > 0 && firstApprover ? (
-          <label className="flex items-start gap-2 text-sm text-zinc-800">
-            <input
-              type="checkbox"
-              checked={withReview}
-              onChange={(e) => setWithReview(e.currentTarget.checked)}
-              className="mt-0.5 size-3.5 accent-accent-600"
-            />
-            <span>
-              Also send a review check of these files to {displayName(firstApprover)}
-              <span className="block text-2xs text-zinc-500">
-                They can pin comments on the files.
-                {attachmentIds.length > MAX_REVIEW_ASSETS ? ` Only the first ${MAX_REVIEW_ASSETS} files go in the review.` : ""}
-              </span>
-            </span>
-          </label>
+        {externalReviewer ? (
+          <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600" data-two-step-note="">
+            After the internal approval, {approverNames.length ? joinNames(approverNames) : "the approver"} sends it to{" "}
+            {reviewerLabel(externalReviewer)} for the external review.
+          </p>
         ) : null}
 
         <div>
@@ -421,7 +349,7 @@ export function SendForApprovalDialog({
                   onChange={() => setChoice("notify")}
                   className="mt-0.5 size-3.5 accent-accent-600"
                 />
-                <span>Just notify me</span>
+                <span>Just notify</span>
               </label>
             </fieldset>
           ) : null}

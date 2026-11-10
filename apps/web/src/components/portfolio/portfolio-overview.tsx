@@ -72,7 +72,8 @@ export function PortfolioOverview({
   const canEdit = usePortfolioCan("editor");
   const percent = progressPercent(totals.completed, totals.total);
   const [selectedChild, setSelectedChild] = useState("");
-  const childChoice = nestCandidates.some((c) => c.id === selectedChild) ? selectedChild : (nestCandidates[0]?.id ?? "");
+  // Nov 10 audit (C94): nothing is picked until the person picks.
+  const childChoice = nestCandidates.some((c) => c.id === selectedChild) ? selectedChild : "";
 
   return (
     <div className="space-y-6 px-gutter py-5">
@@ -94,11 +95,12 @@ export function PortfolioOverview({
           <Stat label="Overdue" value={totals.overdue} tone={totals.overdue > 0 ? "danger" : undefined} />
           <Stat label={`Completed in the last ${RECENT_DAYS} days`} value={totals.completedRecent} />
         </dl>
-        <p className="mt-3 text-xs text-zinc-500">
-          Progress is completed ÷ (completed + incomplete) over the active tasks in this portfolio’s projects, rounded
-          down. A task in several of these projects counts once. Overdue means incomplete and due before today in your
-          time zone. Projects of nested portfolios count too when you’re a member of the nested portfolio. Only
-          projects you’re a member of are counted.
+        {/* Nov 10 audit (C95): one plain line; the detail is in its tooltip. */}
+        <p
+          className="mt-3 text-xs text-zinc-500"
+          data-tooltip="A task in several of these projects counts once. Overdue means incomplete and due before today in your time zone. Projects of nested portfolios count when you’re a member of the nested portfolio."
+        >
+          The share of tasks completed, across the projects here you’re a member of.
         </p>
         {hiddenCount > 0 ? (
           <p className="mt-3 flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
@@ -179,7 +181,7 @@ export function PortfolioOverview({
                         {role ? `You’re ${roleWithArticle(ROLE_LABELS[role])}` : null}
                       </p>
                     </div>
-                    <ProjectStatusBadge status={project.status} note={project.status_note} />
+                    <ProjectStatusBadge status={project.status} note={project.status_note} unset={!project.status_updated_at} />
                   </div>
                   {project.status_note ? (
                     <p className="line-clamp-2 text-xs text-zinc-600">{project.status_note}</p>
@@ -299,7 +301,8 @@ export function PortfolioOverview({
                   <SmartPicker
                     id="add-portfolio"
                     label="Add a portfolio you’re a member of"
-                    value={childChoice}
+                    value={childChoice || null}
+                    placeholder="Choose a portfolio…"
                     onChange={setSelectedChild}
                     searchable
                     className="h-9 w-64 max-w-64"
@@ -401,7 +404,7 @@ function NestedProjectCard({ card }: { card: NestedCard }) {
             {card.role ? ` · You’re ${roleWithArticle(ROLE_LABELS[card.role])}` : null}
           </p>
         </div>
-        <ProjectStatusBadge status={card.status} note={card.statusNote} />
+        <ProjectStatusBadge status={card.status} note={card.statusNote} unset={!card.latest} />
       </div>
       <div className="flex items-center gap-2">
         <ProgressBar percent={percent} label={`${card.name} progress`} size="sm" />

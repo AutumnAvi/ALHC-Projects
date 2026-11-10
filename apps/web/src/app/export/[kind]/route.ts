@@ -12,6 +12,7 @@ import {
 } from "@/lib/exports";
 import { isUuid } from "@alhc/core/ids";
 import { filtersFromParams, withoutReportTags } from "@alhc/core/reports";
+import { searchFiltersFromParams } from "@alhc/core/search-filters";
 import { routeContext } from "@/lib/server/context";
 import { getViewerTimeZone } from "@/lib/timezone";
 import { todayIn } from "@alhc/core/workload";
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest, { params: routeParams }: RouteCo
       break;
     }
     case "search":
-      result = await exportSearch(ctx, params.get("q") ?? "");
+      result = await exportSearch(ctx, params.get("q") ?? "", searchFiltersFromParams(params));
       break;
     case "dashboard":
       if (isUuid(projectId)) result = await exportProjectDashboard(ctx, projectId, timeZone);

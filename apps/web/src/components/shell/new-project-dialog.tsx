@@ -214,7 +214,7 @@ function Gallery({ onBlank, onPick }: { onBlank: () => void; onPick: (template: 
     category === "all"
       ? [
           { key: "mine", title: "Your templates", items: matching.filter((t) => t.mine) },
-          { key: "workspace", title: "Shared by your team", items: matching.filter((t) => !t.mine && !t.isExample) },
+          { key: "workspace", title: "Shared in the workspace", items: matching.filter((t) => !t.mine && !t.isExample) },
           { key: "examples", title: "Examples", items: matching.filter((t) => !t.mine && t.isExample) },
         ].filter((g) => g.items.length > 0)
       : [{ key: category, title: GALLERY_CATEGORIES.find((c) => c.key === category)?.label ?? "", items: matching }];

@@ -32,6 +32,7 @@ import {
   type TaskApproval,
   type TaskApprovalInfo,
   type TaskComment,
+  type ExternalReview,
   type TaskDetail,
   type TaskEmailActivity,
   type TaskExtras,
@@ -368,6 +369,12 @@ export const getTaskDetail = read(async (ctx: ApiContext, taskId: string): Promi
     loadCommentPins(supabase, taskId, responseStatus, pane ? { pinned: pane.pinned_comments, events: pane.pin_events } : undefined),
     loadTaskAutomationAndEmail(supabase, taskId, pane ? { runs: pane.rule_runs, email: pane.email_activity } : undefined),
   ]);
+  const externalReview = await loadExternalReview(
+    supabase,
+    taskId,
+    pane && "external_review" in pane ? pane.external_review : undefined,
+    submission ? { email: submission.submitter_email, name: submissionRequesterName(formTitle.data?.questions ?? [], submission.answers) } : null,
+  );
   const editableProjectIds = membershipRows.map((m) => m.project_id).filter((p) => hasRole(myRoles.get(p), "editor"));
 
   const commentPage: CommentPage | null = pagedComments;
@@ -514,6 +521,7 @@ export const getTaskDetail = read(async (ctx: ApiContext, taskId: string): Promi
           createdAt: submission.created_at,
         }
       : null,
+    externalReview,
     submitterResponses,
     submitterConversation,
     replyThread,
@@ -991,3 +999,69 @@ export async function withRuleProjects(
   }
   return comments.map((c) => (c.ruleId ? { ...c, ruleProjectId: projects.get(c.ruleId) ?? null } : c));
 }
+
+// Nov 10 batch 36: the task's external review — the reviewer set on the task, else the form's submitter,
+// else whoever the latest round went to — and that latest round. From task_pane_rows when it has them
+// (`given`), else two reads (RLS decides).
+type ExternalReviewRows = {
+  reviewer: { email: string | null; name: string | null } | null;
+  latest: {
+    id: string;
+    round: number;
+    status: string;
+    recipient_email: string;
+    recipient_name: string | null;
+    created_at: string;
+    decided_at: string | null;
+    nudged_at: string | null;
+  } | null;
+};
+
+async function loadExternalReview(
+  supabase: ApiContext["db"],
+  taskId: string,
+  given: unknown,
+  submitter: { email: string; name: string | null } | null,
+): Promise<ExternalReview> {
+  let rowsOf: ExternalReviewRows;
+  if (given && typeof given === "object" && !Array.isArray(given)) {
+    rowsOf = given as ExternalReviewRows;
+  } else {
+    const [saved, latest] = await Promise.all([
+      supabase.from("task_review_settings").select("reviewer_email, reviewer_name").eq("task_id", taskId).maybeSingle(),
+      supabase
+        .from("review_checks")
+        .select("id, round, status, recipient_email, recipient_name, created_at, decided_at, nudged_at")
+        .eq("task_id", taskId)
+        .order("round", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    rowsOf = {
+      reviewer: saved.data ? { email: saved.data.reviewer_email, name: saved.data.reviewer_name } : null,
+      latest: (latest.data as ExternalReviewRows["latest"]) ?? null,
+    };
+  }
+  const saved = rowsOf.reviewer?.email ? { email: rowsOf.reviewer.email, name: rowsOf.reviewer.name ?? null } : null;
+  const latest = rowsOf.latest
+    ? {
+        id: rowsOf.latest.id,
+        round: rowsOf.latest.round,
+        status: rowsOf.latest.status as NonNullable<ExternalReview["latest"]>["status"],
+        recipientEmail: rowsOf.latest.recipient_email,
+        recipientName: rowsOf.latest.recipient_name,
+        createdAt: rowsOf.latest.created_at,
+        decidedAt: rowsOf.latest.decided_at,
+        nudgedAt: rowsOf.latest.nudged_at ?? null,
+      }
+    : null;
+  const reviewer: ExternalReview["reviewer"] = saved
+    ? { ...saved, source: "task" }
+    : submitter
+      ? { email: submitter.email, name: submitter.name, source: "submitter" }
+      : latest
+        ? { email: latest.recipientEmail, name: latest.recipientName, source: "latest" }
+        : null;
+  return { reviewer, saved, latest };
+}
+

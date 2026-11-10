@@ -501,7 +501,7 @@ declare
 begin
   result := public.run_manual_rule((select id from av2_ids where name = 'r_kickoff'), t);
   assert result ->> 'status' = 'failed', 'the owner lost Editor in Q';
-  assert result -> 'detail' -> 'actions' ->> 'error' like 'Add to project: the rule''s owner can''t add tasks to%', 'the reason';
+  assert result -> 'detail' -> 'actions' ->> 'error' like 'Add to project: the automation''s owner can''t add tasks to%', 'the reason';
   assert jsonb_array_length(result -> 'detail' -> 'steps') = 4, 'three steps ran, the fourth failed';
   assert result -> 'detail' -> 'steps' -> 3 ->> 'outcome' = 'error', 'the failing step is marked';
   assert result -> 'detail' -> 'steps' -> 0 ->> 'outcome' = 'done', 'earlier steps are listed';
@@ -711,15 +711,13 @@ begin
   assert (select consecutive_failures from public.rules where id = rid) = 0, 'health stays the engine''s';
 end $$;
 
--- Test permissions: Viewers and Editors can't run the dry run (rules are Admin+).
+-- Test permissions: since Nov 10 batch 36 Owners and Editors build automations, so an Editor runs the dry
+-- run too (it always rolls back).
 select set_config('request.jwt.claim.sub', 'a2920029-0000-4000-8000-000000000002', false) is not null as ok \gset
 do $$
 begin
-  begin
-    perform public.test_rule((select id from av2_ids where name = 'r_kickoff'), (select id from av2_ids where name = 't_main'));
-    raise exception 'an Editor must not test rules';
-  exception when insufficient_privilege then null;
-  end;
+  assert public.test_rule((select id from av2_ids where name = 'r_kickoff'), (select id from av2_ids where name = 't_main')) is not null,
+    'an Editor tests automations';
 end $$;
 select set_config('request.jwt.claim.sub', 'a2920029-0000-4000-8000-000000000001', false) is not null as ok \gset
 

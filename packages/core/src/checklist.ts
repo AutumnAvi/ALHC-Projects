@@ -37,19 +37,55 @@ export const CHECKLIST_GROUPS = [
   { key: "overdue", title: "Overdue" },
   { key: "today", title: "Today" },
   { key: "week", title: "This week" },
+  { key: "next", title: "Next week" },
   { key: "later", title: "Later" },
   { key: "none", title: "No date" },
 ] as const;
 export type ChecklistGroupKey = (typeof CHECKLIST_GROUPS)[number]["key"];
 
-// "This week" is the next seven days (today's seven-day window), so it never empties on a Thursday.
-export const WEEK_DAYS = 6;
+// "This week" and "Next week" mean one thing everywhere (the checklist's groups, its date chips, the
+// quick add's "this week" / "next week", the pane's quick picks; Nov 10 audit, C8). Weeks are calendar
+// weeks starting on Sunday, like the app's calendars, and the days a task lands on are the WORKSPACE's
+// workdays (Sunday–Thursday by default):
+//   this week = the rest of this calendar week (the date it lands on: this week's last workday, today or later)
+//   next week = next calendar week (the date it lands on: next week's first workday)
+export function endOfThisWeek(today: string): string {
+  return shiftDays(today, 6 - weekdayOf(today));
+}
+
+export function endOfNextWeek(today: string): string {
+  return shiftDays(endOfThisWeek(today), 7);
+}
+
+const workdaySet = (workWeek: readonly number[]) => new Set(workWeek.length ? workWeek : DEFAULT_WORK_WEEK);
+
+// This week's last workday on or after today; null when none is left (a Friday in a Sunday–Thursday week).
+export function thisWeekWorkday(today: string, workWeek: readonly number[] = DEFAULT_WORK_WEEK): string | null {
+  const week = workdaySet(workWeek);
+  const dow = weekdayOf(today);
+  for (let d = 6; d >= dow; d--) if (week.has(d)) return shiftDays(today, d - dow);
+  return null;
+}
+
+// Next calendar week's first workday.
+export function nextWeekWorkday(today: string, workWeek: readonly number[] = DEFAULT_WORK_WEEK): string {
+  const week = workdaySet(workWeek);
+  const sunday = shiftDays(endOfThisWeek(today), 1);
+  for (let d = 0; d < 7; d++) if (week.has(d)) return shiftDays(sunday, d);
+  return sunday;
+}
+
+// What a typed "this week" means: this week's last workday, else (none left) next week's first.
+export function thisWeekDay(today: string, workWeek: readonly number[] = DEFAULT_WORK_WEEK): string {
+  return thisWeekWorkday(today, workWeek) ?? nextWeekWorkday(today, workWeek);
+}
 
 export function checklistGroupOf(dueOn: string | null, today: string): ChecklistGroupKey {
   if (!dueOn) return "none";
   if (dueOn < today) return "overdue";
   if (dueOn === today) return "today";
-  if (dueOn <= shiftDays(today, WEEK_DAYS)) return "week";
+  if (dueOn <= endOfThisWeek(today)) return "week";
+  if (dueOn <= endOfNextWeek(today)) return "next";
   return "later";
 }
 
@@ -111,34 +147,21 @@ export function checkedPlacement(mode: CheckedMode, settled: boolean): "group" |
 
 export type DateChip = { key: "today" | "tomorrow" | "week"; label: string; day: string };
 
-// Today, Tomorrow, and the end of this work week — the last workday of this calendar week (weeks start
-// on Sunday) after tomorrow. When none is left this week (a Thursday in a Sunday–Thursday workspace),
-// the chip reads "Next week" and picks next week's first workday.
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Today, Tomorrow, and "This week · Thu" — this week's last workday — when that is after tomorrow; else
+// (it's today or tomorrow, or none is left) "Next week · Sun", next week's first workday. The chip names
+// the day it sets.
 export function dateChips(today: string, workWeek: readonly number[] = DEFAULT_WORK_WEEK): DateChip[] {
-  const week = new Set(workWeek.length ? workWeek : DEFAULT_WORK_WEEK);
   const tomorrow = shiftDays(today, 1);
-  const dow = weekdayOf(today);
-  let endOfWeek: string | null = null;
-  for (let d = 6; d > dow + 1; d--) {
-    if (week.has(d)) {
-      endOfWeek = shiftDays(today, d - dow);
-      break;
-    }
-  }
-  let third: DateChip;
-  if (endOfWeek) {
-    third = { key: "week", label: "This week", day: endOfWeek };
-  } else {
-    const sunday = shiftDays(today, 7 - dow);
-    let first = sunday;
-    for (let d = 0; d < 7; d++) {
-      if (week.has(d)) {
-        first = shiftDays(sunday, d);
-        break;
-      }
-    }
-    third = { key: "week", label: "Next week", day: first };
-  }
+  const endOfWeek = thisWeekWorkday(today, workWeek);
+  const third: DateChip =
+    endOfWeek && endOfWeek > tomorrow
+      ? { key: "week", label: `This week · ${WEEKDAY_SHORT[weekdayOf(endOfWeek)]}`, day: endOfWeek }
+      : (() => {
+          const first = nextWeekWorkday(today, workWeek);
+          return { key: "week", label: `Next week · ${WEEKDAY_SHORT[weekdayOf(first)]}`, day: first };
+        })();
   return [
     { key: "today", label: "Today", day: today },
     { key: "tomorrow", label: "Tomorrow", day: tomorrow },
@@ -150,15 +173,13 @@ export function dateChips(today: string, workWeek: readonly number[] = DEFAULT_W
 // Labels
 // ---------------------------------------------------------------------------------------------
 
-const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
 // A due date the way a checklist says it: Today, Tomorrow, Yesterday, a weekday within the week ahead,
 // else "Oct 28" (with the year when it isn't this year).
 export function checklistDueLabel(dueOn: string, today: string): string {
   if (dueOn === today) return "Today";
   if (dueOn === shiftDays(today, 1)) return "Tomorrow";
   if (dueOn === shiftDays(today, -1)) return "Yesterday";
-  if (dueOn > today && dueOn <= shiftDays(today, WEEK_DAYS)) return WEEKDAY_SHORT[weekdayOf(dueOn)];
+  if (dueOn > today && dueOn <= shiftDays(today, 6)) return WEEKDAY_SHORT[weekdayOf(dueOn)];
   return dayLabel(dueOn, Number(today.slice(0, 4)));
 }
 

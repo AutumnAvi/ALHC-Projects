@@ -8,6 +8,7 @@ import { FeedbackSubtaskButton } from "@/components/task/feedback-subtask";
 import Link from "next/link";
 import { Bell, BellOff, FileCheck, Mail, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X, Zap } from "lucide-react";
 import { SendReviewDialog } from "@/components/task/send-review-dialog";
+import { reviewSendGate } from "@alhc/core/external-review";
 import { RequestConversationNotice } from "@/components/task/request-conversation";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
@@ -367,7 +368,7 @@ export function TaskActivity({
       case "inbound_received":
         return <>added this through the inbound webhook “{str(d, "endpoint_name")}”</>;
       case "request_number_assigned":
-        return <>assigned request number {str(d, "label")}</>;
+        return <>assigned task number {str(d, "label")}</>;
       case "email_queued":
         return (
           <>
@@ -1191,7 +1192,8 @@ export function TaskPaneFooter({
   // Nov 1 notes (batch 8, item 60): "Send for review" next to "Send response to submitter" opens the review
   // check dialog (pick or upload files, then send) with what was typed as the message. Editors and above
   // (create_review_check needs Editor+); the dialog clears the box once the review is sent.
-  const canSendReview = permissions.canEdit;
+  // Nov 10 batch 36: on an approval task with approvers only an approver sends it, after approving.
+  const canSendReview = reviewSendGate(task, memberId).allowed;
   const [reviewing, setReviewing] = useState<string | null>(null);
   const open = focused || draft.trim() !== "" || toSubmitter;
   const activityTab: ActivityTab = useActivityTab();
@@ -1334,7 +1336,7 @@ export function TaskPaneFooter({
                     type="button"
                     onClick={() => setReviewing(draft.trim())}
                     aria-label="Send for review…"
-                    data-tooltip="Pick or upload files and send them for approval or feedback"
+                    data-tooltip="Email files to an outside reviewer for an external review (separate from the internal approval)"
                     className="btn-secondary h-7 shrink-0 gap-1 whitespace-nowrap px-2 text-xs"
                   >
                     <FileCheck className="size-3.5" aria-hidden />
@@ -1366,7 +1368,7 @@ export function TaskPaneFooter({
           </div>
         </div>
       ) : (
-        <p className="text-sm text-zinc-600">You can view this task. Commenters and above can comment and follow it.</p>
+        <p className="text-sm text-zinc-600">You can view this task. To comment on it or follow it, ask the project’s Owner for more access.</p>
       )}
       <div className="mt-1.5 flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
         <span

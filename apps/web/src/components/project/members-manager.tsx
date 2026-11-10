@@ -297,7 +297,7 @@ export function MembersManager({
                         if (
                           await confirm({
                             title: `Make ${name} the owner?`,
-                            message: "You'll become an Admin and can no longer delete the project.",
+                            message: "You'll become an Editor and can no longer delete the project.",
                             confirmLabel: "Make owner",
                             tone: "danger",
                           })
@@ -376,7 +376,7 @@ export function MembersManager({
           ))}
         </dl>
         <p className="mt-3 text-xs text-zinc-500">
-          Workspace access (who can sign in at all) is managed by workspace admins on Settings → Workspace → Members.
+          Workspace access (who can sign in at all) is managed by workspace admins in the Admin console (Users).
           Removing someone here only removes them from this project.{" "}
           <Link href={ROLES_HELP_HREF} className="text-accent-700 hover:underline">
             See everything each role can do

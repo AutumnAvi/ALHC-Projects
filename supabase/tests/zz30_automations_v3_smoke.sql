@@ -814,14 +814,15 @@ begin
   end;
 end $$;
 
--- Eli (a portfolio Editor) reads the rules but can't change them; Vera (not in the portfolio) sees none.
+-- Eli (a portfolio Editor) reads and (since Nov 10 batch 36) changes the rules; Vera (not in the
+-- portfolio) sees none.
 set role authenticated;
 select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000002', false) is not null as ok \gset
 do $$
 begin
   assert (select count(*) from public.portfolio_rules where portfolio_id = pg_temp.av3('pf')) >= 4, 'Editors read the rules';
-  update public.portfolio_rules set enabled = false where portfolio_id = pg_temp.av3('pf');
-  assert not found, 'only Admins change them';
+  update public.portfolio_rules set name = name where portfolio_id = pg_temp.av3('pf');
+  assert found, 'Owners and Editors change them';
 end $$;
 select set_config('request.jwt.claim.sub', 'a3030030-0000-4000-8000-000000000005', false) is not null as ok \gset
 do $$

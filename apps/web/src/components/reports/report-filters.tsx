@@ -11,6 +11,7 @@ import {
   defaultReportWindow,
   filtersToParams,
   hasReportFilters,
+  describeDateRange,
   isDefaultWindow,
   isReportStatus,
   type ReportFilters,
@@ -249,7 +250,7 @@ export function ReportFiltersBar({
           type="button"
           aria-pressed={aroundToday}
           onClick={() => apply(filters, "default")}
-          title={`${around.from} to ${around.to}`}
+          title={describeDateRange(around.from, around.to, Number(today.slice(0, 4)))}
           className={`rounded px-2 py-0.5 ${aroundToday ? "bg-accent-50 font-medium text-accent-800" : "text-zinc-600 hover:bg-zinc-50"}`}
         >
           ±2 weeks

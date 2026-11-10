@@ -141,6 +141,12 @@ const LABEL = "text-sm font-medium text-zinc-900";
 
 // Create or edit a scheduled report email. The filter comes from the Reports page it was scheduled on and
 // is shown read-only (schedule again from Reports to use different filters).
+const FREQUENCY_NAMES: Record<ScheduleFrequency, string> = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
+
+function defaultScheduleName(report: string, frequency: ScheduleFrequency) {
+  return `${FREQUENCY_NAMES[frequency] ?? "Weekly"} ${report === "projects" ? "all projects report" : "report"}`;
+}
+
 export function ScheduleEmailDialog({
   schedule,
   report,
@@ -164,10 +170,10 @@ export function ScheduleEmailDialog({
   const router = useRouter();
   const notify = useNotify();
   const [pending, run] = useServerAction();
-  const [name, setName] = useState(
-    schedule?.name ?? (report === "projects" ? "All projects report" : "Weekly report"),
-  );
   const [frequency, setFrequency] = useState<ScheduleFrequency>(schedule?.frequency ?? "weekly");
+  // Nov 10 audit (C96): a new schedule's name follows the frequency ("Daily report") until someone types one.
+  const [typedName, setName] = useState<string | null>(schedule?.name ?? null);
+  const name = typedName ?? defaultScheduleName(report, frequency);
   const [weekday, setWeekday] = useState(schedule?.weekday ?? 1);
   const [monthDay, setMonthDay] = useState(schedule?.monthDay ?? 1);
   const [hour, setHour] = useState(schedule?.hour ?? 8);

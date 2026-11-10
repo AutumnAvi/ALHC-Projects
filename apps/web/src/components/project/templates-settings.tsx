@@ -58,7 +58,7 @@ function SaveProjectTemplate({
   const [replaceId, setReplaceId] = useState("");
   const [savedId, setSavedId] = useState<string | null>(null);
 
-  // Nov 1 notes (batch 11): only Admins+ save a project as a template, so nobody else sees this section.
+  // Nov 1 notes (batch 11): only Owners save a project as a template, so nobody else sees this section.
   if (!canSave) return null;
   return (
     <section aria-labelledby="save-template-heading" className={SECTION}>
@@ -66,7 +66,7 @@ function SaveProjectTemplate({
         <LayoutTemplate className="size-4 text-zinc-500" aria-hidden /> Save as project template
       </h2>
       <p className="mt-1 text-xs text-zinc-500">
-        Copies sections, tasks (with subtasks and field values), custom fields, automations, forms, saved views, and request
+        Copies sections, tasks (with subtasks and field values), custom fields, automations, forms, saved views, and task
         numbering into a workspace template. Assignees, members, comments, attachments, and completion are left out.{" "}
         <strong className="font-medium text-zinc-700">Everyone in the workspace can see and use templates.</strong>
       </p>

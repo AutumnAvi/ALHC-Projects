@@ -6,6 +6,7 @@ import {
   getPortfolio,
   listLatestStatusUpdates,
   listMyProjectRoles,
+  listPortfolioAncestorIds,
   listPortfolioChildren,
   listPortfolioFieldValues,
   listPortfolioFields,
@@ -48,6 +49,7 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     values,
     rollup,
     teams,
+    ancestors,
   ] = await Promise.all([
     getPortfolio(portfolioId),
     listPortfolioProjects(portfolioId),
@@ -63,6 +65,7 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
     softRead("portfolio field values", listPortfolioFieldValues(portfolioId), {} as Record<string, Record<string, Json>>),
     listPortfolioRollupProjects(portfolioId),
     softRead("teams", listTeams(), []),
+    softRead("parent portfolios", listPortfolioAncestorIds(portfolioId), new Set<string>()),
   ]);
   if (!portfolio) notFound();
   const inPortfolio = new Set(projects.map((p) => p.id));
@@ -116,7 +119,7 @@ export default async function PortfolioPage({ params }: PageProps<"/portfolios/[
         completed: progress.get(child.id)?.completed ?? 0,
       }))}
       nestCandidates={allPortfolios
-        .filter((p) => p.id !== portfolioId && !nested.has(p.id))
+        .filter((p) => p.id !== portfolioId && !nested.has(p.id) && !ancestors.has(p.id))
         .map(({ id, name }) => ({ id, name }))}
       fields={fields}
       values={values}

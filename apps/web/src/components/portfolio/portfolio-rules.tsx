@@ -170,7 +170,7 @@ export function PortfolioRulesView({
             ) : undefined
           }
         >
-          {canEdit ? "For example: when a project goes off track, notify its members." : "Portfolio admins and owners add automations here."}
+          {canEdit ? "For example: when a project goes off track, notify its members." : "The portfolio’s Owners and Editors add automations here."}
         </EmptyState>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -208,7 +208,10 @@ export function PortfolioRulesView({
                     label={`Run “${rule.name}” on a project`}
                     value={null}
                     options={ctx.projects.map((p) => ({ value: p.id, label: p.name }))}
-                    onChange={(projectId) =>
+                    onChange={async (projectId) => {
+                      // C37 (Nov 10): portfolio actions can archive projects or change owners, so ask first.
+                      const projectName = ctx.projects.find((p) => p.id === projectId)?.name ?? "this project";
+                      if (!(await confirm({ title: `Run “${rule.name}” on “${projectName}”?`, message: sentence(rule, ctx), confirmLabel: "Run" }))) return;
                       run(async () => {
                         const result = await runPortfolioRule(rule.id, projectId);
                         if (!result.error) {
@@ -223,8 +226,8 @@ export function PortfolioRulesView({
                           );
                         }
                         return result;
-                      })
-                    }
+                      });
+                    }}
                     variant="ghost"
                     searchable
                     emptyText="No project in this portfolio"
@@ -284,7 +287,7 @@ export function PortfolioRulesView({
               {rule.pausedAt ? (
                 <p className="mt-1 flex items-center gap-1 text-xs text-amber-800">
                   <CirclePause className="size-3.5" aria-hidden />
-                  Paused after failing again and again{rule.pauseReason ? `: ${rule.pauseReason}` : ""}. Turn it back on once it’s fixed.
+                  Paused after five failed runs in a row{rule.pauseReason ? `: ${rule.pauseReason}` : ""}. Turn it back on once it’s fixed.
                 </p>
               ) : rule.nextRunAt && rule.enabled ? (
                 <p className="mt-1 text-xs text-zinc-500">
@@ -759,10 +762,11 @@ export function ActionSettings({ a, ctx, onChange }: { a: PortfolioRuleItem; ctx
                 <SmartPicker
                   label="Role"
                   value={str(a.role) || "editor"}
-                  options={MEMBER_ROLES.map((r) => ({
-                    ...r,
-                    ...(r.value === "commenter" ? { description: "Only while the Commenter role is on (Admin console → Security)" } : {}),
-                  }))}
+                  options={[
+                    ...MEMBER_ROLES.filter((r) => r.value !== "commenter" || ctx.allowCommenter !== false || a.role === "commenter"),
+                    // An older step that adds Admins keeps showing it.
+                    ...(a.role === "admin" ? [{ value: "admin", label: "Admin" }] : []),
+                  ]}
                   onChange={(v) => onChange({ ...a, role: v })}
                   variant="chip"
                 />

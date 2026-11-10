@@ -1,5 +1,6 @@
 import "server-only";
 import {
+  commenterRoleAllowed,
   getMyPersonalWorkWeek,
   getPortfolio,
   getWorkWeek,
@@ -15,7 +16,7 @@ import type { PortfolioRuleContext } from "@alhc/core/portfolio-rules";
 // portfolios the viewer edits, and the portfolio's projects the viewer can open (manual runs). Read
 // with the viewer's own client.
 export async function loadPortfolioRuleContext(portfolioId: string): Promise<PortfolioRuleContext> {
-  const [portfolio, fields, profiles, members, others, projects, workWeek, ownWeek] = await Promise.all([
+  const [portfolio, fields, profiles, members, others, projects, workWeek, ownWeek, allowCommenter] = await Promise.all([
     getPortfolio(portfolioId),
     listPortfolioFields(portfolioId),
     listProfiles(),
@@ -24,6 +25,7 @@ export async function loadPortfolioRuleContext(portfolioId: string): Promise<Por
     listPortfolioProjects(portfolioId),
     getWorkWeek(),
     getMyPersonalWorkWeek(),
+    commenterRoleAllowed(),
   ]);
   return {
     portfolioName: portfolio?.name ?? "",
@@ -40,5 +42,6 @@ export async function loadPortfolioRuleContext(portfolioId: string): Promise<Por
     projects: projects.map((p) => ({ id: p.id, name: p.name })),
     workWeek,
     personalWorkWeek: ownWeek ?? null,
+    allowCommenter,
   };
 }

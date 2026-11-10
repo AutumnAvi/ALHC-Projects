@@ -128,7 +128,7 @@ function Description({ projectId, description }: { projectId: string; descriptio
       ) : description ? (
         <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-zinc-800">{description}</p>
       ) : (
-        <p className="mt-2 text-sm text-zinc-500">No description yet. Project admins can add one.</p>
+        <p className="mt-2 text-sm text-zinc-500">No description yet. The project’s owner can add one.</p>
       )}
     </section>
   );
@@ -136,6 +136,8 @@ function Description({ projectId, description }: { projectId: string; descriptio
 
 function ProjectRoles({ members }: { members: OverviewMember[] }) {
   const { openShare } = useProjectPage();
+  // Only Owners add people (flaw audit C51); everyone else sees who's here.
+  const canInvite = useProjectPermissions().canManage;
   const shown = members.slice(0, ROLES_SHOWN);
   const more = members.length - shown.length;
   return (
@@ -144,6 +146,7 @@ function ProjectRoles({ members }: { members: OverviewMember[] }) {
         Members
       </h2>
       <ul className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
+        {canInvite ? (
         <li>
           <button
             type="button"
@@ -156,6 +159,7 @@ function ProjectRoles({ members }: { members: OverviewMember[] }) {
             Add member
           </button>
         </li>
+        ) : null}
         {shown.map((m) => (
           <li key={m.profileId} className="flex min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5">
             <Avatar name={m.name} profileId={m.profileId} size="md" />
@@ -358,11 +362,11 @@ function StatusSummary({
             <p className="mt-1 line-clamp-6 text-sm whitespace-pre-wrap text-zinc-700">{latestUpdate.note}</p>
           ) : null}
         </article>
-      ) : (
+      ) : canPost ? (
         <p className="mt-3 text-xs text-zinc-500">
-          No status updates yet. Pick a status to tell everyone how the project is going.
+          No status updates yet. Pick a status to tell everyone how the project is going. Members get a notification.
         </p>
-      )}
+      ) : null}
 
       <DueDate projectId={projectId} dueOn={dueOn} complete={status === "complete"} />
     </section>

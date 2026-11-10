@@ -23,8 +23,8 @@ export default async function ArchivedProjectsPage() {
         <div className="px-gutter py-6">
           {projects.length === 0 ? (
             <EmptyState icon={Archive} title="No archived projects">
-              When a project admin or owner archives a project (project … menu → Archive project), it moves here.
-              It stays readable by its members, and admins can unarchive it.
+              When a project’s Owner archives it (the menu next to the project’s name → Archive project), it moves
+              here. It stays readable by its members, and its Owner can unarchive it.
             </EmptyState>
           ) : (
             <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200">

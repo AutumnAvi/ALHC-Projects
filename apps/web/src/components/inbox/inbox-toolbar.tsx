@@ -29,6 +29,7 @@ export function InboxToolbar({
   onSortChange,
   categoryCounts,
   canMarkAllRead,
+  markAllReadLabel = "Mark all as read",
   onMarkAllRead,
   archiveAll,
 }: {
@@ -39,6 +40,8 @@ export function InboxToolbar({
   // How many of this tab's notifications are of each kind (shown next to the Filter checkboxes).
   categoryCounts: Map<InboxCategory, number>;
   canMarkAllRead: boolean;
+  // "Mark these 4 as read" while a filter is on (only the ones shown are marked).
+  markAllReadLabel?: string;
   onMarkAllRead: () => void;
   // Activity only: the menu item's text and what it does (it asks first). Null elsewhere.
   archiveAll: { label: string; disabled: boolean; run: () => void } | null;
@@ -224,7 +227,7 @@ export function InboxToolbar({
                 }}
               >
                 <CheckCheck className="size-3.5" aria-hidden />
-                Mark all as read
+                {markAllReadLabel}
               </MenuItem>
               {archiveAll ? (
                 <MenuItem

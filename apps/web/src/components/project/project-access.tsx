@@ -55,7 +55,8 @@ export function ReadOnlyNotice({ need, what }: { need: ProjectRole; what: string
       <Eye className="size-4 shrink-0 text-zinc-500" aria-hidden />
       <span>
         You’re a{role === "admin" || role === "editor" ? "n" : ""} {role ? ROLE_LABELS[role] : "visitor"} here.{" "}
-        {ROLE_LABELS[need]}s and above can change {what}.
+        {/* The Admin role is retired: owner-level pages name the project's Owners. */}
+        {need === "admin" || need === "owner" ? "Only the project’s Owners" : `${ROLE_LABELS[need]}s and above`} can change {what}.
       </span>
     </p>
   );

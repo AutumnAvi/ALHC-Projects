@@ -89,6 +89,8 @@ const HEADER_HEIGHT = 49;
 const GROUP_HEIGHT = 32;
 const ROW_HEIGHT = 36;
 const labelCell = { width: LABEL_WIDTH, minWidth: LABEL_WIDTH };
+// The earlier / later buttons' tooltips: how far one step goes (stepAnchor).
+const ZOOM_STEP_LABEL: Record<Zoom, string> = { week: "by a week", month: "by a month", quarter: "by a quarter" };
 
 export function TimelineView({
   projectId,
@@ -154,6 +156,8 @@ export function TimelineView({
   const [removedDeps, setRemovedDeps] = useState<ReadonlySet<string>>(() => new Set());
 
   function removeDependency(depId: string) {
+    // Kept so Undo can make the same link again (type and lag included; flaw audit C44).
+    const removed = dependencies.find((d) => d.id === depId) ?? null;
     setSelectedDep(null);
     setHoverDepNow(null);
     setRemovedDeps((current) => new Set(current).add(depId));
@@ -166,7 +170,20 @@ export function TimelineView({
           return next;
         });
       } else {
-        notify("Dependency removed");
+        notify(
+          "Dependency removed",
+          removed
+            ? {
+                label: "Undo",
+                onClick: () =>
+                  runLink(async () => {
+                    const undone = await setTaskDependency(removed.predecessorId, removed.successorId, removed.kind, removed.lagDays);
+                    if (!undone.error) notify("Dependency restored");
+                    return undone;
+                  }),
+              }
+            : undefined,
+        );
       }
       return result;
     });
@@ -531,8 +548,8 @@ export function TimelineView({
       <div className={`relative flex min-w-0 flex-1 flex-col ${navigating ? "opacity-60 transition-opacity" : ""}`}>
         <PeriodNav
           label={label}
-          prevLabel={`Earlier (${zoom})`}
-          nextLabel={`Later (${zoom})`}
+          prevLabel={`Earlier ${ZOOM_STEP_LABEL[zoom]}`}
+          nextLabel={`Later ${ZOOM_STEP_LABEL[zoom]}`}
           onPrev={() => navigate({ d: stepAnchor(anchor, zoom, -1) })}
           onNext={() => navigate({ d: stepAnchor(anchor, zoom, 1) })}
           onToday={() => navigate({ d: null })}
@@ -649,7 +666,8 @@ export function TimelineView({
             >
               {zoom === "week"
                 ? Array.from({ length: days }, (_, i) => i)
-                    .filter((i) => [0, 6].includes(weekday(addDays(start, i))))
+                    // Days outside the workspace's workweek (Sun–Thu here: Fri and Sat; flaw audit C23).
+                    .filter((i) => !workWeek.includes(weekday(addDays(start, i))))
                     .map((i) => (
                       <div key={i} className="absolute inset-y-0 bg-zinc-50" style={{ left: i * dayWidth, width: dayWidth }} />
                     ))
@@ -670,7 +688,7 @@ export function TimelineView({
                 className="sticky left-0 z-10 flex items-end border-r border-zinc-200 bg-white px-3 pb-1.5 text-xs font-medium text-zinc-500"
                 style={labelCell}
               >
-                Task
+                Name
               </div>
               <div aria-hidden className="relative" style={{ width }}>
                 <div className="relative h-6 border-b border-zinc-100">
@@ -705,8 +723,9 @@ export function TimelineView({
 
             {groups.length === 0 ? (
               <p className="sticky left-0 max-w-md px-3 py-6 text-sm text-zinc-500">
-                No scheduled tasks match this view. Set a start or due date in the task pane, or drag an
-                unscheduled task onto a day.
+                {canEdit
+                  ? "No scheduled tasks match this view. Set a start or due date in the task pane, or drag an unscheduled task onto a day."
+                  : "No scheduled tasks match this view."}
               </p>
             ) : null}
 
@@ -794,13 +813,24 @@ export function TimelineView({
           </p>
         ) : null}
         <p className={VIEW_HINT}>
-          Bars run from start to due date; diamonds are milestones on their due day. Drag a bar or diamond to move
-          it, drag either end of a bar to change its start or due date, or drag an unscheduled task onto a day to
-          give it a due date. A drag moves only that task: hold Shift to move its linked tasks along by the same
-          amount — the tasks it depends on and the ones that depend on it — or Alt (Option) to move them only as far as
-          their links need (dependents later, the tasks it depends on earlier); Esc cancels. Arrows link a
-          task to the one waiting on it (red when the waiting task starts before the first one is due).
-          {canEdit ? " Draw dependencies lets you drag from one task to another to link them." : ""}
+          {canEdit ? (
+            <>
+              Bars run from start to due date; diamonds are milestones on their due day. Drag a bar or diamond to move
+              it, drag either end of a bar to change its start or due date, or drag an unscheduled task onto a day to
+              give it a due date. A drag moves only that task: hold Shift to move its linked tasks along by the same
+              amount — the tasks it depends on and the ones that depend on it — or Alt (Option) to move them only as far as
+              their links need (dependents later, the tasks it depends on earlier); Esc cancels. Arrows link a
+              task to the one waiting on it (red when the waiting task starts before the first one is due). Draw
+              dependencies lets you drag from one task to another to link them.
+            </>
+          ) : (
+            // Flaw audit C101: no drag instructions for people who can't drag.
+            <>
+              Bars run from start to due date; diamonds are milestones on their due day. Arrows link a task to the one
+              waiting on it (red when the waiting task starts before the first one is due). Click a bar or a name to
+              open the task.
+            </>
+          )}
         </p>
       </div>
 

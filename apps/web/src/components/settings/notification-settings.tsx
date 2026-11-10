@@ -22,14 +22,12 @@ export function NotificationSettings({
   enabled,
   onEnabledChange,
   sending,
-  replyByEmail,
 }: {
   email: string;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
   // Whether emails go out from this workspace at all, and whether replies to them become comments.
   sending: boolean;
-  replyByEmail: boolean;
 }) {
   const [pending, run] = useServerAction();
 
@@ -65,15 +63,14 @@ export function NotificationSettings({
         <span className="min-w-0">
           <span className="block text-sm font-medium text-zinc-900">Email me about comments</span>
           <span className="mt-0.5 block text-sm text-zinc-600">
-            When someone comments on a task you follow, email you the comment with an Open task link.
-            {replyByEmail ? " Reply to the email to comment back." : ""} Turning this off also stops emails that are
-            already queued.
+            When someone comments on a task you follow, email you the comment with an Open task link (open the task to
+            reply). Turning this off also stops emails that are already queued.
           </span>
         </span>
       </label>
       <p className="mt-2 text-xs text-zinc-500">
         Emails from automations and forms, such as due date reminders or updates to a request you submitted, are set up by
-        each project’s admins and aren’t affected by this switch.
+        each project’s Owner and aren’t affected by this switch.
       </p>
     </section>
   );
@@ -123,14 +120,11 @@ export function NotificationMatrix({
   settings,
   onCommentEmailChange,
   sending,
-  replyByEmail,
 }: {
   email: string;
   settings: NotificationSettings;
-  // The comment email switch is also shown on Email forwarding (reply by email needs it).
   onCommentEmailChange: (enabled: boolean) => void;
   sending: boolean;
-  replyByEmail: boolean;
 }) {
   const [values, setValues] = useState(settings);
   const [pending, run] = useServerAction();
@@ -195,7 +189,6 @@ export function NotificationMatrix({
                 <span className="block font-medium text-zinc-900">{kind.label}</span>
                 <span className="mt-0.5 block text-xs text-zinc-500">
                   {kind.description}
-                  {kind.key === "comment" && replyByEmail ? " Reply to a comment email to comment back." : ""}
                 </span>
               </th>
               {(["inbox", "email"] as const).map((channel) => (
@@ -217,8 +210,8 @@ export function NotificationMatrix({
       <p className="mt-2 text-xs text-zinc-500">
         An email isn’t sent when you’ve already read the notification in your Inbox, and turning an email off also
         stops ones already queued. Emails from automations and forms, such as due date reminders or updates to a request
-        you submitted, are set up by each project’s admins and aren’t affected by these switches. To stop hearing
-        about one task, leave it (Leave task, at the bottom of its pane).{" "}
+        you submitted, are set up by each project’s Owner and aren’t affected by these switches. To stop hearing
+        about one task, unfollow it (Unfollow, at the bottom of its pane).{" "}
         <Link href="/inbox" className="text-accent-700 hover:underline">
           Open Inbox
         </Link>
