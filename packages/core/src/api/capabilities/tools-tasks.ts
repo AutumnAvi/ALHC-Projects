@@ -1,6 +1,7 @@
 // AI builder round 5 (note 178): the registry's task, approval, and collaboration tools. Every write is an
 // existing typed-API mutation run with the person's own context (RLS, the guards, the blocked-completion
 // guard decide as by hand); nothing here uses the service role.
+import { APPROVAL_SETUP_UNFINISHED, approvalSetupUnfinished } from "../../approval-setup";
 import { BIG_CHANGE_ITEMS } from "../../ai-tools";
 import { blockedCompletionReason, parseBlockerCounts } from "../../blocked-completion";
 import { isRealDate } from "../../ai-builder";
@@ -663,13 +664,16 @@ const sendForApprovalTool: Handler = {
     if (t.kind !== "approval") refuse(`${what}: “${t.title}” isn’t an approval task`);
     const setup = await approvalSetup(env.ctx, t.id);
     const approvers = (setup.approvers as string[]) ?? [];
-    if (!approvers.length) refuse(`${what}: “${t.title}” has no approvers yet (set_approvers first)`);
+    if (approvalSetupUnfinished(approvers.length)) refuse(`${what}: ${APPROVAL_SETUP_UNFINISHED} — “${t.title}” has no approvers yet (set_approvers first)`);
+    const follow = await followUpState(env.ctx, t.id);
+    if (follow.after === "move_section" && !follow.section_id) refuse(`${what}: “${t.title}” is set to move after approval, but no section is chosen (set_approval_follow_up)`);
     const text = typeof input.text === "string" ? input.text.trim() : "";
     const files: string[] = [];
     for (const f of Array.isArray(input.files) ? input.files : []) files.push((await refArg(env, "attachment", f, what)).id);
     if (!text && !files.length) refuse(`${what}: add the final text or a file`);
     const who = approvers.map((a) => personName(env, a)).join(", ");
-    return staged("send_for_approval", t.projectId, `Send “${t.title}” for approval`, "Not sent", `Pending with ${who}`, { task_id: t.id, text, files }, { notifies: `${who} (an approval request in their Inbox and email)` });
+    const afterBit = follow.after === "move_section" ? "then move to a section" : follow.after === "notify" ? "then just notify" : "then complete the task";
+    return staged("send_for_approval", t.projectId, `Send “${t.title}” for approval`, "Not sent", `Pending with ${who} (${afterBit})`, { task_id: t.id, text, files }, { notifies: `${who} (an approval request in their Inbox and email)` });
   },
   async read(ctx, op) {
     const r = maybe(await ctx.db.from("approval_rounds").select("id, status").eq("task_id", taskId(op)).order("created_at", { ascending: false }).limit(1).maybeSingle(), "round");
@@ -677,7 +681,15 @@ const sendForApprovalTool: Handler = {
   },
   verify: verifyTask,
   async apply(ctx, _op, a) {
-    const res = await sendForApproval(ctx, String(a.task_id), { finalText: String(a.text ?? ""), attachmentIds: (a.files as string[]) ?? [], moreSteps: false, afterApproval: "complete", moveSectionId: null });
+    const follow = await followUpState(ctx, String(a.task_id));
+    const after = follow.after === "move_section" || follow.after === "notify" ? follow.after : "complete";
+    const res = await sendForApproval(ctx, String(a.task_id), {
+      finalText: String(a.text ?? ""),
+      attachmentIds: (a.files as string[]) ?? [],
+      moreSteps: after !== "complete",
+      afterApproval: after,
+      moveSectionId: after === "move_section" ? ((follow.section_id as string | null) ?? null) : null,
+    });
     return res.roundId ?? null;
   },
   async undo(ctx, op) {
