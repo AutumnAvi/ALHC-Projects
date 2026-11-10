@@ -162,7 +162,7 @@ export function legacyPaneLabel(
   numbering: QueryResult<{ wrap_brackets?: boolean | null } | null>,
   label: QueryResult<string | null>,
 ): RequestLabel | null {
-  const sequence = maybe(numbering, "request numbering");
+  const sequence = maybe(numbering, "task numbering");
   const text = sequence ? maybe(label, "request number") : null;
   return text ? { text, wrap: sequence?.wrap_brackets !== false } : null;
 }

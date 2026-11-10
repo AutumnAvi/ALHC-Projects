@@ -239,7 +239,7 @@ function TaskTemplates({
         <div className="mt-3">
           <EmptyState size="inline" icon={ListPlus} title="No task templates yet">
             {canEdit
-              ? "Add one here, or open a task and choose the template button in its header."
+              ? "Add one here, or open a task and choose … → Save as task template…."
               : "Editors can add task templates for this project."}
           </EmptyState>
         </div>

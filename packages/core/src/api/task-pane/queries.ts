@@ -511,7 +511,7 @@ export const getTaskDetail = read(async (ctx: ApiContext, taskId: string): Promi
     source: task.source,
     requestLabel: taskNumberLists.get(task.id)?.[0]?.label ?? legacyPaneLabel(numbering, label),
     taskNumbers: taskNumberLists.get(task.id) ?? [],
-    canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "request numbering")),
+    canAssignRequestNumber: !task.req_number && !isSubtask && Boolean(maybe(numbering, "task numbering")),
     submission: submission
       ? {
           email: submission.submitter_email,

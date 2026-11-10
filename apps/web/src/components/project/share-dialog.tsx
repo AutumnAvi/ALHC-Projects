@@ -113,7 +113,7 @@ export function ShareDialog({
             <InviteForm data={data} pending={pending} projectId={projectId} change={change} notify={notify} />
           ) : (
             <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-              Only project admins and owners can invite people or change access. You’re{" "}
+              Only the project’s Owners can invite people or change access. You’re{" "}
               {roleWithArticle(ROLE_LABELS[data.viewerRole])}{" "}
               here.
             </p>
