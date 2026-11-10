@@ -593,7 +593,7 @@ const ruleOutput = {
 };
 const autoInput = (over: Record<string, unknown> = {}) => ({ requestKey: "auto-key-0001", projectId: PROJECT, description: "Comment when it reaches Review", ...over });
 
-test("an automation draft: pilot projects only, Admin+, the automation model, stored for the canvas, nothing saved", async () => {
+test("an automation draft: pilot projects only, Editor+, the automation model, stored for the canvas, nothing saved", async () => {
   const fake = pilot();
   const prov = provider(haiku(ruleOutput));
   const res = await draftAutomation(createApiContext(fake.db), autoInput(), prov.p);
@@ -612,7 +612,11 @@ test("an automation draft: pilot projects only, Admin+, the automation model, st
   const other = pilot({ project: { data: { id: PROJECT, name: "P", workspace_id: "main", archived_at: null }, error: null } });
   await assert.rejects(draftAutomation(createApiContext(other.db), autoInput(), none.p), reject("forbidden"));
   const editor = pilot({ role: { data: "editor", error: null } });
-  await assert.rejects(draftAutomation(createApiContext(editor.db), autoInput(), none.p), reject("forbidden"));
+  const editorProv = provider(haiku(ruleOutput));
+  const editorRes = await draftAutomation(createApiContext(editor.db), autoInput(), editorProv.p);
+  assert.equal(editorRes.projectId, PROJECT);
+  const commenter = pilot({ role: { data: "commenter", error: null } });
+  await assert.rejects(draftAutomation(createApiContext(commenter.db), autoInput(), none.p), reject("forbidden"));
   const archived = pilot({ project: { data: { id: PROJECT, name: "P", workspace_id: WS, archived_at: "2026-11-01" }, error: null } });
   await assert.rejects(draftAutomation(createApiContext(archived.db), autoInput(), none.p), reject("forbidden"));
   await assert.rejects(draftAutomation(createApiContext(pilot({ admin: { data: false, error: null } }).db), autoInput(), none.p), reject("forbidden", NOT_PILOT_ADMIN));

@@ -392,7 +392,7 @@ export const ASSISTANT_HELP_SUMMARY = [
   "Projects: the sidebar's Projects (+ to create one from the Template gallery, a blank project, or an Asana import). A project has tabs: Overview, its views (List, Board, Calendar, Timeline), Dashboard, Messages, Workload, Files. The header has the status, Share (invite people, roles), and Customize.",
   "Views: the toolbar has + Add task (its menu: Add section, Add milestone, From a template), Filter, Sort, Group, Options (Show completed, Show subtasks, Columns, Export CSV, Save as new view).",
   "Tasks: click a row to open the task pane: assignee, due date (start date, time, Repeats), projects, dependencies, custom fields, description, subtasks, attachments, comments. The pane's … menu has Task type, Duplicate, Convert, Save as task template, Print, Delete.",
-  "Automations: the project's Automations page (Customize → Automations) — When / If / Then, Else if / Otherwise, Test, Templates, History. Owners and Admins manage them. Edit with AI changes one.",
+  "Automations: the project's Automations page (Customize → Automations) — When / If / Then, Else if / Otherwise, Test, Templates, History. Owners and Editors manage them. Edit with AI changes one.",
   "Approvals: make a task an approval task (… → Task type → Approval), pick approvers, then Ready for approval; approvers decide on the review page.",
   "Roles: Owner, Admin, Editor (changes tasks, sections, fields), Commenter (comments only), Viewer (reads). Help → Roles & permissions explains them.",
   "My tasks: tasks assigned to you, with quick add. Home: today, what needs you, your projects. Inbox: notifications. Settings (avatar menu) → AI & MCP: tokens for MCP clients.",
