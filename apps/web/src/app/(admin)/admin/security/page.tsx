@@ -108,7 +108,7 @@ export default async function AdminSecurityPage() {
       <SettingsCard
         id="admin-project-roles"
         title="Project roles"
-        description="Which roles project admins can give people when sharing a project or inviting them."
+        description="Which roles project Owners can give people when sharing a project or inviting them."
         isAdmin
       >
         <CommenterRoleSettings allowed={allowCommenter} commenters={commenters} />

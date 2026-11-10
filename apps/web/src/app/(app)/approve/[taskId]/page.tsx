@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ThumbsUp } from "lucide-react";
 import { ApproverReviewPage } from "@/components/task/approver-review-page";
 import { ExternalReviewSteps } from "@/components/task/external-review-steps";
-import { reviewComesAfterApproval } from "@alhc/core/external-review";
+import { isTwoStageApproval } from "@alhc/core/external-review";
 import { ReviewTaskDetails } from "@/components/task/review-task-details";
 import { TaskLiveRefresh } from "@/components/task/task-live-refresh";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -38,7 +38,7 @@ export default async function ApproveTaskPage({ params }: PageProps<"/approve/[t
   }
   const details = reviewTaskDetails(task);
   // Nov 10 batch 36: with an external reviewer too, the steps (and, once approved, "Send to …") show here.
-  const twoStep = reviewComesAfterApproval(task) && Boolean(task.externalReview?.reviewer);
+  const twoStep = isTwoStageApproval(task);
   const steps = twoStep ? <ExternalReviewSteps task={task} memberId={member.id} /> : null;
   return (
     <main className="flex min-h-0 flex-1 flex-col">

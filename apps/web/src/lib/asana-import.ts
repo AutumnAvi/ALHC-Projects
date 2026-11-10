@@ -1,6 +1,7 @@
 import "server-only";
 import type { Json } from "@alhc/core/supabase/database.types";
 import { MAX_SUBTASK_DEPTH } from "@alhc/core/subtasks";
+import { plural } from "@alhc/core/rule-feedback";
 
 // Parses Asana project exports (the JSON export and/or the CSV export of a project) into the batch
 // format of rpc("import_batch") (documented above that function in
@@ -877,25 +878,25 @@ export function buildImportPlan(files: { name: string; text: string }[]): Import
   // Dependencies on tasks that aren't in the export can't be linked.
   const linkable = [...dependencies.values()].filter((d) => taskGids.has(d.predecessor) && taskGids.has(d.successor));
   if (linkable.length < dependencies.size) {
-    warnings.push(`${dependencies.size - linkable.length} dependencies point at tasks outside this export and are skipped.`);
+    warnings.push(`${plural(dependencies.size - linkable.length, "dependency", "dependencies")} ${dependencies.size - linkable.length === 1 ? "points" : "point"} at tasks outside this export and ${dependencies.size - linkable.length === 1 ? "is" : "are"} skipped.`);
   }
   if (nestedFlattened > 0) {
     warnings.push(
-      `${nestedFlattened} subtasks are nested more than ${MAX_SUBTASK_DEPTH} levels deep in Asana; they’re imported on the ${MAX_SUBTASK_DEPTH}th level.`,
+      `${plural(nestedFlattened, "subtask")} ${nestedFlattened === 1 ? "is" : "are"} nested more than ${MAX_SUBTASK_DEPTH} levels deep in Asana; ${nestedFlattened === 1 ? "it’s" : "they’re"} imported on the ${MAX_SUBTASK_DEPTH}th level.`,
     );
   }
   if (unresolvedPeopleValues > 0) {
-    warnings.push(`${unresolvedPeopleValues} people-field values have no email in the export and are skipped.`);
+    warnings.push(`${plural(unresolvedPeopleValues, "people-field value")} ${unresolvedPeopleValues === 1 ? "has" : "have"} no email in the export and ${unresolvedPeopleValues === 1 ? "is" : "are"} skipped.`);
   }
   if (commentsWithoutAuthorEmail > 0) {
     warnings.push(
-      `${commentsWithoutAuthorEmail} comments have no author email; they’ll be posted by you with the author’s name.`,
+      `${plural(commentsWithoutAuthorEmail, "comment")} ${commentsWithoutAuthorEmail === 1 ? "has" : "have"} no author email; ${commentsWithoutAuthorEmail === 1 ? "it’ll" : "they’ll"} be posted by you with the author’s name.`,
     );
   }
   const approvalTasks = tasks.filter((t) => t.kind === "approval").length;
   if (approvalTasks > 0) {
     warnings.push(
-      `${approvalTasks} approval task${approvalTasks === 1 ? "" : "s"} keep their type, but importing asks nobody to approve. Open one and use “Ask … to approve” to send the request.`,
+      `${approvalTasks} approval task${approvalTasks === 1 ? "" : "s"} keep${approvalTasks === 1 ? "s its" : " their"} type, but importing asks nobody to approve. Open one and use Finish setup in its Approval row to choose who approves.`,
     );
   }
   const otherProjects = new Set(tasks.flatMap((t) => t.projects.map((p) => p.gid)));

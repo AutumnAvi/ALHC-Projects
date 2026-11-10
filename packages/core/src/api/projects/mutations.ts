@@ -103,7 +103,7 @@ export async function updateProject(
     throw invalid("Project due dates need this release’s database update, which isn’t applied yet");
   }
   // Admin+ (projects_update_admin): RLS turns anything below into zero rows.
-  checkUpdated(result, "Only project admins and owners can change the project’s details");
+  checkUpdated(result, "Only the project’s Owners can change the project’s details");
 }
 
 export async function deleteProject(ctx: ApiContext, projectId: string): Promise<void> {

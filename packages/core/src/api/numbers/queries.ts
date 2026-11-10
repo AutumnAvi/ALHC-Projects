@@ -33,10 +33,10 @@ export const getRequestSequence = read(async (ctx: ApiContext, projectId: string
       .eq("project_id", projectId)
       .is("deleted_at", null)
       .maybeSingle();
-    const row = maybe(legacy, "request numbering");
+    const row = maybe(legacy, "task numbering");
     return row ? numberingFromRow({ ...row, advanced: false }) : null;
   }
-  const row = maybe(full, "request numbering");
+  const row = maybe(full, "task numbering");
   return row ? numberingFromRow({ ...row, advanced: true }) : null;
 });
 

@@ -16,6 +16,7 @@ export type RowCompleteTask = {
   approvalStatus?: ApprovalTaskStatus | null;
   approvalIsApprover?: boolean;
   approvalWaitingOnMe?: boolean;
+  externalApproved?: boolean;
 };
 
 // The completion control of a List / Board / My tasks / Home / subtask row (Oct 29 notes, batch 7,
@@ -50,7 +51,7 @@ export function RowCompleteControl({
   const approvalAction = useApprovalAction();
   // An AI builder draft's starter tasks are created open: their mark is never a button.
   if (useProjectData().draft) readOnly = true;
-  const mode = rowCompleteMode(task, completed);
+  const mode = rowCompleteMode(task, completed, assignedToMe);
   const approvalControl =
     mode === "approve" ||
     (mode === "ready" && (!readOnly || assignedToMe)) ||

@@ -88,8 +88,8 @@ export function MembersManager({
             Invite people
           </h2>
           <p className="mt-1 text-sm text-zinc-600">
-            {inviteHelp(isWorkspaceAdmin, resendable)} Guests are just people invited with a lower role, such as Viewer or
-            Commenter.
+            {inviteHelp(isWorkspaceAdmin, resendable)} Guests are just people invited with a lower role, such as Viewer
+            {allowCommenter ? " or Commenter" : ""}.
           </p>
           <form
             className="mt-4 flex flex-wrap items-end gap-3"
