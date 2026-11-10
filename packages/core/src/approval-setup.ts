@@ -34,6 +34,23 @@ export function defaultApprovalSetup(input?: Partial<ApprovalSetupDraft>): Appro
 }
 
 // What stops a step from moving on (null = fine).
+// Note 185: an approval with nobody to approve it is not finished. Nothing is sent until there is
+// an approver (send_for_approval already refuses; the task is flagged in the pane).
+export function approvalSetupUnfinished(approverCount: number): boolean {
+  return approverCount < 1;
+}
+
+export const APPROVAL_SETUP_UNFINISHED = "Approval setup not finished";
+
+// The confirm when someone closes the setup while it still has no approver.
+export const APPROVAL_SETUP_LEAVE = {
+  title: "Finish setting up this approval?",
+  message:
+    "This approval has no approver yet, so nothing is sent for approval. Finish the setup now, or leave it and come back from the task.",
+  confirmLabel: "Leave unfinished",
+  cancelLabel: "Keep editing",
+} as const;
+
 export function approvalSetupProblem(step: ApprovalSetupStep, draft: ApprovalSetupDraft): string | null {
   if (step === "approvers") {
     if (draft.approverIds.length === 0) return "Choose at least one approver";

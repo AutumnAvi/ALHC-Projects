@@ -7,13 +7,17 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  CircleCheck,
+  Diamond,
   ListPlus,
   Lock,
   MoreHorizontal,
   Pencil,
   Plus,
   Rows3,
+  ThumbsUp,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
@@ -26,7 +30,7 @@ import { usePendingCreates, withPendingCreate } from "@/lib/pending-creates";
 import { createSection, deleteSection, renameSection } from "@/lib/actions/projects";
 import { createTask } from "@/lib/actions/tasks";
 import { createTaskFromTemplate } from "@/lib/actions/templates";
-import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, type TaskKind } from "@alhc/core/task-kinds";
+import { TASK_KINDS, TASK_KIND_LABELS, parseTaskKind, taskKindFromKey, type TaskKind } from "@alhc/core/task-kinds";
 import type { Section } from "@alhc/core/api/projects/model";
 
 // Opens/closes the task pane via ?task=, preserving other query params (e.g. search terms).
@@ -355,6 +359,90 @@ export function PendingTaskRows({
   );
 }
 
+const ADD_TASK_KIND_ICONS: Record<TaskKind, LucideIcon> = {
+  task: CircleCheck,
+  milestone: Diamond,
+  approval: ThumbsUp,
+};
+
+// Note 187: the kind sits to the left of the name. Wide rows get Task | Milestone | Approval;
+// a narrow row (a Board column, a phone) falls back to a menu in that same spot.
+export function AddTaskKindControl({
+  id,
+  kind,
+  onChange,
+  onEscape,
+}: {
+  id: string;
+  kind: TaskKind;
+  onChange: (kind: TaskKind) => void;
+  onEscape: () => void;
+}) {
+  return (
+    <>
+      <SmartPicker
+        id={`${id}-menu`}
+        label="Type of the new task"
+        value={kind}
+        onChange={(value) => onChange(parseTaskKind(value))}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onEscape();
+          }
+        }}
+        panelWidth={180}
+        className="h-8 w-auto shrink-0 text-xs @lg/add:hidden"
+        options={TASK_KINDS.map((k) => {
+          const Icon = ADD_TASK_KIND_ICONS[k];
+          return { value: k, label: TASK_KIND_LABELS[k], icon: <Icon className="size-3.5" aria-hidden /> };
+        })}
+      />
+      <div
+        role="radiogroup"
+        aria-label="Type of the new task"
+        data-add-task-kind="segmented"
+        className="hidden h-8 shrink-0 items-center rounded-md bg-zinc-100 p-0.5 @lg/add:inline-flex"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onEscape();
+            return;
+          }
+          const next = taskKindFromKey(kind, e.key);
+          if (!next) return;
+          e.preventDefault();
+          onChange(next);
+          const group = e.currentTarget;
+          queueMicrotask(() => group.querySelector<HTMLButtonElement>(`[data-kind="${next}"]`)?.focus());
+        }}
+      >
+        {TASK_KINDS.map((k) => {
+          const Icon = ADD_TASK_KIND_ICONS[k];
+          const selected = kind === k;
+          return (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              data-kind={k}
+              aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => onChange(k)}
+              className={`inline-flex h-7 items-center gap-1 rounded px-1.5 text-xs ${
+                selected ? "bg-white font-medium text-zinc-900 shadow-xs" : "text-zinc-600 hover:text-zinc-900"
+              }`}
+            >
+              <Icon className="size-3.5 shrink-0" aria-hidden />
+              {TASK_KIND_LABELS[k]}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 // `defaultOpen` starts with the input showing (Tab then Q, or the toolbar's "+ Add task", remounts it
 // with a new key to open it). `atTop` puts new tasks at the top of the section. In a List row the
 // closed state is Asana's grey "Add task…" text lined up with the task names (`indent`).
@@ -437,8 +525,15 @@ export function AddTaskInput({
           return result;
         });
       }}
-      className={`flex items-center gap-1 ${variant === "row" ? `py-1.5 pr-3 ${indent}` : ""}`}
+      className={`@container/add flex items-center gap-1.5 ${variant === "row" ? "py-1.5 pr-3 pl-1.5" : ""}`}
+      data-add-task-row=""
     >
+      <AddTaskKindControl
+        id={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}
+        kind={kind}
+        onChange={setKind}
+        onEscape={close}
+      />
       <label className="sr-only" htmlFor={`add-task-${sectionId ?? "none"}-${variant}${idSuffix}`}>
         New task name
       </label>
@@ -448,7 +543,7 @@ export function AddTaskInput({
         autoFocus
         placeholder={pending ? "Adding…" : `${kind === "task" ? "Task" : TASK_KIND_LABELS[kind]} name, then Enter`}
         onBlur={(e) => {
-          // Moving to the template picker (inside this form) keeps the input open.
+          // Moving to the kind control or the template picker (inside this form) keeps the input open.
           if (!e.currentTarget.value.trim() && !e.currentTarget.form?.contains(e.relatedTarget as Node | null)) {
             close();
           }
@@ -459,21 +554,6 @@ export function AddTaskInput({
         className={`min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none ${
           variant === "card" ? "shadow-xs" : ""
         }`}
-      />
-      <SmartPicker
-        id={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}
-        label="Type of the new task"
-        value={kind}
-        onChange={(value) => setKind(parseTaskKind(value))}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            close();
-          }
-        }}
-        panelWidth={180}
-        className="h-8 w-auto shrink-0 text-xs"
-        options={TASK_KINDS.map((k) => ({ value: k, label: TASK_KIND_LABELS[k] }))}
       />
       {templates.length > 0 ? (
         <Popover

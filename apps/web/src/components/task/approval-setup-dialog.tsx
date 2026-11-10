@@ -4,17 +4,20 @@ import { useId, useState } from "react";
 import { CalendarDays, ChevronDown, ChevronRight, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
+import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions/approvals";
 import { saveExternalReviewer, withdrawReviewCheck } from "@/lib/actions/reviews";
-import { TWO_STAGE_FOLLOW_UP_NOTE, TWO_STEP_NOTE } from "@alhc/core/external-review";
+import { externalReviewerSectionOpen, reviewerLabel, TWO_STAGE_FOLLOW_UP_NOTE, TWO_STEP_NOTE } from "@alhc/core/external-review";
 import {
+  APPROVAL_SETUP_LEAVE,
   FOLLOW_UP_LABELS,
   approvalSetupProblem,
   approvalSetupSummary,
+  approvalSetupUnfinished,
   defaultApprovalSetup,
   type ApprovalFollowUp,
   type ApprovalSetupDraft,
@@ -30,9 +33,11 @@ import { PeopleList } from "./person-picker";
 // approve it, and then a follow-up step decision." Two short steps, the rest behind More options, and
 // Skip for now (the approval banner offers Finish setup later). Opens when a person makes a task an
 // approval task (the pane's Task type, Add approval in a List / Board) and from the banner.
-// Nov 10 batch 36: step 1 can also name the external reviewer (the requester by default). With both, the
-// internal approval comes first and an approver sends the review check after approving; a client review
-// that is already open is named, with Withdraw, instead of being replaced silently.
+// Nov 10 batch 36: the setup can also name the external reviewer (the requester by default). With both,
+// the internal approval comes first and an approver sends the review check after approving; a client
+// review that is already open is named, with Withdraw, instead of being replaced silently.
+// Notes 184–186: the external reviewer is a collapsed optional section; "When it's approved" is on this
+// screen (the stays-open note when it's two-stage); leaving with no approver asks first.
 export function ApprovalSetupDialog({
   task,
   profiles,
@@ -47,9 +52,9 @@ export function ApprovalSetupDialog({
 }) {
   const ids = useId();
   const notify = useNotify();
+  const confirm = useConfirm();
   const [pending, run] = useServerAction();
   const info = task.approval;
-  const [step, setStep] = useState<0 | 1>(0);
   const [tried, setTried] = useState(false);
   const [more, setMore] = useState(false);
   const [draft, setDraft] = useState<ApprovalSetupDraft>(() =>
@@ -87,7 +92,24 @@ export function ApprovalSetupDialog({
           m.sections.map((s) => ({ value: s.id, label: s.name, group: task.memberships.length > 1 ? m.projectName : undefined })),
         );
   const sectionName = sectionOptions.find((o) => o.value === draft.sectionId)?.label ?? null;
-  const problem = approvalSetupProblem(step === 0 ? "approvers" : "after", draft);
+  // A named external reviewer makes this two-stage: "When it's approved" doesn't apply (note 183).
+  const namedReviewer = Boolean(reviewerEmail.trim());
+  const problem = approvalSetupProblem("approvers", draft) ?? (namedReviewer ? null : approvalSetupProblem("after", draft));
+  const reviewerStartsOpen = externalReviewerSectionOpen({
+    savedEmail: savedReviewer?.email,
+    submissionEmail: task.submission?.email,
+    pendingReview: task.externalReview?.latest?.status === "pending",
+  });
+
+  // Note 185: closing (Skip, Escape, the X) while nobody approves it yet asks before leaving the task
+  // half set up. A setup that already has approvers just closes.
+  async function requestClose() {
+    if (approvalSetupUnfinished(info?.approverIds.length ?? 0)) {
+      const leave = await confirm(APPROVAL_SETUP_LEAVE);
+      if (!leave) return;
+    }
+    onClose();
+  }
 
   function toggle(id: string) {
     patch({
@@ -95,19 +117,8 @@ export function ApprovalSetupDialog({
     });
   }
 
-  function next() {
-    setTried(true);
-    if (problem) return;
-    setTried(false);
-    setStep(1);
-  }
-
   function finish() {
     setTried(true);
-    if (approvalSetupProblem("approvers", draft)) {
-      setStep(0);
-      return;
-    }
     if (problem) return;
     run(async () => {
       if (ready) {
@@ -136,114 +147,58 @@ export function ApprovalSetupDialog({
   return (
     <Dialog
       title="Set up this approval"
-      description={`Step ${step + 1} of 2 · ${step === 0 ? "Who approves it?" : "What happens after it’s approved?"}`}
-      onClose={onClose}
+      description="Who approves it, and what happens when they do."
+      onClose={requestClose}
     >
-      <div className="flex flex-col gap-4" data-approval-setup={step === 0 ? "approvers" : "after"}>
-        {step === 0 ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm text-zinc-600">
-              Pick the people who approve it. The assignee does the work, then sends it to them.
-            </p>
-            {draft.approverIds.length ? (
-              <ul className="flex flex-wrap gap-1.5" aria-label="Chosen approvers">
-                {draft.approverIds.map((id, i) => (
-                  <li
-                    key={id}
-                    className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white py-0.5 pr-1 pl-0.5 text-xs text-zinc-800"
-                  >
-                    <Avatar name={names[i]} profileId={id} />
-                    {names[i]}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${names[i]}`}
-                      onClick={() => toggle(id)}
-                      className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="rounded-md border border-zinc-200">
-              <PeopleList
-                label="Approvers"
-                people={eligible}
-                selected={draft.approverIds}
-                emptyNote="Approvers need to be able to comment in this task’s project."
-                onPick={toggle}
-              />
-            </div>
-            <div className="mt-2 rounded-md border border-zinc-200 p-3" data-external-reviewer="">
-              <p className="text-xs font-medium text-zinc-700">
-                External reviewer <span className="font-normal text-zinc-400">(optional)</span>
-              </p>
-              <p className="mt-0.5 text-2xs text-zinc-500">
-                Someone outside the team who reviews it by email afterwards: the requester, a facility contact, anyone.
-              </p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <input
-                  type="email"
-                  aria-label="External reviewer’s email"
-                  value={reviewerEmail}
-                  onChange={(e) => setReviewerEmail(e.currentTarget.value)}
-                  placeholder="name@example.com"
-                  className="field h-8 w-full"
-                />
-                <input
-                  aria-label="External reviewer’s name"
-                  value={reviewerName}
-                  maxLength={200}
-                  onChange={(e) => setReviewerName(e.currentTarget.value)}
-                  placeholder="Their name"
-                  className="field h-8 w-full"
-                />
-              </div>
-              {reviewerEmail.trim() && draft.approverIds.length ? (
-                <p className="mt-2 text-2xs text-zinc-600" data-two-step-note="">
-                  {TWO_STEP_NOTE}
-                </p>
-              ) : null}
-              {openReview ? (
-                <p role="note" className="mt-2 flex flex-wrap items-center gap-2 rounded bg-amber-50 px-2 py-1.5 text-2xs text-amber-900">
-                  <span className="min-w-0 flex-1">
-                    A review sent to {openReview.recipientName ?? openReview.recipientEmail} is still open. With an internal
-                    approver, the next one goes out only after the approval.
-                  </span>
+      <div className="flex flex-col gap-4" data-approval-setup="setup">
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-zinc-600">
+            Pick the people who approve it. The assignee does the work, then sends it to them.
+          </p>
+          {draft.approverIds.length ? (
+            <ul className="flex flex-wrap gap-1.5" aria-label="Chosen approvers">
+              {draft.approverIds.map((id, i) => (
+                <li
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white py-0.5 pr-1 pl-0.5 text-xs text-zinc-800"
+                >
+                  <Avatar name={names[i]} profileId={id} />
+                  {names[i]}
                   <button
                     type="button"
-                    className="btn-secondary h-6 px-2 text-2xs"
-                    disabled={pending}
-                    onClick={() =>
-                      run(async () => {
-                        const result = await withdrawReviewCheck(openReview.id);
-                        if (!result.error) setOpenReview(null);
-                        return result;
-                      })
-                    }
+                    aria-label={`Remove ${names[i]}`}
+                    onClick={() => toggle(id)}
+                    className="rounded-full p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
                   >
-                    Withdraw it
+                    <X className="size-3" />
                   </button>
-                </p>
-              ) : null}
-            </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="rounded-md border border-zinc-200">
+            <PeopleList
+              label="Approvers"
+              people={eligible}
+              selected={draft.approverIds}
+              emptyNote="Approvers need to be able to comment in this task’s project."
+              onPick={toggle}
+            />
           </div>
+        </div>
+
+        {namedReviewer ? (
+          <p role="note" className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700" data-two-stage-note="">
+            {TWO_STAGE_FOLLOW_UP_NOTE}
+          </p>
         ) : (
-          <fieldset className="flex flex-col gap-2">
-            <legend className="mb-1 text-sm text-zinc-600">When it’s approved:</legend>
-            {twoStage ? (
-              // Note 183: with an external reviewer, approving never completes the task or runs a follow-up.
-              <p role="note" className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700" data-two-stage-note="">
-                {TWO_STAGE_FOLLOW_UP_NOTE}
-              </p>
-            ) : null}
+          <fieldset className="flex flex-col gap-2" data-when-approved="">
+            <legend className="mb-1 text-sm text-zinc-600">When it’s approved</legend>
             {(Object.keys(FOLLOW_UP_LABELS) as ApprovalFollowUp[]).map((key) => {
               const disabled = key === "move_section" && sectionOptions.length === 0;
               return (
                 <label
                   key={key}
-                  hidden={twoStage}
                   className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
                     draft.followUp === key ? "border-accent-400 bg-accent-50/50" : "border-zinc-200"
                   } ${disabled ? "text-zinc-400" : "text-zinc-800"}`}
@@ -278,90 +233,109 @@ export function ApprovalSetupDialog({
           </fieldset>
         )}
 
-        {step === 1 ? (
-          <div className="border-t border-zinc-100 pt-3">
-            <button
-              type="button"
-              aria-expanded={more}
-              aria-controls={`${ids}-more`}
-              onClick={() => setMore((open) => !open)}
-              className="inline-flex items-center gap-1 text-sm font-medium text-zinc-700 hover:text-zinc-900"
-            >
-              {more ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
-              More options
-            </button>
-            {more ? (
-              <div id={`${ids}-more`} className="mt-2 flex flex-col gap-3 pl-5">
-                {draft.approverIds.length > 1 ? (
-                  <fieldset className="flex flex-col gap-1 text-sm text-zinc-800">
-                    <legend className="mb-1 text-xs font-medium text-zinc-600">How they decide</legend>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name={`${ids}-mode`}
-                        checked={draft.mode === "any"}
-                        onChange={() => patch({ mode: "any" })}
-                        className="size-3.5 accent-accent-600"
-                      />
-                      Any one can approve
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="radio"
-                        name={`${ids}-mode`}
-                        checked={draft.mode === "all"}
-                        onChange={() => patch({ mode: "all" })}
-                        className="size-3.5 accent-accent-600"
-                      />
-                      Everyone must approve
-                    </label>
-                  </fieldset>
-                ) : null}
-                <div className="flex items-center gap-2 text-sm text-zinc-800">
-                  <span className="text-xs font-medium text-zinc-600">Approval due</span>
-                  <Popover
-                    label="Approval due date"
-                    panelClassName="w-72 p-0"
-                    buttonClassName="btn-secondary h-7 px-2 text-xs"
-                    button={
-                      <>
-                        <CalendarDays className="size-3.5" aria-hidden />
-                        {draft.dueOn ? formatDueDate(draft.dueOn) : "No due date"}
-                      </>
-                    }
-                  >
-                    {(close) => (
-                      <SingleDatePicker
-                        label="Approval due"
-                        value={draft.dueOn}
-                        onChange={(value) => {
-                          close();
-                          patch({ dueOn: value });
-                        }}
-                      />
-                    )}
-                  </Popover>
-                </div>
-                <label className="flex items-start gap-2 text-sm text-zinc-800">
-                  <input
-                    type="checkbox"
-                    checked={draft.reminders}
-                    onChange={(e) => patch({ reminders: e.currentTarget.checked })}
-                    className="mt-0.5 size-3.5 accent-accent-600"
-                  />
-                  <span>
-                    Remind approvers
-                    <span className="block text-xs text-zinc-500">The day before the approval due date, and once it’s overdue.</span>
-                  </span>
-                </label>
+        <ExternalReviewerSection
+          ids={ids}
+          startsOpen={reviewerStartsOpen}
+          email={reviewerEmail}
+          name={reviewerName}
+          onEmail={setReviewerEmail}
+          onName={setReviewerName}
+          showTwoStep={Boolean(reviewerEmail.trim() && draft.approverIds.length)}
+          openReview={openReview}
+          pending={pending}
+          onWithdraw={() =>
+            openReview
+              ? run(async () => {
+                  const result = await withdrawReviewCheck(openReview.id);
+                  if (!result.error) setOpenReview(null);
+                  return result;
+                })
+              : undefined
+          }
+        />
+
+        <div className="border-t border-zinc-100 pt-3">
+          <button
+            type="button"
+            aria-expanded={more}
+            aria-controls={`${ids}-more`}
+            onClick={() => setMore((open) => !open)}
+            className="inline-flex items-center gap-1 text-sm font-medium text-zinc-700 hover:text-zinc-900"
+          >
+            {more ? <ChevronDown className="size-4" aria-hidden /> : <ChevronRight className="size-4" aria-hidden />}
+            More options
+          </button>
+          {more ? (
+            <div id={`${ids}-more`} className="mt-2 flex flex-col gap-3 pl-5">
+              {draft.approverIds.length > 1 ? (
+                <fieldset className="flex flex-col gap-1 text-sm text-zinc-800">
+                  <legend className="mb-1 text-xs font-medium text-zinc-600">How they decide</legend>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name={`${ids}-mode`}
+                      checked={draft.mode === "any"}
+                      onChange={() => patch({ mode: "any" })}
+                      className="size-3.5 accent-accent-600"
+                    />
+                    Any one can approve
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name={`${ids}-mode`}
+                      checked={draft.mode === "all"}
+                      onChange={() => patch({ mode: "all" })}
+                      className="size-3.5 accent-accent-600"
+                    />
+                    Everyone must approve
+                  </label>
+                </fieldset>
+              ) : null}
+              <div className="flex items-center gap-2 text-sm text-zinc-800">
+                <span className="text-xs font-medium text-zinc-600">Approval due</span>
+                <Popover
+                  label="Approval due date"
+                  panelClassName="w-72 p-0"
+                  buttonClassName="btn-secondary h-7 px-2 text-xs"
+                  button={
+                    <>
+                      <CalendarDays className="size-3.5" aria-hidden />
+                      {draft.dueOn ? formatDueDate(draft.dueOn) : "No due date"}
+                    </>
+                  }
+                >
+                  {(close) => (
+                    <SingleDatePicker
+                      label="Approval due"
+                      value={draft.dueOn}
+                      onChange={(value) => {
+                        close();
+                        patch({ dueOn: value });
+                      }}
+                    />
+                  )}
+                </Popover>
               </div>
-            ) : null}
-          </div>
-        ) : null}
+              <label className="flex items-start gap-2 text-sm text-zinc-800">
+                <input
+                  type="checkbox"
+                  checked={draft.reminders}
+                  onChange={(e) => patch({ reminders: e.currentTarget.checked })}
+                  className="mt-0.5 size-3.5 accent-accent-600"
+                />
+                <span>
+                  Remind approvers
+                  <span className="block text-xs text-zinc-500">The day before the approval due date, and once it’s overdue.</span>
+                </span>
+              </label>
+            </div>
+          ) : null}
+        </div>
 
         <p className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-600" aria-live="polite">
-          {approvalSetupSummary(draft, names, sectionName, twoStage)}
-          {twoStage ? "" : " Only its approvers can complete it."}
+          {approvalSetupSummary(draft, names, sectionName, namedReviewer && draft.approverIds.length > 0)}
+          {namedReviewer && draft.approverIds.length > 0 ? "" : " Only its approvers can complete it."}
         </p>
         {tried && problem ? (
           <p role="alert" className="text-sm text-red-700">
@@ -370,25 +344,105 @@ export function ApprovalSetupDialog({
         ) : null}
 
         <div className="flex items-center gap-2 border-t border-zinc-100 pt-3">
-          <button type="button" onClick={onClose} className="btn-ghost mr-auto text-zinc-500" data-approval-setup-skip="">
+          <button type="button" onClick={() => void requestClose()} className="btn-ghost mr-auto text-zinc-500" data-approval-setup-skip="">
             Skip for now
           </button>
-          {step === 1 ? (
-            <button type="button" onClick={() => setStep(0)} className="btn-secondary">
-              Back
-            </button>
-          ) : null}
-          {step === 0 ? (
-            <button type="button" onClick={next} className="btn-primary">
-              Next
-            </button>
-          ) : (
-            <button type="button" onClick={finish} disabled={pending} className="btn-primary">
-              {pending ? "Saving…" : "Done"}
-            </button>
-          )}
+          <button type="button" onClick={finish} disabled={pending} className="btn-primary">
+            {pending ? "Saving…" : "Done"}
+          </button>
         </div>
       </div>
     </Dialog>
+  );
+}
+
+// Note 184: "External reviewer (optional)" stays closed unless a reviewer is already named. The
+// two-step explanation stays inside the open section.
+function ExternalReviewerSection({
+  ids,
+  startsOpen,
+  email,
+  name,
+  onEmail,
+  onName,
+  showTwoStep,
+  openReview,
+  pending,
+  onWithdraw,
+}: {
+  ids: string;
+  startsOpen: boolean;
+  email: string;
+  name: string;
+  onEmail: (value: string) => void;
+  onName: (value: string) => void;
+  showTwoStep: boolean;
+  openReview: { id: string; recipientEmail: string; recipientName: string | null } | null;
+  pending: boolean;
+  onWithdraw: (() => void) | undefined;
+}) {
+  const [open, setOpen] = useState(startsOpen);
+  const summary = email.trim()
+    ? reviewerLabel({ email: email.trim(), name: name.trim() || null })
+    : openReview
+      ? `Review still open for ${openReview.recipientName ?? openReview.recipientEmail}`
+      : null;
+  return (
+    <div className="rounded-md border border-zinc-200" data-external-reviewer="" data-external-reviewer-open={open ? "true" : "false"}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${ids}-external-reviewer`}
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center gap-1 px-3 py-2 text-left text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+      >
+        {open ? <ChevronDown className="size-3.5 shrink-0" aria-hidden /> : <ChevronRight className="size-3.5 shrink-0" aria-hidden />}
+        <span>
+          External reviewer <span className="font-normal text-zinc-400">(optional)</span>
+        </span>
+        {!open && summary ? <span className="ml-auto min-w-0 truncate font-normal text-zinc-500">{summary}</span> : null}
+      </button>
+      {open ? (
+        <div id={`${ids}-external-reviewer`} className="px-3 pb-3">
+          <p className="text-2xs text-zinc-500">
+            Someone outside the team who reviews it by email afterwards: the requester, a facility contact, anyone.
+          </p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <input
+              type="email"
+              aria-label="External reviewer’s email"
+              value={email}
+              onChange={(e) => onEmail(e.currentTarget.value)}
+              placeholder="name@example.com"
+              className="field h-8 w-full"
+            />
+            <input
+              aria-label="External reviewer’s name"
+              value={name}
+              maxLength={200}
+              onChange={(e) => onName(e.currentTarget.value)}
+              placeholder="Their name"
+              className="field h-8 w-full"
+            />
+          </div>
+          {showTwoStep ? (
+            <p className="mt-2 text-2xs text-zinc-600" data-two-step-note="">
+              {TWO_STEP_NOTE}
+            </p>
+          ) : null}
+          {openReview ? (
+            <p role="note" className="mt-2 flex flex-wrap items-center gap-2 rounded bg-amber-50 px-2 py-1.5 text-2xs text-amber-900">
+              <span className="min-w-0 flex-1">
+                A review sent to {openReview.recipientName ?? openReview.recipientEmail} is still open. With an internal
+                approver, the next one goes out only after the approval.
+              </span>
+              <button type="button" className="btn-secondary h-6 px-2 text-2xs" disabled={pending} onClick={onWithdraw}>
+                Withdraw it
+              </button>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
