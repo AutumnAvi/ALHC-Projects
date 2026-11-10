@@ -26,16 +26,18 @@ export function ruleHref(base: string, back: string, ruleId: string | "new") {
 type Tab = "automations" | "templates" | "history";
 
 export function AutomationsView({ base, back, projectId, rules }: { base: string; back: string; projectId: string; rules: CustomizeRule[] }) {
-  const canManage = useProjectPermissions().canManage;
+  const canBuild = useProjectPermissions().canBuild;
   const [tab, setTab] = useState<Tab>("automations");
+  // C48: "Run history" from an automation's "…" shows that automation's runs (null = every automation).
+  const [historyRule, setHistoryRule] = useState<string | null>(null);
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: "automations", label: "Automations", count: rules.length },
-    ...(canManage ? [{ key: "templates" as const, label: "Templates" }] : []),
+    ...(canBuild ? [{ key: "templates" as const, label: "Templates" }] : []),
     { key: "history", label: "History" },
   ];
   return (
     <div>
-      {canManage ? <AddButton href={ruleHref(base, back, "new")} label="Add automation" /> : null}
+      {canBuild ? <AddButton href={ruleHref(base, back, "new")} label="Add automation" /> : null}
       <div role="tablist" aria-label="Automations" className="sticky -top-3 z-[1] -mx-3 -mt-3 mb-3 flex h-9 gap-4 border-b border-zinc-200 bg-white px-3.5">
         {tabs.map((t) => (
           <button
@@ -44,7 +46,10 @@ export function AutomationsView({ base, back, projectId, rules }: { base: string
             role="tab"
             aria-selected={tab === t.key}
             data-panel-focus={t.key === "automations" ? true : undefined}
-            onClick={() => setTab(t.key)}
+            onClick={() => {
+              setTab(t.key);
+              setHistoryRule(null);
+            }}
             className="-mb-px inline-flex items-center gap-1 border-b-2 border-transparent text-sm font-medium text-zinc-500 hover:text-zinc-800 aria-selected:border-accent-500 aria-selected:text-zinc-900"
           >
             {t.label}
@@ -53,13 +58,29 @@ export function AutomationsView({ base, back, projectId, rules }: { base: string
         ))}
       </div>
       {tab === "automations" ? (
-        <AutomationList base={base} back={back} rules={rules} onHistory={() => setTab("history")} />
+        <AutomationList
+          base={base}
+          back={back}
+          rules={rules}
+          onHistory={(ruleId) => {
+            setHistoryRule(ruleId);
+            setTab("history");
+          }}
+        />
       ) : tab === "templates" ? (
         <TemplateList base={base} back={back} />
       ) : (
-        <RunHistory projectId={projectId} rules={rules} />
+        <RunHistory projectId={projectId} rules={rules} ruleId={historyRule} onShowAll={() => setHistoryRule(null)} />
       )}
-      <FooterLink href={tab === "automations" ? `${base}/rules` : `${base}/rules?view=${tab}`}>Open full page</FooterLink>
+      <FooterLink
+        href={
+          tab === "automations"
+            ? `${base}/rules`
+            : `${base}/rules?view=${tab}${tab === "history" && historyRule ? `&rule=${encodeURIComponent(historyRule)}` : ""}`
+        }
+      >
+        Open full page
+      </FooterLink>
     </div>
   );
 }
@@ -73,9 +94,9 @@ function AutomationList({
   base: string;
   back: string;
   rules: CustomizeRule[];
-  onHistory: () => void;
+  onHistory: (ruleId: string) => void;
 }) {
-  const canManage = useProjectPermissions().canManage;
+  const canBuild = useProjectPermissions().canBuild;
   const [pending, run] = useServerAction();
   const notify = useNotify();
   const confirm = useConfirm();
@@ -86,7 +107,7 @@ function AutomationList({
     return (
       <EmptyGroup>
         No automations yet.{" "}
-        {canManage ? "Add one, or start from a template: move tasks, assign people, comment, email, or post to Slack." : null}
+        {canBuild ? "Add one, or start from a template: move tasks, assign people, comment, email, or post to Slack." : null}
       </EmptyGroup>
     );
   }
@@ -102,7 +123,7 @@ function AutomationList({
               <Link href={ruleHref(base, back, rule.id)} className="line-clamp-2 min-w-0 flex-1 pt-[3px] text-sm leading-[18px] text-zinc-900 hover:underline">
                 {rule.name}
               </Link>
-              {canManage ? (
+              {canBuild ? (
                 <>
                   <RowMenu label={`More for ${rule.name}`}>
                     {(close) => (
@@ -122,7 +143,7 @@ function AutomationList({
                         <MenuItem
                           onClick={() => {
                             close();
-                            onHistory();
+                            onHistory(rule.id);
                           }}
                         >
                           <History className="size-3.5 text-zinc-500" aria-hidden /> Run history
@@ -199,7 +220,17 @@ function TemplateList({ base, back }: { base: string; back: string }) {
   );
 }
 
-function RunHistory({ projectId, rules }: { projectId: string; rules: CustomizeRule[] }) {
+function RunHistory({
+  projectId,
+  rules,
+  ruleId,
+  onShowAll,
+}: {
+  projectId: string;
+  rules: CustomizeRule[];
+  ruleId: string | null;
+  onShowAll: () => void;
+}) {
   const [runs, setRuns] = useState<RuleRun[] | null | "error">(null);
   useEffect(() => {
     let live = true;
@@ -218,26 +249,45 @@ function RunHistory({ projectId, rules }: { projectId: string; rules: CustomizeR
     );
   }
   if (runs === "error") return <EmptyGroup>Couldn’t load the history. Open the full page to try again.</EmptyGroup>;
-  if (runs.length === 0) return <EmptyGroup>No automation has run yet.</EmptyGroup>;
   const names = new Map(rules.map((r) => [r.id, r.name] as const));
+  const shown = ruleId ? runs.filter((r) => r.ruleId === ruleId) : runs;
+  const filter = ruleId ? (
+    <p className="mb-2 flex items-center gap-2 px-1 text-xs text-zinc-500">
+      <span className="min-w-0 flex-1 truncate">Runs of “{names.get(ruleId) ?? "this automation"}”</span>
+      <button type="button" onClick={onShowAll} className="shrink-0 font-medium text-accent-700 hover:underline">
+        Show all
+      </button>
+    </p>
+  ) : null;
+  if (shown.length === 0) {
+    return (
+      <>
+        {filter}
+        <EmptyGroup>{ruleId ? "This automation hasn’t run recently." : "No automation has run yet."}</EmptyGroup>
+      </>
+    );
+  }
   return (
-    <ul aria-label="Recent runs" className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      {runs.map((r) => {
-        const outcome = runOutcome(r.status, r.detail);
-        return (
-          <li key={r.id} className="flex items-start gap-2 px-2.5 py-2">
-            <span className="min-w-0 flex-1 text-sm leading-[18px]">
-              <span className="line-clamp-2 text-zinc-900">{names.get(r.ruleId) ?? "An automation"}</span>
-              <span className="block truncate text-xs text-zinc-500">
-                {r.taskTitle ?? "A task you can’t open"} · {new Date(r.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+    <>
+      {filter}
+      <ul aria-label="Recent runs" className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        {shown.map((r) => {
+          const outcome = runOutcome(r.status, r.detail);
+          return (
+            <li key={r.id} className="flex items-start gap-2 px-2.5 py-2">
+              <span className="min-w-0 flex-1 text-sm leading-[18px]">
+                <span className="line-clamp-2 text-zinc-900">{names.get(r.ruleId) ?? "An automation"}</span>
+                <span className="block truncate text-xs text-zinc-500">
+                  {r.taskTitle ?? "A task you can’t open"} · {new Date(r.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </span>
               </span>
-            </span>
-            <span className={`mt-px shrink-0 rounded-full px-1.5 py-px text-2xs font-medium ${RUN_TONE_CLASS[outcome.tone]}`} data-tooltip={outcome.summary ?? undefined}>
-              {outcome.label}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+              <span className={`mt-px shrink-0 rounded-full px-1.5 py-px text-2xs font-medium ${RUN_TONE_CLASS[outcome.tone]}`} data-tooltip={outcome.summary ?? undefined}>
+                {outcome.label}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }

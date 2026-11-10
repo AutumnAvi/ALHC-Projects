@@ -35,6 +35,7 @@ import { RUN_TONE_CLASS, filterRuns, runFilterLabel, runOutcome, runOutcomeText,
 import { autoRuleName, withTarget } from "@alhc/core/rule-autoname";
 import {
   ACTIONS,
+  RETIRED_ACTIONS,
   CONDITIONS,
   MAX_CONDITION_GROUPS,
   joinGroups,
@@ -118,7 +119,7 @@ export function RuleCanvas({
   ctx: RuleContext;
   // This release's database update (Else if / Otherwise branches).
   batch4: boolean;
-  // Admin+ (rules are managed by project admins); everyone else reads.
+  // Owners and Editors build automations (Nov 10); everyone else reads.
   canEdit: boolean;
   backHref: string;
 }) {
@@ -327,7 +328,7 @@ export function RuleCanvas({
     ...joinBranches(branches),
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
-  const testBlocked = !v2 ? "Needs this release’s database update" : !canEdit ? "Project admins and owners test automations" : null;
+  const testBlocked = !v2 ? "Needs this release’s database update" : !canEdit ? "The project’s Owners and Editors test automations" : null;
   const owner = ownerId ? ctx.people.find((p) => p.id === ownerId) : null;
   const ownerName = ownerId ? (owner?.name ?? "someone removed") : rule ? "the automation’s creator" : "you";
   const editor = rule?.lastEditedBy ? ctx.people.find((p) => p.id === rule.lastEditedBy) : null;
@@ -533,7 +534,7 @@ export function RuleCanvas({
                           ? "Turned back on: it resumes once you save."
                           : canEdit
                             ? "Fix what made it fail (the Activity tab has each run’s steps), then resume it."
-                            : "A project admin can resume it once what made it fail is fixed."}
+                            : "One of the project’s Owners or Editors can resume it once what made it fail is fixed."}
                       </p>
                     </div>
                     {canEdit && !enabled ? (
@@ -680,8 +681,8 @@ export function RuleCanvas({
                 ) : null}
                 {canEdit ? (
                   <p className="text-center text-xs text-zinc-500">
-                    Click a highlighted block to change it. Automations never trigger themselves, loop protection stops two that undo
-                    each other, chains stop after ten, and the Status field always follows the section. Text can use placeholders like {"{{task.name}}"} (the {"{ }"} button lists them all).
+                    Click a highlighted block to change it. An automation never sets itself off. Text can use placeholders like{" "}
+                    {"{{task.name}}"} (the {"{ }"} button lists them all).
                   </p>
                 ) : null}
                 {rule?.lastEditedAt ? (
@@ -801,7 +802,13 @@ function BranchRows({
   const conditionOptions = vocabOptions(CONDITIONS, { disabled: vocabDisabled(ctx, branch.conditions.map((c) => c.type)) });
   const conditionScope: StepScope = { system: "project", kind: "condition", v3: ctx.v3 };
   const actionScope: StepScope = { system: "project", kind: "action", v3: ctx.v3 };
-  const actionOptions = vocabOptions(ACTIONS, { disabled: vocabDisabled(ctx, branch.actions.map((a) => a.type)) });
+  const actionDisabled = vocabDisabled(ctx, branch.actions.map((a) => a.type));
+  // Retired actions (Request approval) aren't offered for a new step; a step that already is one keeps it.
+  const actionOptions = vocabOptions(ACTIONS, { disabled: actionDisabled, hidden: (value) => RETIRED_ACTIONS.has(value) });
+  const actionOptionsFor = (current: string) =>
+    RETIRED_ACTIONS.has(current)
+      ? vocabOptions(ACTIONS, { disabled: actionDisabled, hidden: (value) => RETIRED_ACTIONS.has(value) && value !== current })
+      : actionOptions;
 
   function setGroups(next: RuleCondition[][]) {
     onChange({ ...branch, conditions: joinGroups(next) });
@@ -967,7 +974,7 @@ function BranchRows({
                   kind="action"
                   label={`Action ${i + 1}`}
                   value={action.type}
-                  options={actionOptions}
+                  options={actionOptionsFor(action.type)}
                   onChange={(v) => setAction(i, defaultsFor(v as ActionType))}
                   variant="chip"
                   searchable

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { RulesView } from "@/components/rules/rules-view";
-import { getProject, listProjectRules, listRecentRuleRuns, listRulePresets, listRuleRunStats } from "@/lib/data";
+import { getProject, listProjectRules, listRecentRuleRuns, listRuleRunStats } from "@/lib/data";
 import { isUuid } from "@alhc/core/ids";
 import type { RuleRunStats } from "@alhc/core/rules";
 import { HISTORY_LIMIT, RECENT_RUNS, rulesPageView } from "@/lib/rules-page";
@@ -22,11 +22,7 @@ export default async function ProjectRulesPage({ params, searchParams }: PagePro
   const query = await searchParams;
   const view = rulesPageView(query.view);
   const ruleParam = typeof query.rule === "string" && isUuid(query.rule) ? query.rule : null;
-  const [rules, presets, context] = await Promise.all([
-    listProjectRules(projectId),
-    view === "templates" ? listRulePresets() : Promise.resolve([]),
-    loadRuleContext(projectId),
-  ]);
+  const [rules, context] = await Promise.all([listProjectRules(projectId), loadRuleContext(projectId)]);
   const ids = rules.map((r) => r.id);
   const historyRuleId = view === "history" && ruleParam && ids.includes(ruleParam) ? ruleParam : null;
   const [runs, stats] = await Promise.all([
@@ -45,7 +41,6 @@ export default async function ProjectRulesPage({ params, searchParams }: PagePro
         rules={rules}
         runs={runs}
         stats={Object.fromEntries(stats)}
-        presets={presets}
         context={context}
         view={view}
         historyRuleId={historyRuleId}

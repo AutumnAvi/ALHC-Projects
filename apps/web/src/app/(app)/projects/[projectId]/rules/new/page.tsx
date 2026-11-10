@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { RuleCanvas } from "@/components/rules/rule-canvas";
 import { getProject, getProjectRole, listRuleTestTasks } from "@/lib/data";
-import { hasRole } from "@alhc/core/roles";
+import { permissionsFor } from "@alhc/core/permissions";
 import { findRuleTemplate } from "@alhc/core/rule-templates";
 import { loadRuleContext, ruleBackHref } from "../context";
 
@@ -43,7 +43,7 @@ export default async function NewRulePage({ params, searchParams }: PageProps<"/
       testTasks={testTasks}
       ctx={ctx}
       batch4
-      canEdit={hasRole(role, "admin")}
+      canEdit={permissionsFor(role).canBuild}
       backHref={ruleBackHref(projectId, back)}
     />
   );

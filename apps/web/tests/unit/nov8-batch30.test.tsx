@@ -138,8 +138,11 @@ test("Automations: grouped On and Off, full names, the … menu only on hover", 
   assert.match(html, />Templates</);
   assert.match(html, />History</);
   assert.match(html, /Open full page/);
+  // Nov 10: Owners and Editors build automations; Commenters and Viewers read them.
   const editor = render(<AutomationsView base="/projects/p1" back="/x" projectId="p1" rules={summary().rules} />, "editor");
-  assert.doesNotMatch(editor, /role="switch"|More for/, "below Admin automations are read-only");
+  assert.match(editor, /role="switch"/, "Editors turn automations on and off");
+  const viewer = render(<AutomationsView base="/projects/p1" back="/x" projectId="p1" rules={summary().rules} />, "viewer");
+  assert.doesNotMatch(viewer, /role="switch"|More for/, "below Editor automations are read-only");
 });
 
 test("side pages share one footer link and keep Deliveries for Admins", () => {

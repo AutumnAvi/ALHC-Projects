@@ -2,8 +2,7 @@
 
 import { Check, Clock, Minus, Send, X, type LucideIcon } from "lucide-react";
 import { ACTIONS, labelOf } from "@alhc/core/rules";
-import { stepOutcomeLabel, stepTone, type RuleStep, type StepTone } from "@alhc/core/rule-steps";
-import type { Json } from "@alhc/core/supabase/database.types";
+import { stepInputs, stepOutcomeLabel, stepTone, type RuleStep, type StepTone } from "@alhc/core/rule-steps";
 import { RuleIcon } from "./rule-icons";
 
 // A rule's steps as a vertical timeline (Automations V2, batch 4): the run history's expanded rows and
@@ -18,20 +17,6 @@ const TONE: Record<StepTone, { icon: LucideIcon; dot: string; badge: string }> =
   send: { icon: Send, dot: "bg-accent-50 text-accent-700 ring-accent-200", badge: "bg-accent-50 text-accent-700" },
   error: { icon: X, dot: "bg-red-50 text-red-700 ring-red-200", badge: "bg-red-50 text-red-700" },
 };
-
-// "business_days" → "Business days".
-function inputKey(key: string) {
-  const words = key.replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-function inputValue(value: Json): string {
-  if (value === null) return "—";
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if (Array.isArray(value)) return value.map(inputValue).join(", ");
-  return JSON.stringify(value);
-}
 
 export function RunSteps({
   steps,
@@ -63,7 +48,7 @@ export function RunSteps({
               const tone = stepTone(step.outcome);
               const look = TONE[tone];
               const Icon = look.icon;
-              const inputs = Object.entries(step.input ?? {}).filter(([, v]) => v !== "" && v !== null);
+              const inputs = stepInputs(step.input);
               return (
                 <li key={`${step.step}-${i}`} className="relative flex gap-2.5">
                   <span aria-hidden className={`relative z-10 mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ring-1 ${look.dot}`}>
@@ -84,10 +69,10 @@ export function RunSteps({
                     ) : null}
                     {inputs.length ? (
                       <dl className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-2xs text-zinc-500">
-                        {inputs.map(([key, value]) => (
-                          <div key={key} className="min-w-0 break-words">
-                            <dt className="inline text-zinc-400">{inputKey(key)}: </dt>
-                            <dd className="inline">{inputValue(value)}</dd>
+                        {inputs.map(({ label, value }) => (
+                          <div key={label} className="min-w-0 break-words">
+                            <dt className="inline text-zinc-400">{label}: </dt>
+                            <dd className="inline">{value}</dd>
                           </div>
                         ))}
                       </dl>

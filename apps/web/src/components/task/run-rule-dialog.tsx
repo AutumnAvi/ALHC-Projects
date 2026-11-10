@@ -115,7 +115,7 @@ export function RunRuleDialog({ taskId, taskTitle, onClose }: { taskId: string; 
       if ((result.status === "succeeded" || result.status === "scheduled") && result.partial) {
         finishRunning(key, "partial", ranMessage(chosen.name, result.summary, result.partial));
       } else if (result.status === "succeeded" || result.status === "scheduled") finishRunning(key, "ran", result.summary[0] ?? null);
-      else if (result.status === "conditions") finishRunning(key, "ran", "Its conditions don’t match this task");
+      else if (result.status === "conditions") finishRunning(key, "skipped", "Skipped: its conditions don’t match this task");
       else if (result.status === "skipped" || result.status === "duplicate") finishRunning(key, "skipped", result.reason ? `Skipped: ${result.reason}` : "Skipped: nothing ran");
       else finishRunning(key, "failed", result.error ?? null);
       if (result.status) startRefresh(() => router.refresh());

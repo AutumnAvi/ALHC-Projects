@@ -64,5 +64,7 @@ export const getPublicForm = read(async (ctx: ApiContext, formId: string): Promi
       data.verified_domains_only === true && Array.isArray(data.verified_domains)
         ? data.verified_domains.filter((d): d is string => typeof d === "string")
         : [],
+    // C34 (Nov 10): whether a confirmation email goes out; absent from the database's answer = unknown.
+    sendsConfirmation: typeof data.send_confirmation === "boolean" ? data.send_confirmation : null,
   };
 });

@@ -428,7 +428,7 @@ export async function duplicateRule(ctx: ApiContext, ruleId: string): Promise<st
     })
     .select("id")
     .single();
-  check(inserted, "Only project admins and owners change its automations");
+  check(inserted, "Only the project’s Owners and Editors change its automations");
   return inserted.data?.id;
 }
 
@@ -437,5 +437,5 @@ export async function setRulePausedUntil(ctx: ApiContext, ruleId: string, until:
   const supabase = ctx.db;
   const updated = await supabase.from("rules").update({ paused_until: pauseUntil(until) }).eq("id", id(ruleId, "rule")).select("id");
   if (updated.error?.code === "PGRST204" || updated.error?.code === "42703") throw invalid(RULES_V3_MISSING);
-  checkUpdated(updated, "Only project admins and owners change its automations");
+  checkUpdated(updated, "Only the project’s Owners and Editors change its automations");
 }

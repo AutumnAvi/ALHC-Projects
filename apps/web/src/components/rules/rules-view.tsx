@@ -10,30 +10,13 @@ import { useProjectPermissions } from "@/components/project/project-access";
 import { Segmented } from "@/components/project/view-chrome";
 import { Timestamp } from "@/components/timestamp";
 import { useNotify, useServerAction } from "@/components/toast";
-import {
-  deleteRule,
-  duplicateRule,
-  installRulePreset,
-  setRuleEnabled,
-  setRulePausedUntil,
-} from "@/lib/actions/automations";
+import { deleteRule, duplicateRule, setRuleEnabled, setRulePausedUntil } from "@/lib/actions/automations";
 import { RulePauseControls, isPausedNow } from "./rule-pause";
 import { runSteps } from "@alhc/core/rule-steps";
 import { RUN_TONE_CLASS, filterRuns, runFilterLabel, runOutcome, runOutcomeText, type RunFilter } from "@alhc/core/run-outcome";
 import { HISTORY_LIMIT, rulesPageHref, type RulesPageView } from "@/lib/rules-page";
-import { runReason, type RuleDef, type RulePreset, type RuleRun, type RuleRunStats } from "@alhc/core/rules";
-import type { Json } from "@alhc/core/supabase/database.types";
-import {
-  FieldSelect,
-  PersonSelect,
-  SectionSelect,
-  describeBranches,
-  describeTrigger,
-  inputClass,
-  labelClass,
-  ruleFields,
-  type RuleContext,
-} from "./rule-shared";
+import { runReason, type RuleDef, type RuleRun, type RuleRunStats } from "@alhc/core/rules";
+import { describeBranches, describeTrigger, type RuleContext } from "./rule-shared";
 import { EmptyState } from "@/components/ui";
 import { RuleTemplatesGallery } from "./rule-templates-gallery";
 import { RunSteps } from "./run-steps";
@@ -86,7 +69,6 @@ export function RulesView({
   rules,
   runs,
   stats,
-  presets,
   context,
   view = "automations",
   historyRuleId = null,
@@ -100,13 +82,13 @@ export function RulesView({
   historyRuleId?: string | null;
   // Each rule's health (last run, failures in the last 7 days), by rule id.
   stats?: Record<string, RuleRunStats>;
-  presets: RulePreset[];
   context: RuleContext;
 }) {
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
   const notify = useNotify();
-  const canEdit = useProjectPermissions().canManage;
+  // Owners and Editors build automations (Nov 10); everyone else reads.
+  const canEdit = useProjectPermissions().canBuild;
   // Turning a rule on also clears an auto-pause (the database's guard does the same).
   const [optimisticRules, setOptimistic] = useOptimistic(rules, (current, patch: { id: string; enabled: boolean }) =>
     current.map((r) =>
@@ -148,11 +130,13 @@ export function RulesView({
   return (
     <div className="mx-auto max-w-3xl px-gutter py-5">
       <div className="flex flex-wrap items-start gap-3">
-        <p className="min-w-0 flex-1 text-sm text-zinc-600">
-          Automations react to changes in this project: when something happens, check the conditions (with Or groups and
-          Otherwise branches), then run the actions in order. Automations never trigger themselves, loop protection stops two
-          that undo each other, chains stop after ten, an automation that keeps failing pauses itself, and Status fields always follow the section.
-        </p>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-base font-semibold text-zinc-900">Automations</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Automations react to changes in this project: when something happens, they check the conditions, then run the
+            actions in order. An automation never sets itself off, and one that fails five runs in a row turns itself off.
+          </p>
+        </div>
         {canEdit ? (
           <Link href={`${base}/rules/new`} className="btn-primary h-8 px-3">
             <Plus className="size-4" aria-hidden />
@@ -188,7 +172,17 @@ export function RulesView({
       {optimisticRules.length === 0 ? (
         <div className="mt-3">
           <EmptyState icon={Workflow} title="No automations yet" size="inline">
-            Start from a template below, or add an automation and build it as a sentence: when…, if…, then….
+            {canEdit ? (
+              <>
+                Start from one on the{" "}
+                <Link href={rulesPageHref(projectId, "templates")} className="font-medium text-accent-700 hover:underline">
+                  Templates
+                </Link>{" "}
+                tab, or add an automation and build it as a sentence: when…, if…, then….
+              </>
+            ) : (
+              "Automations move, assign, and notify on their own when something happens in this project. Its Owners and Editors add them."
+            )}
           </EmptyState>
         </div>
       ) : (
@@ -292,7 +286,7 @@ export function RulesView({
                           </span>
                         ) : null}
                         {rule.presetKey ? (
-                          <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">template</span>
+                          <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">Template</span>
                         ) : null}
                         {flow.length > 1 ? (
                           <span className="ml-2 inline-flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-2xs font-normal text-zinc-600">
@@ -427,24 +421,8 @@ export function RulesView({
       {canEdit ? (
         <RuleTemplatesGallery projectId={projectId} ctx={context} canEdit={canEdit} />
       ) : (
-        <p className="mt-4 text-sm text-zinc-500">Templates add automations to this project. Ask a project Owner or Admin to add one.</p>
+        <p className="mt-4 text-sm text-zinc-500">Templates add automations to this project. Ask one of its Owners or Editors to add one.</p>
       )}
-
-      {presets.length && canEdit ? (
-        <details className="group mt-6">
-          <summary className="cursor-pointer text-sm font-semibold text-zinc-900 marker:text-zinc-400">
-            More templates (fill in the blanks)
-          </summary>
-          <p className="mt-1 text-xs text-zinc-500">
-            These install as ordinary automations in this project. Fill in the blanks; nothing is preset to a specific team.
-          </p>
-          <ul className="mt-3 space-y-3">
-            {presets.map((preset) => (
-              <PresetCard key={preset.key} projectId={projectId} preset={preset} ctx={context} />
-            ))}
-          </ul>
-        </details>
-      ) : null}
 
         </>
       ) : null}
@@ -540,105 +518,6 @@ function RunRow({ run: r, ruleName, projectId }: { run: RuleRun; ruleName: strin
         <div id={panelId} className="mt-2 pl-8">
           <RunSteps steps={steps} error={error} />
         </div>
-      ) : null}
-    </li>
-  );
-}
-
-function PresetCard({ projectId, preset, ctx }: { projectId: string; preset: RulePreset; ctx: RuleContext }) {
-  const [pending, run] = useServerAction();
-  const [open, setOpen] = useState(false);
-  const [enable, setEnable] = useState(false);
-  const [inputs, setInputs] = useState<Record<string, Json>>(() =>
-    Object.fromEntries(preset.inputs.filter((i) => i.default !== undefined).map((i) => [i.key, i.default as Json])),
-  );
-  const missing = preset.inputs.some((i) => inputs[i.key] === undefined || inputs[i.key] === "");
-  const prefix = `preset-${preset.key}`;
-
-  return (
-    <li className="rounded-lg border border-zinc-200 p-4">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-zinc-900">
-            {preset.name}
-            {preset.ruleCount > 1 ? <span className="ml-2 text-xs font-normal text-zinc-500">{preset.ruleCount} automations</span> : null}
-          </p>
-          <p className="mt-1 text-sm text-zinc-600">{preset.description}</p>
-        </div>
-        {!open ? (
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="rounded-md border border-zinc-200 px-2.5 py-1 text-sm text-zinc-700 hover:bg-zinc-50"
-          >
-            Use template
-          </button>
-        ) : null}
-      </div>
-      {open ? (
-        <form
-          className="mt-3 space-y-3 border-t border-zinc-100 pt-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            run(async () => {
-              const result = await installRulePreset(projectId, preset.key, inputs, enable);
-              if (!result.error) setOpen(false);
-              return result;
-            });
-          }}
-        >
-          {preset.inputs.map((input) => {
-            const id = `${prefix}-${input.key}`;
-            const set = (value: Json) => setInputs((current) => ({ ...current, [input.key]: value }));
-            return (
-              <div key={input.key} className="flex flex-col gap-1">
-                <label htmlFor={id} className={labelClass}>
-                  {input.label}
-                </label>
-                {input.kind === "section" ? (
-                  <SectionSelect id={id} label={input.label} value={inputs[input.key]} ctx={ctx} onChange={set} variant="control" />
-                ) : input.kind === "field" ? (
-                  <FieldSelect id={id} label={input.label} value={inputs[input.key]} fields={ruleFields(ctx)} onChange={set} variant="control" />
-                ) : input.kind === "person" ? (
-                  <PersonSelect id={id} label={input.label} value={inputs[input.key]} ctx={ctx} onChange={set} variant="control" />
-                ) : input.kind === "number" ? (
-                  <input
-                    id={id}
-                    type="number"
-                    min={0}
-                    value={typeof inputs[input.key] === "number" ? (inputs[input.key] as number) : ""}
-                    onChange={(e) => set(e.currentTarget.value === "" ? "" : Number(e.currentTarget.value))}
-                    className={`${inputClass} w-28`}
-                  />
-                ) : (
-                  <input
-                    id={id}
-                    value={typeof inputs[input.key] === "string" ? (inputs[input.key] as string) : ""}
-                    maxLength={1000}
-                    onChange={(e) => set(e.currentTarget.value)}
-                    className={`${inputClass} w-full`}
-                  />
-                )}
-              </div>
-            );
-          })}
-          <label className="flex items-center gap-2 text-sm text-zinc-700">
-            <input type="checkbox" checked={enable} onChange={(e) => setEnable(e.currentTarget.checked)} />
-            Turn on right away
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="submit"
-              disabled={pending || missing}
-              className="rounded-md bg-accent-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-600 disabled:opacity-50"
-            >
-              Install
-            </button>
-            <button type="button" onClick={() => setOpen(false)} className="rounded-md px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100">
-              Cancel
-            </button>
-          </div>
-        </form>
       ) : null}
     </li>
   );
