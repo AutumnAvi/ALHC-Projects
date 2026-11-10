@@ -18,7 +18,8 @@ import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
 import { ExternalReviewBadge } from "@/components/project/task-meta";
 import type { Tag } from "@alhc/core/tags";
-import { completeModeLabel, completeModeOf } from "@alhc/core/approval-complete";
+import { completeModeLabel, completeModeOf, EXTERNAL_PENDING_REASON } from "@alhc/core/approval-complete";
+import { externallyApproved, isTwoStageApproval } from "@alhc/core/external-review";
 import { requestApprovalAction } from "./approval-action";
 import { ApprovalSetupDialog } from "./approval-setup-dialog";
 import { ApprovalFeedback, ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
@@ -93,12 +94,17 @@ export function TaskDetailPanel({
   // Mark complete is "Ready for approval" (the banner's send flow); while a round is pending it waits,
   // except for an approver whose decision is open, whose button is Approve (the decision path). The
   // database refuses the rest too (guard_task_kind).
+  // Note 183: an internal approver and an external reviewer — neither approval completes the task.
+  const twoStage = isTwoStageApproval(task);
   const completeMode = completeModeOf({
     kind: task.kind,
     completed,
     status: task.approval?.status ?? null,
     isApprover: Boolean(task.approval?.approverIds.includes(memberId)),
     waitingOnMe: task.approval?.waitingOnMe,
+    // Note 183: a two-stage task's assignee completes it after the external reviewer approved it.
+    isAssignee: task.assigneeId === memberId,
+    externallyApproved: externallyApproved(task.externalReview),
   });
   // The task's numbers (Oct 29 notes, 55b): one chip per project that numbers it and the viewer can read,
   // in the stable order; inside one of those projects (item 39) its chip is the darker one.
@@ -192,11 +198,21 @@ export function TaskDetailPanel({
             type="button"
             disabled
             data-complete-mode="approved"
-            data-tooltip={(task.approval?.approverIds.length ?? 0) > 1 ? "Approved. Only its approvers can complete it." : "Approved. Only its approver can complete it."}
+            data-tooltip={
+              twoStage
+                ? EXTERNAL_PENDING_REASON
+                : (task.approval?.approverIds.length ?? 0) > 1
+                  ? "Approved. Only its approvers can complete it."
+                  : "Approved. Only its approver can complete it."
+            }
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-green-300 bg-green-50 px-2.5 text-sm font-medium text-green-800 disabled:cursor-not-allowed"
           >
             <ThumbsUp className="size-4" strokeWidth={2.5} aria-hidden />
-            {(task.approval?.approverIds.length ?? 0) > 1 ? "Approved · an approver completes it" : "Approved · the approver completes it"}
+            {twoStage
+              ? "Approved · external review next"
+              : (task.approval?.approverIds.length ?? 0) > 1
+                ? "Approved · an approver completes it"
+                : "Approved · the approver completes it"}
           </button>
         ) : completeMode === "ready" && canActOnApproval(task, memberId) && !task.approval?.paused ? (
           // Nov 4 notes (batch 27, 161): not while paused — the Approval row's "Feedback received" comes first.

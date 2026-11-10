@@ -212,7 +212,7 @@ export function GeneralSettings({
       >
         {runs.length === 0 ? (
           <EmptyState icon={History} title="No imports yet" size="inline">
-            A project admin imports Asana exports from that project’s Settings → Import; each run shows up here.
+            A project’s Owner imports Asana exports from that project’s Settings → Import; each run shows up here.
           </EmptyState>
         ) : (
           <ul className="divide-y divide-zinc-100">

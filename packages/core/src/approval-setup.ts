@@ -45,7 +45,13 @@ export function approvalSetupProblem(step: ApprovalSetupStep, draft: ApprovalSet
 }
 
 // The setup's last line, in plain words ("Ana approves it, then the task is completed.").
-export function approvalSetupSummary(draft: ApprovalSetupDraft, names: string[], sectionName?: string | null): string {
+// Note 183: `twoStage` = it also goes to an external reviewer, so approving it never completes it.
+export function approvalSetupSummary(
+  draft: ApprovalSetupDraft,
+  names: string[],
+  sectionName?: string | null,
+  twoStage = false,
+): string {
   const who =
     names.length === 0
       ? "Nobody approves it yet"
@@ -54,6 +60,9 @@ export function approvalSetupSummary(draft: ApprovalSetupDraft, names: string[],
         : draft.mode === "all"
           ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} all approve it`
           : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]} approves it`;
+  if (twoStage) {
+    return `${who}, then it goes to the external reviewer. It stays open: after their approval, its approvers or its assignee complete it.`;
+  }
   const then =
     draft.followUp === "complete"
       ? "then the task is completed"

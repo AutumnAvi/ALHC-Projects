@@ -116,7 +116,7 @@ async function requireImportAdmin(ctx: ApiContext, projectId: string) {
   const roleResult = await supabase.rpc("project_role", { target_project: projectId });
   check(roleResult);
   if (roleResult.data !== "owner" && roleResult.data !== "admin") {
-    throw new ApiError("forbidden", "You need Admin access to import into this project");
+    throw new ApiError("forbidden", "Only the project’s Owners can import into this project");
   }
 }
 

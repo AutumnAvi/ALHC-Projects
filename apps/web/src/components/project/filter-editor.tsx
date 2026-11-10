@@ -6,6 +6,7 @@ import { displayName } from "@alhc/core/people";
 import { plural } from "@alhc/core/rule-feedback";
 import { SmartPicker } from "@/components/smart-picker";
 import { formatDueDate } from "@/lib/dates";
+import { dayLabel } from "@alhc/core/date-input";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { Section } from "@alhc/core/api/projects/model";
 import { NumberInput } from "@/components/number-input";
@@ -59,6 +60,8 @@ function without<K extends keyof ViewFilters>(filters: ViewFilters, ...keys: K[]
   return next;
 }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
 function personLabel(id: string | null, profiles: Map<string, Profile>) {
   if (id === null) return "Unassigned";
   if (id === "me") return "Me";
@@ -85,6 +88,10 @@ function fieldFilterLabel(filter: FieldFilter, field: FieldDef, context: FilterC
     if (field.fieldType === "boolean") return `${field.name}: ${filter.value === false ? "unchecked" : "checked"}`;
     if (field.fieldType === "number" && typeof filter.value === "number") {
       return `${field.name} = ${formatNumberValue(filter.value, numberPrefixOf(field))}`;
+    }
+    // Nov 10 audit (C71): a date field's value reads like every other date ("Nov 14"), not 2026-11-14.
+    if (field.fieldType === "date" && typeof filter.value === "string" && ISO_DAY.test(filter.value)) {
+      return `${field.name} = ${dayLabel(filter.value, new Date().getFullYear())}`;
     }
     return `${field.name} = ${String(filter.value)}`;
   }

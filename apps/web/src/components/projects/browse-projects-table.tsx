@@ -193,7 +193,7 @@ export function BrowseProjectsTable({
                 <span className="text-xs font-normal tabular-nums text-zinc-500">{archivedRows.length}</span>
               </h2>
               <p className="mt-0.5 text-xs text-zinc-500">
-                Read-only for everyone until an admin or owner unarchives them. They’re not in the sidebar, Home, or
+                Read-only for everyone until the project’s Owner unarchives them. They’re not in the sidebar, Home, or
                 project pickers.
               </p>
               <ProjectTable rows={archivedRows} sort={sort} onSort={toggleSort} names={names} pending={pending} onJoin={join} />

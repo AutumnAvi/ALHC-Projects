@@ -33,7 +33,7 @@ export async function createMessageThread(
     })
     .select("id")
     .single();
-  check(result, "Commenters and above can post messages in this project");
+  check(result, "Only people who can comment in this project can post messages");
   return result.data?.id;
 }
 
@@ -51,7 +51,7 @@ export async function replyToThread(ctx: ApiContext, threadId: string, body: str
     await supabase
       .from("project_messages")
       .insert({ project_id: thread.data.project_id, thread_id: threadId, body: text(body, "Reply", { max: MAX_MESSAGE }) }),
-    "Commenters and above can reply in this project",
+    "Only people who can comment in this project can reply",
   );
 }
 
@@ -105,7 +105,7 @@ export async function toggleMessageReaction(ctx: ApiContext, messageId: string, 
   }
   const inserted = await supabase.from("project_message_reactions").insert({ message_id: messageId, emoji });
   if (inserted.error?.code === "23505") return;
-  check(inserted, "Commenters and above can react to messages");
+  check(inserted, "Only people who can comment in this project can react to messages");
 }
 
 // ---------------------------------------------------------------------------------------------

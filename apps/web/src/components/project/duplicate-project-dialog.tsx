@@ -34,7 +34,7 @@ export function DuplicateProjectDialog({
   return (
     <Dialog
       title={`Duplicate “${project.name}”`}
-      description="Sections, custom fields, saved views, and request numbering are always copied. You’ll own the copy."
+      description="Sections, custom fields, saved views, and Task numbering settings are always copied. You’ll own the copy."
       onClose={onClose}
     >
       <form

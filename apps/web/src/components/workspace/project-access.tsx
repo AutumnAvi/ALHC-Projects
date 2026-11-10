@@ -136,7 +136,7 @@ export function ProjectAccessPanel({
                   {ROLE_LABELS[row.role]}
                   <span className="sr-only">
                     {" "}
-                    ({row.archived ? "archived project" : "only the project’s admins and owners change this"})
+                    ({row.archived ? "archived project" : "only the project’s Owners change this"})
                   </span>
                 </span>
               )}

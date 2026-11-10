@@ -102,8 +102,8 @@ export function InboxNotifications() {
         ))}
       </ul>
       <p className="mt-2 text-xs text-zinc-500">
-        Switches per kind need this release’s database update. To stop getting a task’s comments, leave it (Leave
-        task, at the bottom of its pane).{" "}
+        Switches per kind need this release’s database update. To stop getting a task’s comments, unfollow it
+        (Unfollow, at the bottom of its pane).{" "}
         <Link href="/inbox" className="text-accent-700 hover:underline">
           Open Inbox
         </Link>

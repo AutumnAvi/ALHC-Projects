@@ -243,7 +243,7 @@ function ThreadList({
               : `Messages posted to ${team.name} show up here. Team members can start one.`
             : canPost
               ? "Start a thread to share an update or ask the project a question. Replies, @mentions, and reactions work like task comments."
-              : "Messages posted in this project show up here. Commenters and above can start one."}
+              : "Messages posted in this project show up here. People who can comment here can start one."}
         </EmptyState>
       ) : (
         <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200" aria-label="Message threads">
@@ -426,7 +426,7 @@ function ThreadView({
         <p className="text-sm text-zinc-600">
           {scope.kind === "team"
             ? `You can read this thread. Members of ${scope.name} can reply and react; follow it to hear about replies.`
-            : "You can read this thread. Commenters and above can reply and react."}
+            : "You can read this thread. People who can comment here can reply and react."}
         </p>
       )}
     </div>
