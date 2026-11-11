@@ -88,11 +88,29 @@ type Found = { start: number; query: string; tasks: QuickTask[]; projects: Quick
 // the raw link (`value` / onValueChange still carry the body with the link; src/lib/link-chips.ts). The
 // textarea holds the name between two invisible marks, and a layer over it (LinkChipLayer) draws that
 // span as a chip; the caret skips over a chip, and Backspace / Delete next to one removes it whole.
+// Whether a key event is part of an IME composition (keyCode 229 covers Safari, which reports the
+// composition's last Enter with isComposing false).
+export function isComposingKey(e: { nativeEvent: { isComposing?: boolean; keyCode?: number }; keyCode?: number }): boolean {
+  return Boolean(e.nativeEvent.isComposing) || e.nativeEvent.keyCode === 229 || e.keyCode === 229;
+}
+
+// Enter with no suggestions open: ⌘/Ctrl+Enter always sends; a plain Enter sends when the box asks for it;
+// Shift+Enter (and Alt+Enter) never sends, so the textarea adds a line.
+export function submitsOnEnter(
+  e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean },
+  submitOnEnter: boolean,
+): boolean {
+  if (e.key !== "Enter") return false;
+  if (e.metaKey || e.ctrlKey) return true;
+  return submitOnEnter && !e.shiftKey && !e.altKey;
+}
+
 export function MentionTextarea({
   value,
   onValueChange,
   candidates,
   onSubmit,
+  submitOnEnter = false,
   onCancel,
   links = false,
   linkRefs,
@@ -103,8 +121,11 @@ export function MentionTextarea({
   value: string;
   onValueChange: (value: string) => void;
   candidates: Profile[];
-  // ⌘/Ctrl+Enter.
+  // ⌘/Ctrl+Enter (and plain Enter with `submitOnEnter`).
   onSubmit?: () => void;
+  // Nov 11 notes (188): Enter sends (comments), Shift+Enter adds a line. Never while an IME is composing
+  // or while the @ / # suggestions are open (Enter picks the suggestion there).
+  submitOnEnter?: boolean;
   // Escape while no suggestions are open.
   onCancel?: () => void;
   links?: boolean;
@@ -283,6 +304,11 @@ export function MentionTextarea({
         }}
         onKeyDown={(e) => {
           const element = e.currentTarget;
+          // An IME is composing (Japanese, Chinese, …): its Enter confirms the text, nothing else.
+          if (isComposingKey(e)) {
+            props.onKeyDown?.(e);
+            return;
+          }
           if (
             (e.key === "Backspace" || e.key === "Delete") &&
             !e.metaKey &&
@@ -325,7 +351,13 @@ export function MentionTextarea({
               return;
             }
           }
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && onSubmit) {
+          // A "#" search still on its way (the picker shows "Searching…"): Enter waits for a suggestion
+          // to pick instead of sending the half-typed link.
+          if (open && submitOnEnter && e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+            return;
+          }
+          if (e.key === "Enter" && onSubmit && submitsOnEnter(e, submitOnEnter)) {
             e.preventDefault();
             onSubmit();
             return;
