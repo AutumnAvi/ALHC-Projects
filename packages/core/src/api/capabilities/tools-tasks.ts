@@ -4,6 +4,7 @@
 import { APPROVAL_SETUP_UNFINISHED, approvalSetupUnfinished } from "../../approval-setup";
 import { BIG_CHANGE_ITEMS } from "../../ai-tools";
 import { blockedCompletionReason, parseBlockerCounts } from "../../blocked-completion";
+import { COMMENT_EDIT_EXPIRED, commentEditWindowOpen } from "../../comment-edit";
 import { isRealDate } from "../../ai-builder";
 import { describeRecurrence, parseRecurrence, recurrenceJson, type Recurrence } from "../../recurrence";
 import type { Json } from "../../supabase/database.types";
@@ -819,7 +820,7 @@ async function commentArg(env: ToolEnv, value: unknown, what: string, own: boole
     const c = maybe(await env.ctx.db.from("comments").select("id").eq("id", id).maybeSingle(), "comment");
     return c ? "a comment" : null;
   });
-  const c = maybe(await env.ctx.db.from("comments").select("id, task_id, author_id, body, pinned_at, deleted_at, email_direction").eq("id", ref.id).maybeSingle(), "comment");
+  const c = maybe(await env.ctx.db.from("comments").select("id, task_id, author_id, body, pinned_at, deleted_at, email_direction, created_at").eq("id", ref.id).maybeSingle(), "comment");
   if (!c || c.deleted_at) refuse(`${what}: that comment isn’t available`);
   if (own && lower(String(c!.author_id ?? "")) !== env.me) refuse(`${what}: only your own comments`);
   const task = await loadTasksFor(env, c!.task_id);
@@ -836,11 +837,14 @@ const editCommentTool: Handler = {
     const { c, task } = await commentArg(env, input.comment, what, true);
     allowedIn(env, "edit_comment", task.projectId, what);
     if (c.email_direction) refuse(`${what}: an emailed comment can’t be edited`);
+    // Nov 11 notes (189): only for 15 minutes after posting (editComment and the database refuse it too).
+    if (!commentEditWindowOpen(String(c.created_at))) refuse(`${what}: ${COMMENT_EDIT_EXPIRED}`);
     const body = typeof input.text === "string" ? input.text.trim() : "";
     if (!body || body.length > 5000) refuse(`${what}: a comment is 1–5,000 characters`);
     return staged("edit_comment", task.projectId, `Edit your comment on “${task.title}”`, String(c.body).slice(0, 200), body.slice(0, 200), { comment_id: c.id, task_id: task.id, body });
   },
   read: readComment,
+  // A plan applied after the window closed is refused by editComment with the same message.
   async apply(ctx, _op, a) {
     await editComment(ctx, String(a.comment_id), String(a.body));
     return null;
