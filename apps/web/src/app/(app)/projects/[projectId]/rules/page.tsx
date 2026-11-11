@@ -25,6 +25,8 @@ export default async function ProjectRulesPage({ params, searchParams }: PagePro
   const [rules, context] = await Promise.all([listProjectRules(projectId), loadRuleContext(projectId)]);
   const ids = rules.map((r) => r.id);
   const historyRuleId = view === "history" && ruleParam && ids.includes(ruleParam) ? ruleParam : null;
+  // Nov 11 notes (190): ?run=<id> opens History at that run, expanded (the automation toasts link here).
+  const focusRunId = view === "history" && typeof query.run === "string" && isUuid(query.run) ? query.run : null;
   const [runs, stats] = await Promise.all([
     view === "history"
       ? listRecentRuleRuns(historyRuleId ? [historyRuleId] : ids, HISTORY_LIMIT)
@@ -44,6 +46,7 @@ export default async function ProjectRulesPage({ params, searchParams }: PagePro
         context={context}
         view={view}
         historyRuleId={historyRuleId}
+        focusRunId={focusRunId}
       />
     </main>
   );
