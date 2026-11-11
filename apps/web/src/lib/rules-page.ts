@@ -11,8 +11,12 @@ export function rulesPageView(value: unknown): RulesPageView {
   return value === "templates" || value === "history" ? value : "automations";
 }
 
-export function rulesPageHref(projectId: string, view: RulesPageView, ruleId?: string | null) {
+// Nov 11 notes (190): `runId` opens History at that run, expanded (with `ruleId`, filtered to its
+// automation). The same links as runHistoryHref / runHref in @alhc/core/rule-feedback.
+export function rulesPageHref(projectId: string, view: RulesPageView, ruleId?: string | null, runId?: string | null) {
   const base = `/projects/${projectId}/rules`;
   if (view === "automations") return base;
-  return `${base}?view=${view}${ruleId ? `&rule=${encodeURIComponent(ruleId)}` : ""}`;
+  return `${base}?view=${view}${ruleId ? `&rule=${encodeURIComponent(ruleId)}` : ""}${
+    view === "history" && runId ? `&run=${encodeURIComponent(runId)}` : ""
+  }`;
 }

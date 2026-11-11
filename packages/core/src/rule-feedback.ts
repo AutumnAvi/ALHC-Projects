@@ -28,6 +28,10 @@ export type FeedbackResponse = { cursor: string; runs: FeedbackRun[] };
 
 export type RanNote = {
   kind: "ran";
+  // Nov 11 notes (190): the run "View this run" opens — the only run, else (several runs of the same
+  // automation) the latest one that partly ran, else the latest. `runCount` says which it is.
+  runId: string | null;
+  runCount: number;
   ruleId: string;
   ruleName: string;
   projectId: string;
@@ -46,6 +50,8 @@ export type StopKind = "loop" | "depth_limit" | "throttled" | "rate_limited" | "
 
 export type StopNote = {
   kind: "stopped";
+  // Nov 11 notes (190): the run this warning is about (the first one, when several were folded into it).
+  runId: string | null;
   stop: StopKind;
   ruleId: string;
   ruleName: string;
@@ -77,6 +83,8 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
       actions: Set<string>;
       partialRuns: number;
       firstPartial: PartialRun | null;
+      runIds: string[];
+      latestPartialId: string | null;
     }
   >();
   const stops: StopNote[] = [];
@@ -92,11 +100,15 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
         actions: new Set<string>(),
         partialRuns: 0,
         firstPartial: null,
+        runIds: [],
+        latestPartialId: null,
       };
       entry.actions.add(run.action ?? "");
+      entry.runIds.push(run.id);
       if (run.partial) {
         entry.partialRuns += 1;
         entry.firstPartial ??= run.partial;
+        entry.latestPartialId = run.id;
       }
       if (run.taskId) entry.tasks.add(run.taskId);
       else entry.nullTasks += 1;
@@ -113,6 +125,7 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
     seenStop.add(key);
     stops.push({
       kind: "stopped",
+      runId: run.id,
       stop,
       ruleId: run.ruleId,
       ruleName: run.ruleName,
@@ -122,10 +135,13 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
       detail: stop === "failed" ? run.reason : null,
     });
   }
-  const notes: FeedbackNote[] = [...ran.values()].map(({ run, tasks, readable, nullTasks, actions, partialRuns, firstPartial }) => {
+  const notes: FeedbackNote[] = [...ran.values()].map(
+    ({ run, tasks, readable, nullTasks, actions, partialRuns, firstPartial, runIds, latestPartialId }) => {
     const taskCount = tasks.size + nullTasks;
     const only = actions.size === 1 ? [...actions][0] : "";
     return {
+      runId: latestPartialId ?? runIds[runIds.length - 1] ?? null,
+      runCount: runIds.length,
       action: only || null,
       partial: firstPartial ? { runs: partialRuns, ...firstPartial } : null,
       kind: "ran",
@@ -136,7 +152,8 @@ export function feedbackNotes(runs: readonly FeedbackRun[]): FeedbackNote[] {
       taskId: taskCount === 1 && readable ? readable.taskId : null,
       taskTitle: taskCount === 1 && readable ? readable.taskTitle : null,
     };
-  });
+    },
+  );
   return [...notes, ...stops];
 }
 
@@ -241,6 +258,21 @@ export function feedbackTaskHref(projectId: string, taskId: string) {
   return `/projects/${projectId}?task=${taskId}`;
 }
 
+// Nov 11 notes (190): the automation's run history (the project Automations page's History tab, filtered
+// to it), and one run there, opened (apps/web/src/lib/rules-page.ts reads `run`).
+export function runHistoryHref(projectId: string, ruleId: string) {
+  return `/projects/${projectId}/rules?view=history&rule=${encodeURIComponent(ruleId)}`;
+}
+
+export function runHref(projectId: string, ruleId: string, runId: string) {
+  return `${runHistoryHref(projectId, ruleId)}&run=${encodeURIComponent(runId)}`;
+}
+
+// What the run link says: "View this run" for one run, "View latest run" when the toast covers several.
+export function runLinkLabel(runCount: number) {
+  return runCount > 1 ? "View latest run" : "View this run";
+}
+
 // Where the next check starts reading: the cursor minus the overlap, else the change's start.
 export function feedbackSince(cursor: string | null, startedAt: number, now: number): { since?: string; within?: number } {
   if (cursor) return { since: cursor };
@@ -258,6 +290,7 @@ export function finishedRunsFromNotes(notes: readonly FeedbackNote[]): {
   failed: boolean;
   partial?: boolean;
   detail: string | null;
+  runId?: string | null;
 }[] {
   const out: ReturnType<typeof finishedRunsFromNotes> = [];
   for (const note of notes) {
@@ -272,9 +305,19 @@ export function finishedRunsFromNotes(notes: readonly FeedbackNote[]): {
         failed: false,
         partial: Boolean(note.partial),
         detail: note.partial?.reason ? `${ranText(note)}: ${note.partial.reason}` : ranText(note),
+        runId: note.runId,
       });
     } else if (note.stop === "failed") {
-      out.push({ ruleId: note.ruleId, ruleName: note.ruleName, projectId: note.projectId, tasks, taskCount: tasks.length, failed: true, detail: note.detail });
+      out.push({
+        ruleId: note.ruleId,
+        ruleName: note.ruleName,
+        projectId: note.projectId,
+        tasks,
+        taskCount: tasks.length,
+        failed: true,
+        detail: note.detail,
+        runId: note.runId,
+      });
     }
   }
   return out;
