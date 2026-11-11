@@ -9,6 +9,7 @@ import { invalid } from "../core/errors";
 import { id, text } from "../core/validate";
 import { MAX_ATTACHMENT_BYTES } from "../../attachments";
 import { isReactionKey } from "../../reactions";
+import { COMMENT_EDIT_EXPIRED, commentEditWindowOpen } from "../../comment-edit";
 
 // ---------------------------------------------------------------------------------------------
 // Comments
@@ -56,11 +57,23 @@ export async function setReplyThreadClosed(ctx: ApiContext, taskId: string, clos
 }
 
 // Authors edit only the text; the database stamps edited_at and notifies people the edit newly mentions.
+// Nov 11 notes (189): only for 15 minutes after posting. Checked here so the answer is a plain message,
+// and again by the database (guard_comment_update), which decides on its own clock.
 export async function editComment(ctx: ApiContext, commentId: string, body: string): Promise<void> {
   const supabase = ctx.db;
+  const cleanBody = text(body, "Comment", { max: 10000 });
+  const current = await supabase
+    .from("comments")
+    .select("id, created_at")
+    .eq("id", id(commentId))
+    .is("deleted_at", null)
+    .maybeSingle();
+  check(current);
+  if (!current.data) throw invalid("You can only edit your own comments");
+  if (!commentEditWindowOpen(current.data.created_at)) throw invalid(COMMENT_EDIT_EXPIRED);
   const result = await supabase
     .from("comments")
-    .update({ body: text(body, "Comment", { max: 10000 }) })
+    .update({ body: cleanBody })
     .eq("id", id(commentId))
     .is("deleted_at", null)
     .select("id");
