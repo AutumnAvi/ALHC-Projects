@@ -1,0 +1,17 @@
+Subject: You've been invited to ALHC Projects
+
+Avery Kim invited you to join ALHC
+----------------------------------
+
+Avery Kim invited you to ALHC, where Autumn Lake Marketing plans and tracks its work.
+Create your account with this email address. Projects and teams you were added to are waiting for you after you confirm your email.
+
+Sign up: https://alhc-projects.vercel.app/signup?email=jordan.lee%40example.com
+
+Already have an account? Sign in at https://alhc-projects.vercel.app/login
+If you weren’t expecting this, you can ignore this email.
+
+—
+Sent by Autumn Lake Marketing
+
+Do not reply to this email.
