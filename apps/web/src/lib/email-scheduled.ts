@@ -1,6 +1,20 @@
-import { BRAND_BORDER, BRAND_PAGE, type AppliedDesign } from "@/lib/email-design";
+import { BRAND_BORDER, type AppliedDesign } from "@/lib/email-design";
 import "server-only";
-import { escapeHtml, layout, payloadOf, str, type Block, type OutboxRow, type Rendered } from "@/lib/email-layout";
+import {
+  EMAIL_FONT,
+  EMAIL_INK,
+  EMAIL_MUTED,
+  EMAIL_PANEL,
+  emailSectionHeading,
+  emailSubheading,
+  escapeHtml,
+  layout,
+  payloadOf,
+  str,
+  type Block,
+  type OutboxRow,
+  type Rendered,
+} from "@/lib/email-layout";
 import { isDigestFrequency, isScheduleFrequency, type UnsubscribeWhat } from "@alhc/core/email-schedules";
 import { backgroundOrigin } from "@/lib/origin";
 import { filtersToParams, parseReportFilters } from "@alhc/core/reports";
@@ -121,9 +135,27 @@ export function unsubscribeLinks(row: OutboxRow, what: UnsubscribeWhat): { page:
   return { page: `${origin}/email/off?${query}`, oneClick: `${origin}/api/email/unsubscribe?${query}` };
 }
 
-const H2 = "margin:20px 0 6px;font-size:13px;font-weight:600;color:#3f3f46;text-transform:none";
-const LINK = "color:#18181b;text-decoration:none;font-weight:500";
-const MUTED = "color:#71717a;font-size:12px";
+// Nov 11 notes (191): the digest's and report's lists are tables of rows (a title, a muted line under
+// it, a hairline between rows), in the shared email type (email-layout.ts).
+const LINK = `color:${EMAIL_INK};text-decoration:none;font-weight:600`;
+const MUTED = `color:${EMAIL_MUTED};font-size:12px;line-height:18px`;
+const OVERDUE = "color:#b91c1c;font-size:12px;line-height:18px;font-weight:600";
+
+// One row of a list: the title (a link when there's one) and its meta line.
+function listRow(title: string, href: string | null, meta: string): string {
+  const titleHtml = href ? `<a href="${escapeHtml(href)}" target="_blank" style="${LINK}">${title}</a>` : title;
+  return `<tr><td style="padding:10px 0;border-bottom:1px solid ${BRAND_BORDER};${EMAIL_FONT}"><div style="font-size:15px;line-height:22px;font-weight:600;color:${EMAIL_INK}">${titleHtml}</div>${
+    meta ? `<div style="margin-top:2px">${meta}</div>` : ""
+  }</td></tr>`;
+}
+
+function listTable(rows: string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0">${rows}</table>`;
+}
+
+function moreLine(text: string): string {
+  return `<p style="margin:10px 0 0 0;font-size:13px;line-height:20px;color:${EMAIL_MUTED};${EMAIL_FONT}">${escapeHtml(text)}</p>`;
+}
 
 // "3 unread notifications in your Inbox", grouped by project (or team) in the order of their newest
 // item, each line linking to the task, message, or project, with a short excerpt and its time.
@@ -152,20 +184,21 @@ export function renderDigestEmail(
   }
 
   const htmlGroups = [...groups.values()]
-    .map((group) => {
+    .map((group, index) => {
       const lines = group.items
         .map((item) => {
           const parts = partsOf(item);
           const line = escapeHtml(digestLine(item));
           const href = origin && parts.path?.startsWith("/") ? `${origin}${parts.path}` : null;
-          return `<li style="margin:0 0 10px;font-size:14px;line-height:1.5">${
-            href ? `<a href="${escapeHtml(href)}" style="${LINK}">${line}</a>` : line
-          }<br><span style="${MUTED}">${escapeHtml(formatTime(item.created_at, timeZone))}${
-            parts.detail ? ` · ${escapeHtml(parts.detail)}` : ""
-          }</span></li>`;
+          return listRow(
+            line,
+            href,
+            `<span style="${MUTED}">${escapeHtml(formatTime(item.created_at, timeZone))}${parts.detail ? ` · ${escapeHtml(parts.detail)}` : ""}</span>`,
+          );
         })
         .join("");
-      return `<h2 style="${H2}">${escapeHtml(group.label)}</h2><ul style="margin:0;padding:0 0 0 18px">${lines}</ul>`;
+      // Under "Unread in your Inbox" (a digest with tasks) each project is a subheading; alone, a section.
+      return `${tasks.length ? emailSubheading(group.label, index === 0) : emailSectionHeading(group.label, index === 0)}${listTable(lines)}`;
     })
     .join("");
   const textGroups = [...groups.values()]
@@ -193,11 +226,13 @@ export function renderDigestEmail(
         const title = escapeHtml(task.title);
         const href = origin && task.path.startsWith("/") ? `${origin}${task.path}` : null;
         const when = escapeHtml(digestTaskWhen(task, today));
-        return `<li style="margin:0 0 10px;font-size:14px;line-height:1.5">${
-          href ? `<a href="${escapeHtml(href)}" style="${LINK}">${title}</a>` : title
-        }<br><span style="${task.overdue ? "color:#b91c1c;font-size:12px" : MUTED}">${when}</span>${
-          task.project_name ? `<span style="${MUTED}"> · ${escapeHtml(task.project_name)}</span>` : ""
-        }</li>`;
+        return listRow(
+          title,
+          href,
+          `<span style="${task.overdue ? OVERDUE : MUTED}">${when}</span>${
+            task.project_name ? `<span style="${MUTED}"> · ${escapeHtml(task.project_name)}</span>` : ""
+          }`,
+        );
       })
       .join("");
     const textTasks = tasks
@@ -207,21 +242,19 @@ export function renderDigestEmail(
       })
       .join("\n");
     blocks.push({
-      html: `<h2 style="${H2}">${escapeHtml(label)}</h2><ul style="margin:0;padding:0 0 0 18px">${htmlTasks}</ul>${
-        moreTasks ? `<p style="margin:4px 0 0;font-size:13px;color:#52525b">And ${moreTasks} more in My tasks.</p>` : ""
-      }`,
+      html: `${emailSectionHeading(label, true)}${listTable(htmlTasks)}${moreTasks ? moreLine(`And ${moreTasks} more in My tasks.`) : ""}`,
       text: `${label}\n${textTasks}${moreTasks ? `\nAnd ${moreTasks} more in My tasks.` : ""}`,
     });
   }
   if (total) {
     blocks.push({
-      html: `${taskCount ? `<h2 style="${H2};margin-top:28px">Unread in your Inbox</h2>` : ""}${htmlGroups}`,
+      html: `${taskCount ? emailSectionHeading("Unread in your Inbox") : ""}${htmlGroups}`,
       text: `${taskCount ? "Unread in your Inbox\n\n" : ""}${textGroups}`,
     });
   }
   if (more > 0) {
     blocks.push({
-      html: `<p style="margin:12px 0 0;font-size:13px;color:#52525b">And ${more} more in your Inbox.</p>`,
+      html: moreLine(`And ${more} more in your Inbox.`),
       text: `And ${more} more in your Inbox.`,
     });
   }
@@ -277,8 +310,8 @@ const STATUS_LABELS: Record<string, string> = {
   complete: "Complete",
 };
 
-const TH = `padding:6px 8px;text-align:left;font-size:12px;font-weight:500;color:#71717a;border-bottom:1px solid ${BRAND_BORDER}`;
-const TD = `padding:6px 8px;font-size:13px;border-bottom:1px solid ${BRAND_PAGE}`;
+const TH = `padding:8px 10px;text-align:left;font-size:12px;line-height:16px;font-weight:600;color:${EMAIL_MUTED};background:${EMAIL_PANEL};border-bottom:1px solid ${BRAND_BORDER};${EMAIL_FONT}`;
+const TD = `padding:9px 10px;font-size:13px;line-height:18px;color:${EMAIL_INK};border-bottom:1px solid ${BRAND_BORDER};${EMAIL_FONT}`;
 const TDN = `${TD};text-align:right;font-variant-numeric:tabular-nums`;
 
 function statTiles(t: Totals): Block {
@@ -289,12 +322,12 @@ function statTiles(t: Totals): Block {
     { label: "All tasks", value: t.tasks },
   ];
   return {
-    html: `<table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:4px -6px 0"><tr>${tiles
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0 0;border-collapse:separate;border-spacing:0"><tr>${tiles
       .map(
-        (tile) =>
-          `<td style="background:${BRAND_PAGE};border-radius:8px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:600;${
-            tile.label === "Overdue" && tile.value > 0 ? "color:#b91c1c" : ""
-          }">${tile.value}</div><div style="${MUTED}">${escapeHtml(tile.label)}</div></td>`,
+        (tile, i) =>
+          `<td width="25%" valign="top" style="width:25%;padding:0 ${i === tiles.length - 1 ? "0" : "6px"} 0 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="${EMAIL_PANEL}" style="padding:14px 6px;background:${EMAIL_PANEL};border:1px solid ${BRAND_BORDER};border-radius:8px;${EMAIL_FONT}"><div style="font-size:24px;line-height:30px;font-weight:700;color:${
+            tile.label === "Overdue" && tile.value > 0 ? "#b91c1c" : EMAIL_INK
+          }">${tile.value}</div><div style="${MUTED}">${escapeHtml(tile.label)}</div></td></tr></table></td>`,
       )
       .join("")}</tr></table>`,
     text: tiles.map((tile) => `${tile.label}: ${tile.value}`).join(" · "),
@@ -344,8 +377,8 @@ export function renderReportEmail(row: OutboxRow, design?: AppliedDesign | null)
       .join("");
     const hidden = projectCount - projects.length;
     blocks.push({
-      html: `<h2 style="${H2}">By project</h2><table style="width:100%;border-collapse:collapse">${head}${body}</table>${
-        hidden > 0 ? `<p style="margin:6px 0 0;${MUTED}">And ${hidden} more project${hidden === 1 ? "" : "s"} in Reports.</p>` : ""
+      html: `${emailSectionHeading("By project")}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:separate;border-spacing:0;border:1px solid ${BRAND_BORDER};border-radius:8px">${head}${body}</table>${
+        hidden > 0 ? moreLine(`And ${hidden} more project${hidden === 1 ? "" : "s"} in Reports.`) : ""
       }`,
       text: [
         "By project",
@@ -362,11 +395,15 @@ export function renderReportEmail(row: OutboxRow, design?: AppliedDesign | null)
       .map((o) => {
         const href = origin && o.path?.startsWith("/") ? `${origin}${o.path}` : null;
         const title = escapeHtml(o.title);
-        return `<li style="margin:0 0 6px;font-size:13px">${href ? `<a href="${escapeHtml(href)}" style="${LINK}">${title}</a>` : title} <span style="${MUTED}">${escapeHtml(o.project)} · ${o.days} day${o.days === 1 ? "" : "s"} overdue</span></li>`;
+        return listRow(
+          title,
+          href,
+          `<span style="${OVERDUE}">${o.days} day${o.days === 1 ? "" : "s"} overdue</span><span style="${MUTED}"> · ${escapeHtml(o.project)}</span>`,
+        );
       })
       .join("");
     blocks.push({
-      html: `<h2 style="${H2}">Oldest overdue</h2><ul style="margin:0;padding:0 0 0 18px">${items}</ul>`,
+      html: `${emailSectionHeading("Oldest overdue")}${listTable(items)}`,
       text: [
         "Oldest overdue",
         ...overdue.map((o) => `- ${o.title} (${o.project}, ${o.days} day${o.days === 1 ? "" : "s"} overdue)`),

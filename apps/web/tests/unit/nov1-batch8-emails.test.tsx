@@ -141,7 +141,8 @@ test("a response with replies on: the reply line near the top, no footnote, from
   assert.equal(email.replyable, true);
   const lines = email.text.split("\n").filter(Boolean);
   assert.deepEqual(lines.slice(0, 2), [SUBMITTER_REPLY_MARKER, CAN_REPLY_NOTE], "right under the reply marker");
-  assert.ok(email.html.indexOf(CAN_REPLY_NOTE) < email.html.indexOf("Hi Terry"), "above the message in the HTML");
+  // The hidden preview line (Nov 11 notes, 191) quotes the message first; the card shows the line above it.
+  assert.ok(email.html.indexOf(CAN_REPLY_NOTE) < email.html.lastIndexOf("Hi Terry"), "above the message in the HTML");
   assert.match(email.html, /bgcolor="#fff2e6"[^>]*>You can reply to this email to respond\./, "a highlighted box");
   assert.ok(!email.text.includes(NO_REPLY_NOTE) && !email.html.includes(NO_REPLY_NOTE));
   assert.equal(email.text.split(CAN_REPLY_NOTE).length, 2, "said once");
