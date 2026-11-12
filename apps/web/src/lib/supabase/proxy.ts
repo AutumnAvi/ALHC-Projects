@@ -25,6 +25,9 @@ const PUBLIC_PATHS = [
   // Review checks (Oct 26 notes, batch 3): the reviewer's page and its files; a token in the URL, no
   // sign-in (/review-files, the task's own view of uploads, is not public).
   "/review",
+  // Security audit 2 (Nov 12, batch 41): browsers' reports of the report-only content policy, sent from
+  // signed-out pages too (sign-in, public forms). It stores nothing and answers 204.
+  "/api/csp-report",
 ];
 
 function isPublicPath(pathname: string) {
