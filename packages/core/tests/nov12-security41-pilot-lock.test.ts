@@ -45,6 +45,17 @@ test("the lock finds every row of another workspace among the ids, and only thos
   const ctx = createApiContext(db(s));
   const outside = await idsOutsidePilot(ctx, WS, [P_REAL, S_REAL, T_REAL, C_REAL, G_REAL, TAG_REAL, R_REAL, REAL_WS, P1, S_TODO, T_FLYER, ME, MATE, "12345678-1234-4234-8234-123456789012"]);
   assert.deepEqual(outside.sort(), [P_REAL, S_REAL, T_REAL, C_REAL, G_REAL, TAG_REAL, R_REAL, REAL_WS].sort());
+  // Asked again within the same request, the ones already found inside aren't looked up again; the ones
+  // outside are refused every time.
+  const log: string[] = [];
+  const ctx2 = createApiContext(db(s, { log }));
+  await idsOutsidePilot(ctx2, WS, [P1, T_FLYER]);
+  const reads = log.length;
+  assert.ok(reads > 0);
+  assert.deepEqual(await idsOutsidePilot(ctx2, WS, [P1, T_FLYER]), []);
+  assert.equal(log.length, reads, "cached for this request");
+  assert.deepEqual(await idsOutsidePilot(ctx2, WS, [T_REAL]), [T_REAL]);
+  assert.deepEqual(await idsOutsidePilot(ctx2, WS, [T_REAL]), [T_REAL], "never cached as fine");
   // Ids inside text and nested steps are found too (an automation's step, a widget's filter).
   assert.deepEqual(idsIn({ actions: [{ type: "move_section", section_id: S_REAL.toUpperCase() }] }, [`see ${T_REAL}`]), [S_REAL, T_REAL]);
 });

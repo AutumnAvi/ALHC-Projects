@@ -54,9 +54,22 @@ async function select(ctx: ApiContext, table: string, columns: string, ids: stri
   return out;
 }
 
+// Ids already found inside the pilot (or not a workspace's row) during this request's context, so an
+// assistant turn with many tool calls looks each thing up once. A new request (Confirm, Undo, the next MCP
+// call) has a new context and checks again.
+const cleared = new WeakMap<ApiContext, Map<string, Set<string>>>();
+function clearedFor(ctx: ApiContext, workspaceId: string): Set<string> {
+  let byWorkspace = cleared.get(ctx);
+  if (!byWorkspace) cleared.set(ctx, (byWorkspace = new Map()));
+  let set = byWorkspace.get(workspaceId);
+  if (!set) byWorkspace.set(workspaceId, (set = new Set()));
+  return set;
+}
+
 // The ids (of `ids`) that are rows of a workspace other than the pilot's, as far as the person can read.
 export async function idsOutsidePilot(ctx: ApiContext, workspaceId: string, ids: readonly string[]): Promise<string[]> {
-  const want = [...new Set(ids.map((i) => i.toLowerCase()))];
+  const known = clearedFor(ctx, workspaceId.toLowerCase());
+  const want = [...new Set(ids.map((i) => i.toLowerCase()))].filter((id) => !known.has(id));
   if (want.length === 0) return [];
   if (want.length > MAX_IDS) throw new ApiError("invalid", "That names too many things at once");
   const pilot = workspaceId.toLowerCase();
@@ -103,7 +116,7 @@ export async function idsOutsidePilot(ctx: ApiContext, workspaceId: string, ids:
   await Promise.all([parents("projects", [...projectOf.values()]), parents("tasks", [...taskOf.values()].flat()), parents("portfolios", [...portfolioOf.values()])]);
 
   const outside = (ws: string | undefined) => ws !== undefined && ws !== pilot;
-  return want.filter((id) => {
+  const found = want.filter((id) => {
     if (outside(workspaceOf.get(id))) return true;
     const project = projectOf.get(id);
     if (project && outside(workspaceOf.get(project))) return true;
@@ -111,6 +124,8 @@ export async function idsOutsidePilot(ctx: ApiContext, workspaceId: string, ids:
     if (portfolio && outside(workspaceOf.get(portfolio))) return true;
     return (taskOf.get(id) ?? []).some((t) => outside(workspaceOf.get(t)));
   });
+  for (const id of want) if (!found.includes(id)) known.add(id);
+  return found;
 }
 
 // Refuses (ApiError forbidden) when any id inside `values` is a row of another workspace.
