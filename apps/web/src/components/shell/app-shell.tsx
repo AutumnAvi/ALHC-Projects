@@ -1,8 +1,9 @@
 "use client";
 
 import { RuleFeedbackLayer } from "@/components/rules/rule-feedback";
-import { Suspense, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { leaveGhost } from "@/lib/exit-ghost";
 import { TooltipLayer } from "@/components/tooltip-layer";
 import { SettingsFromUrl } from "@/components/shell/settings-from-url";
 import { RouteFreshness } from "@/components/shell/route-freshness";
@@ -79,8 +80,15 @@ export function AppShell({
 // Narrow screens: the sidebar slides over the page. Escape, the overlay, or a link closes it.
 function SidebarDrawer({ children }: { children: ReactNode }) {
   const { setDrawerOpen } = useShell();
+  const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef(setDrawerOpen);
+
+  // Batch 39: it slides back out as it closes (an inert copy; the drawer itself is gone at once).
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    return () => leaveGhost(root, "ui-anim-drawer-out", 160);
+  }, []);
 
   useEffect(() => {
     closeRef.current = setDrawerOpen;
@@ -100,14 +108,14 @@ function SidebarDrawer({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="fixed inset-0 z-40 md:hidden print:hidden">
-      <div className="absolute inset-0 bg-zinc-900/40" onMouseDown={() => setDrawerOpen(false)} aria-hidden />
+    <div ref={rootRef} className="fixed inset-0 z-40 md:hidden print:hidden">
+      <div className="ui-anim-fade-in absolute inset-0 bg-zinc-900/40" onMouseDown={() => setDrawerOpen(false)} aria-hidden />
       <aside
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Sidebar"
-        className="absolute inset-y-0 left-0 flex w-64 max-w-[85vw] flex-col bg-shell shadow-xl"
+        className="ui-anim-drawer-in absolute inset-y-0 left-0 flex w-64 max-w-[85vw] flex-col bg-shell shadow-xl"
       >
         <div className="flex h-topbar shrink-0 items-center justify-end px-2">
           <button

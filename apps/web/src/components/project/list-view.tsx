@@ -235,7 +235,7 @@ export function ListView({
     [projectId],
   );
   const pages = useGroupPages();
-  const showMorePage = usePagedShowMore();
+  const [showMorePage, loadingPage] = usePagedShowMore();
   const [quickAdd, setQuickAdd] = useState<{ groupKey: string; nonce: number } | null>(null);
   const [draggingTask, setDraggingTask] = useState<string | null>(null);
   const [taskDrop, setTaskDrop] = useState<TaskDrop | null>(null);
@@ -882,6 +882,7 @@ export function ListView({
               <div className="sticky left-0 w-[min(100%,48rem)]">
                 <ShowMoreRows
                   hidden={(group.total ?? group.tasks.length) - visibleTasks(group).length}
+                  loading={group.total != null && loadingPage === group.key}
                   onClick={() =>
                     group.total != null
                       ? showMorePage(group.key, visibleTasks(group).length)
@@ -1467,7 +1468,7 @@ function TaskRow({
       data-cursor={active ? "true" : undefined}
       className={`cv-row group ${LIST_GRID} min-h-row cursor-pointer border-b border-zinc-100 ${
         lit ? "bg-accent-50" : "hover:bg-zinc-50"
-      } ${dragging ? "opacity-40" : ""} ${draggable ? "active:cursor-grabbing" : ""}`}
+      } ${dragging ? "ui-dragging opacity-40" : ""} ${draggable ? "active:cursor-grabbing" : ""}`}
       style={gridStyle}
     >
       <div
