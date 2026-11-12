@@ -17,7 +17,7 @@ import {
   type ResolvedDesign,
 } from "@/lib/email-design";
 import { submitterResponseSubject } from "@alhc/core/comment-email";
-import { layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
+import { emailSectionHeading, layout, payloadOf, str, type OutboxRow, type Rendered } from "@/lib/email-layout";
 import { isInboundEmailConfigured, replyAddress, SUBMITTER_REPLY_MARKER } from "@/lib/email-reply";
 import { renderDigestEmail, renderReportEmail, unsubscribeLinks } from "@/lib/email-scheduled";
 import { backgroundOrigin } from "@/lib/origin";
@@ -141,6 +141,8 @@ function renderCommentEmail(
     ],
     {
       subject: row.subject ?? `${author} ${verb} “${taskTitle}”`,
+      // Nov 11 notes (191): the comment as a quote.
+      quoteBody: true,
       action: link ? { label: "Open task", href: link } : null,
       // Nov 1 notes (batch 8): the no-reply footnote says where to answer instead ("Do not reply to this
       // email. Open the task to answer."); replies to comment emails never reach the task.
@@ -196,6 +198,9 @@ export function renderSubmitterResponseEmail(
   );
 }
 
+// Nov 11 notes (191): invites name the workspace, never the old product name.
+const WORKSPACE_FALLBACK = "the Autumn Lake Marketing workspace";
+
 const INVITE_TARGET_PATH = /^\/(projects|portfolios|teams)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const INVITE_KINDS = { project: "project", portfolio: "portfolio", team: "team" } as const;
 
@@ -217,7 +222,7 @@ function renderTargetInviteEmail(
 ): Rendered {
   const p = payloadOf(row);
   const inviter = str(p.inviter_name) ?? "A teammate";
-  const workspace = str(p.workspace_name) ?? "ALHC Projects";
+  const workspace = str(p.workspace_name) ?? WORKSPACE_FALLBACK;
   const target = str(p.target_name) ?? `a ${kind}`;
   const origin = backgroundOrigin();
   const next = encodeURIComponent(path);
@@ -225,7 +230,7 @@ function renderTargetInviteEmail(
   return layout(
     `${inviter} invited you to ${target}`,
     [
-      `${inviter} added you to the ${INVITE_KINDS[kind]} “${target}”${inviteRolePhrase(kind, str(p.role))} in ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+      `${inviter} added you to the ${INVITE_KINDS[kind]} “${target}”${inviteRolePhrase(kind, str(p.role))} in ${workspace}, where Autumn Lake Marketing plans and tracks its work.`,
       `Create your account with this email address. Once you confirm it, you’ll land on the ${INVITE_KINDS[kind]}.`,
     ],
     [],
@@ -252,13 +257,13 @@ function renderInviteEmail(row: OutboxRow, design?: AppliedDesign | null): Rende
     return renderTargetInviteEmail(row, kind as keyof typeof INVITE_KINDS, path, design);
   }
   const inviter = str(p.inviter_name) ?? "A workspace admin";
-  const workspace = str(p.workspace_name) ?? "ALHC Projects";
+  const workspace = str(p.workspace_name) ?? WORKSPACE_FALLBACK;
   const origin = backgroundOrigin();
   const signUp = origin ? `${origin}/signup?email=${encodeURIComponent(row.to_email)}` : null;
   return layout(
-    "You’ve been invited to ALHC Projects",
+    `${inviter} invited you to join ${workspace}`,
     [
-      `${inviter} invited you to ${workspace} on ALHC Projects, where the team plans and tracks its work.`,
+      `${inviter} invited you to ${workspace}, where Autumn Lake Marketing plans and tracks its work.`,
       "Create your account with this email address. Projects and teams you were added to are waiting for you after you confirm your email.",
     ],
     [],
@@ -388,13 +393,17 @@ function renderNotificationEmail(row: OutboxRow, design?: AppliedDesign | null, 
   const blocks = files.length
     ? [
         {
-          html: emailFileList(files, () => href!, "to review"),
+          html: `${emailSectionHeading(files.length === 1 ? "File to review" : "Files to review")}${emailFileList(files, () => href!, "to review")}`,
           text: ["Files to review:", ...files.map((f) => `- ${f.name}`)].join("\n"),
         },
       ]
     : [];
+  // Nov 11 notes (191): someone's words (a comment, a message, a decision's note) read as a quote; a field
+  // change or a status line stays plain text.
+  const quoteBody = Boolean(body) && !(str(p.item_kind) === "rule" && field) && str(p.item_kind) !== "status_update";
   return layout(heading, body ? [body] : [], rows, {
     subject: (row.subject ?? heading).slice(0, 300),
+    quoteBody,
     action: href ? { label: action, href } : null,
     blocks,
     footer: [

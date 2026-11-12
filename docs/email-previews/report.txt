@@ -1,0 +1,29 @@
+Subject: Weekly creative report: 32 incomplete, 4 overdue
+
+Weekly creative report
+----------------------
+
+Avery Kim sends you this report every week. It counts only projects you can open, as of Nov 11, 8:00 AM (America/New York).
+Projects: Creative Requests, Events, Website
+
+Incomplete: 32 · Overdue: 4 · Completed (7 days): 11 · All tasks: 128
+
+By project
+- Creative Requests: 18 incomplete, 3 overdue, 7 done in 7 days
+- Events: 9 incomplete, 1 overdue, 3 done in 7 days
+- Website: 5 incomplete, 0 overdue, 1 done in 7 days
+
+Oldest overdue
+- Submit print order (Creative Requests, 7 days overdue)
+- Book the photographer (Events, 3 days overdue)
+
+Open in Reports: https://alhc-projects.vercel.app/reports
+
+To change or stop it, ask Avery Kim. You can turn off every scheduled report email in Settings → Notifications (https://alhc-projects.vercel.app/?settings=notifications).
+
+Turn off report emails: https://alhc-projects.vercel.app/email/off?t=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&what=reports
+
+—
+Sent by Autumn Lake Marketing
+
+Do not reply to this email.

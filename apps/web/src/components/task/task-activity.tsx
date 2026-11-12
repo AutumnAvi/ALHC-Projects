@@ -2,7 +2,8 @@
 
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { useEffect, useMemo, useOptimistic, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
+import { commentEditMsLeft, commentEditWindowOpen } from "@alhc/core/comment-edit";
 import { clearPinOverrides, setPinOverride, settledPinOverrides, usePinOverrides } from "@/components/task/pinned-comments-store";
 import { FeedbackSubtaskButton } from "@/components/task/feedback-subtask";
 import Link from "next/link";
@@ -687,6 +688,27 @@ function mentionCandidates(task: TaskDetail, profiles: Profile[], memberId: stri
 export const COMMENT_INPUT =
   "field-sizing-content min-h-16 w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none";
 
+// Nov 11 notes (189): whether a comment is still inside its 15-minute edit window, flipping to false on
+// time (client only, so the server's render and hydration never disagree; Edit only shows on hover).
+function useCommentEditWindow(createdAt: string, watch: boolean): boolean {
+  const subscribe = useCallback(
+    (change: () => void) => {
+      if (!watch) return () => {};
+      const left = commentEditMsLeft(createdAt);
+      if (left <= 0) return () => {};
+      // setTimeout's delay is capped at ~24.8 days; the window is minutes.
+      const timer = window.setTimeout(change, left + 50);
+      return () => window.clearTimeout(timer);
+    },
+    [createdAt, watch],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () => watch && commentEditWindowOpen(createdAt),
+    () => false,
+  );
+}
+
 function CommentItem({
   comment,
   pending: sending,
@@ -735,8 +757,10 @@ function CommentItem({
   const confirm = useConfirm();
   const [draft, setDraft] = useState<string | null>(null);
   const editing = draft !== null;
-  // An emailed comment went out as written: it can be removed, not edited.
-  const editable = mine && canComment && !comment.deleted && !sending && !comment.email;
+  // An emailed comment went out as written: it can be removed, not edited. Nov 11 notes (189): edits only
+  // for 15 minutes after posting (the database refuses later ones; a Save after that says so).
+  const mayEdit = mine && canComment && !comment.deleted && !sending && !comment.email;
+  const editable = useCommentEditWindow(comment.createdAt, mayEdit);
   const removable = mine && canComment && !comment.deleted && !sending;
 
   function save() {
@@ -926,6 +950,7 @@ function CommentItem({
               onValueChange={setDraft}
               candidates={candidates}
               onSubmit={save}
+              submitOnEnter
               onCancel={() => setDraft(null)}
               links
               linkRefs={refs}
@@ -1287,6 +1312,7 @@ export function TaskPaneFooter({
               onValueChange={setDraft}
               candidates={mentionCandidates(task, profiles, memberId)}
               onSubmit={submit}
+              submitOnEnter
               links
               placeholder="Add a comment"
               className={`block w-full resize-none border-0 bg-transparent px-3 text-sm shadow-none outline-none placeholder:text-zinc-500 focus-visible:shadow-none field-sizing-content ${
@@ -1353,7 +1379,7 @@ export function TaskPaneFooter({
                       ? task.replyThread?.closed
                         ? "Emailed to the submitter. Replies are closed, so their answers won’t be posted"
                         : "This comment is emailed to the submitter; their reply comes back here"
-                      : "@ for people · # for tasks and projects · ⌘/Ctrl+Enter to send";
+                      : "@ for people · # for tasks and projects · Enter to send · Shift+Enter for a new line";
                   return (
                     <span className="mr-auto min-w-0 truncate pl-1 text-2xs text-zinc-500" title={hint}>
                       {hint}

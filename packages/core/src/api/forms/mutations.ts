@@ -70,6 +70,9 @@ export async function createForm(ctx: ApiContext, projectId: string, title: stri
       project_id: projectId,
       title: text(title, "Form name", { max: 200 }),
       destination_section_id: sections.data?.[0]?.id ?? null,
+      // Nov 11 notes (192): a new form takes submitters on the workspace's verified domains only until
+      // someone turns it off (Settings → Who can submit). The column defaults to on too.
+      verified_domains_only: true,
       questions: [
         // Nov 1 notes (batch 8): every form asks for the requester's name (forms_04_requester_name adds
         // it anyway; listing it here keeps the new form's first question in place).
