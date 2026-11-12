@@ -9,7 +9,7 @@ your role in each project allows by hand.
 
 - `POST /api/mcp` — MCP Streamable HTTP, stateless (`@modelcontextprotocol/sdk`, JSON responses).
 - Auth: `Authorization: Bearer alhc_pat_…` (a personal access token). **Only that header counts**: the route
-  never reads cookies, so a browser session (and the preview's auto-login) can't reach it.
+  never reads cookies, so a browser session can't reach it.
 - Only workspace admins of the Testing data pilot can make tokens, and every tool stays inside that workspace.
 
 ## Tokens (Settings → AI & MCP, `/settings/mcp`)
@@ -31,7 +31,10 @@ your role in each project allows by hand.
    `authenticated`) with the project's JWT secret (`SUPABASE_JWT_SECRET`) and makes a cookie-less client with
    it. Every read and write runs through PostgREST and **RLS as that person**, exactly as if they were signed
    in; the typed API's own checks and the registry's role table apply on top.
-3. Without `ALHC_MCP_TOKEN_PEPPER` (≥ 32 characters), `SUPABASE_JWT_SECRET`, and the service role key the
+3. An unknown, revoked, expired, or no-longer-allowed token (or a malformed one) always gets the same
+   `401 Token not accepted`, so a caller can't tell which; the reason goes to the server log only
+   (`[mcp] token refused reason=…`, never the token). Too many calls is `429`.
+4. Without `ALHC_MCP_TOKEN_PEPPER` (≥ 32 characters), `SUPABASE_JWT_SECRET`, and the service role key the
    endpoint answers 503 and reads nothing (fails closed).
 
 No token, prompt, tool input, or tool result is logged. OAuth 2.1 (the MCP authorization spec) is not built:
@@ -62,12 +65,20 @@ Claude Desktop / Claude Code (`claude mcp add`), Cursor, and others take a URL a
 
 - **Read tools** answer at once (search, read a task / project / automation, list your own things). Things
   are named by id.
-- **Write tools** need a token with the **write** scope. Each call is staged exactly like the in-app
-  assistant's (resolved, the role checked as by hand, previewed), then applied through the same Confirm path
-  (checked again against the database, written through the typed API, rolled back on a refusal) and logged
-  as a run (`source = mcp`, the token named) with **Undo** in the app's AI history (`/ai-builder`).
-- **Destructive** tools, and changes that **message people**, only return a preview until the call says
-  `confirm: true`. Pass `confirm: false` to preview anything.
+- **Write tools** (every tool that isn't one of the read tools below) need a token with the **write** scope.
+  **Every write is only a preview until the call says `confirm: true`** (the boolean; a missing value,
+  `false`, the string `"true"`, or anything else is a preview, and nothing changes). Security audit 2
+  (Nov 12): before that, ordinary edits applied at once and only destructive or messaging changes waited, so
+  a crafted task title or comment could talk a connected assistant into an edit nobody confirmed. The
+  preview is staged exactly like the in-app assistant's (resolved, the role checked as by hand); calling
+  again with the same arguments and `confirm: true` stages it again against the current data and applies it
+  through the same Confirm path (checked again against the database, written through the typed API, rolled
+  back on a refusal), logged as a run (`source = mcp`, the token named) with **Undo** in the app's AI
+  history (`/ai-builder`).
+- The read tools are an explicit list (`MCP_READ_TOOLS` in `packages/core/src/api/mcp/tools.ts`); a tool
+  added to the registry later needs `confirm: true` until it is put on that list on purpose.
+- **Destructive** tools and changes that **message people** are marked as such in the tool list and the
+  preview.
 - Automations are always created **off**; turning on one that messages people needs `confirm: true`.
 
 ## Read tools

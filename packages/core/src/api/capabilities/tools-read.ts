@@ -6,6 +6,7 @@ import { matchPeople } from "../../ai-rule-steps";
 import type { Json } from "../../supabase/database.types";
 import { maybe, rows } from "../core/db";
 import { existingTask, loadProjects, loadRules, loadTasks, personName, projectArg, refFor, ruleArg } from "./env";
+import { idsOutsidePilot } from "./pilot-lock";
 import { ruleForModel } from "./tools-rules";
 import { refuse, type ReadHandler, type ToolEnv } from "./types";
 
@@ -191,7 +192,10 @@ const listMine: ReadHandler = {
       case "folders":
         return { folders: rows(await ctx.db.from("sidebar_folders").select("id, name").eq("profile_id", env.me).is("deleted_at", null).order("sort_order"), "folders").map((f) => ({ folder: refFor(env, "folder", f.id, f.name), name: f.name })) };
       case "inbox": {
-        const items = rows(await ctx.db.from("inbox_items").select("id, kind, task_id, read_at, created_at").eq("recipient_id", env.me).is("archived_at", null).order("created_at", { ascending: false }).limit(30), "inbox");
+        const all = rows(await ctx.db.from("inbox_items").select("id, kind, task_id, read_at, created_at").eq("recipient_id", env.me).is("archived_at", null).order("created_at", { ascending: false }).limit(30), "inbox");
+        // Security audit 2 (Nov 12, batch 41): only the Testing data workspace's items (pilot-lock.ts).
+        const outside = new Set(await idsOutsidePilot(ctx, env.workspaceId, all.map((x) => x.id)));
+        const items = all.filter((x) => !outside.has(x.id.toLowerCase()));
         const tasks = await loadTasks(env, items.map((x) => x.task_id).filter((x): x is string => Boolean(x)));
         return { items: items.map((x) => ({ item: refFor(env, "inbox_item", x.id, x.kind), kind: x.kind, task: tasks.find((t) => t.id === x.task_id)?.ref ?? null, unread: !x.read_at, at: x.created_at })) };
       }
@@ -213,7 +217,8 @@ const listMine: ReadHandler = {
       case "tags":
         return { tags: rows(await ctx.db.from("tags").select("name, archived_at").eq("workspace_id", env.workspaceId).is("deleted_at", null).limit(300), "tags").map((t) => ({ name: t.name, archived: Boolean(t.archived_at) })) };
       case "project_templates":
-        return { templates: rows(await ctx.db.from("project_templates").select("id, name").is("deleted_at", null).limit(100), "templates").map((t) => ({ template: refFor(env, "template", t.id, t.name), name: t.name })) };
+        // Security audit 2 (Nov 12, batch 41): the pilot's own templates only (they were every workspace's).
+        return { templates: rows(await ctx.db.from("project_templates").select("id, name").eq("workspace_id", env.workspaceId).is("deleted_at", null).limit(100), "templates").map((t) => ({ template: refFor(env, "template", t.id, t.name), name: t.name })) };
       default:
         return refuse("Say what to list");
     }

@@ -1,12 +1,13 @@
 import { notFound } from "next/navigation";
-import { headers } from "next/headers";
 import { Plug } from "lucide-react";
 import { getAiBuilderAccess } from "@alhc/core/api/ai-builder/queries";
 import { listAccessTokens } from "@alhc/core/api/mcp/queries";
+import { mcpRunsWithoutConfirm } from "@alhc/core/api/mcp/tools";
 import { TOOL_GROUP_LABELS, toolMeta, toolsFor, type ToolGroup } from "@alhc/core/ai-tools";
 import { McpTokens } from "@/components/mcp/mcp-tokens";
 import { PageHeader } from "@/components/ui";
 import { mcpConfigured } from "@/lib/mcp/auth";
+import { requestOrigin } from "@/lib/origin";
 import { bind } from "@/lib/server/context";
 
 // AI builder round 5 (experimental, note 178): Settings → AI & MCP — personal access tokens for the MCP
@@ -20,13 +21,13 @@ export default async function McpSettingsPage() {
   const state = await access();
   if (state.status !== "ready") notFound();
   const list = await tokens();
-  const h = await headers();
-  const origin = process.env.NEXT_PUBLIC_APP_URL ?? `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host") ?? "localhost:3000"}`;
+  const origin = await requestOrigin();
   const url = `${origin.replace(/\/$/, "")}/api/mcp`;
   const groups = new Map<ToolGroup, { name: string; label: string; kind: string; flags: string }[]>();
   for (const n of toolsFor("mcp")) {
     const m = toolMeta(n);
-    const flags = [m.kind === "read" ? "read" : "write", m.destructive ? "destructive (confirm: true)" : "", m.notifies ? "messages people (confirm: true)" : "", m.kind === "write" && m.undo === "no" ? "no Undo" : ""].filter(Boolean).join(" · ");
+    const read = mcpRunsWithoutConfirm(n);
+    const flags = [read ? "read" : "write (confirm: true)", m.destructive ? "destructive" : "", m.notifies ? "messages people" : "", m.kind === "write" && m.undo === "no" ? "no Undo" : ""].filter(Boolean).join(" · ");
     groups.set(m.group, [...(groups.get(m.group) ?? []), { name: n, label: m.label, kind: m.kind, flags }]);
   }
   return (
@@ -37,7 +38,7 @@ export default async function McpSettingsPage() {
           <h2 className="font-semibold text-zinc-900">Connect an MCP client</h2>
           <p className="text-zinc-700">
             Claude Desktop, Claude Code, Cursor, or any MCP client can use the same tools as the in-app assistant, as you: never more than your role in each project allows, and only in the {state.workspaceName} workspace. Changes are logged with Undo in{" "}
-            <a href="/ai-builder" className="font-medium text-accent-700 hover:underline">AI history</a>. Anything that deletes or messages people needs <code>confirm: true</code>; without it you get a preview.
+            <a href="/ai-builder" className="font-medium text-accent-700 hover:underline">AI history</a>. Every change needs <code>confirm: true</code>; without it you get a preview and nothing changes.
           </p>
           <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1">
             <dt className="text-zinc-500">URL</dt>

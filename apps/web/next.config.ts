@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { securityHeaderRules } from "./security-headers";
 
 // Big move 2 (docs/design/monorepo.md): this app is apps/web of an npm workspace; the shared core package
 // (@alhc/core, packages/core) is TypeScript source, and npm installs every package into the repo root's
@@ -10,6 +11,15 @@ const MONOREPO_ROOT = path.join(__dirname, "../..");
 const PDFJS = path.relative(__dirname, path.dirname(require.resolve("pdfjs-dist/package.json"))).split(path.sep).join("/");
 
 const nextConfig: NextConfig = {
+  // Security audit 2 (Nov 12, batch 41): no "X-Powered-By: Next.js", and the security headers of
+  // security-headers.ts on every response (framing, nosniff, https, referrer, content policy).
+  poweredByHeader: false,
+  async headers() {
+    return securityHeaderRules({
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      dev: process.env.NODE_ENV === "development",
+    });
+  },
   // Turbopack compiles workspace packages on its own; listed so the intent is plain (and webpack agrees).
   transpilePackages: ["@alhc/core"],
   outputFileTracingRoot: MONOREPO_ROOT,

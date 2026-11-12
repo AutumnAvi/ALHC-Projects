@@ -377,7 +377,11 @@ test("MCP: a read token lists and runs read tools only; writes need the write sc
 test("MCP: a write is checked like the app's, written as the person, and logged as a run with Undo", async () => {
   const s = world("owner");
   const d = db(s);
-  const r = await mcpCallTool(createApiContext(d), ident(), "rename_task", { task: T_FLYER, name: "Summer flyer" });
+  // Security audit 2 (Nov 12, batch 41): without confirm: true it's a preview only.
+  const preview = await mcpCallTool(createApiContext(d), ident(), "rename_task", { task: T_FLYER, name: "Summer flyer" });
+  assert.equal((preview as { data: { applied: boolean } }).data.applied, false);
+  assert.equal(s.tasks.find((t) => t.id === T_FLYER)!.title, "Spring flyer");
+  const r = await mcpCallTool(createApiContext(d), ident(), "rename_task", { task: T_FLYER, name: "Summer flyer", confirm: true });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(s.tasks.find((t) => t.id === T_FLYER)!.title, "Summer flyer");
   const run = s.ai_assistant_runs.find((x) => x.source === "mcp")!;
@@ -387,7 +391,7 @@ test("MCP: a write is checked like the app's, written as the person, and logged 
   assert.equal(s.tasks.find((t) => t.id === T_FLYER)!.title, "Spring flyer");
   // A Viewer is refused exactly as by hand.
   const v = world("viewer");
-  const r2 = await mcpCallTool(createApiContext(db(v)), ident(), "rename_task", { task: T_FLYER, name: "x" });
+  const r2 = await mcpCallTool(createApiContext(db(v)), ident(), "rename_task", { task: T_FLYER, name: "x", confirm: true });
   assert.equal(r2.ok, false);
   assert.equal(v.tasks.find((t) => t.id === T_FLYER)!.title, "Spring flyer");
 });

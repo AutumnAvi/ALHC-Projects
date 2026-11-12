@@ -2,10 +2,10 @@
 // stateless). Claude Desktop, Cursor, or any MCP client connects with a personal access token (Settings → AI
 // & MCP) and gets the same capability registry as the in-app assistant: read tools answer at once; write
 // tools (a token with the "write" scope) are checked against the person's role exactly as by hand, written
-// through the typed API as that person, and logged as runs with Undo in the app (/ai-builder). A
-// destructive change, or one that messages people, is only previewed until the call says confirm: true.
+// through the typed API as that person, and logged as runs with Undo in the app (/ai-builder). Every
+// change is only previewed until the call says confirm: true (security audit 2, Nov 12).
 //
-// Only the bearer token counts — never cookies, so the preview's auto-login session can't use this. Only
+// Only the bearer token counts — never cookies, so a browser session can't use this. Only
 // workspace admins of the Testing data pilot have tokens, and every tool stays inside that workspace. No
 // token, prompt, or tool result is logged.
 //   POST /api/mcp   Authorization: Bearer alhc_pat_…   (JSON-RPC: initialize, tools/list, tools/call)
@@ -33,7 +33,7 @@ async function handle(request: Request): Promise<Response> {
   if (!auth.ok) return denied(auth.status, auth.error);
   const { ctx, identity } = auth;
 
-  const server = new Server({ name: "alhc-projects", version: "0.5.0" }, { capabilities: { tools: {} }, instructions: "ALHC Projects (Testing data pilot). Tools act as you, with your project roles. Look things up with search_* / get_* first; ids from their results name things in other tools." });
+  const server = new Server({ name: "alhc-projects", version: "0.5.0" }, { capabilities: { tools: {} }, instructions: "ALHC Projects (Testing data pilot). Tools act as you, with your project roles. Look things up with search_* / get_* first; ids from their results name things in other tools. Every change is a preview until you call the same tool again with confirm: true: show the person the preview and only confirm what they agreed to." });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcpListTools(identity) }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     try {

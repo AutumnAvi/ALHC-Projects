@@ -8,8 +8,9 @@ import type { Json } from "../../supabase/database.types";
 import type { ApiContext } from "../core/context";
 import { ApiError, invalid } from "../core/errors";
 import { checkScopeNow, resolveArgs } from "./env";
+import { assertInsidePilot, insidePilot, OUTSIDE_PILOT } from "./pilot-lock";
 import { HANDLERS, READ_HANDLERS } from "./registry";
-import { type OpState, type StagedOp, type ToolEnv } from "./types";
+import { refuse, type OpState, type StagedOp, type ToolEnv } from "./types";
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -60,6 +61,14 @@ export function inputProblems(tool: ToolName, input: unknown): string[] {
 
 export class InputError extends Error {}
 
+// Security audit 2 (Nov 12, batch 41): what of a staged change names things (pilot-lock.ts checks them).
+const opTargets = (op: StagedOp) => ({ projectId: op.projectId, projects: op.projects, args: op.args });
+
+// The lock at stage and lookup time: a refusal the assistant / MCP caller is told about.
+async function refuseOutsidePilot(env: ToolEnv, ...values: unknown[]): Promise<void> {
+  if (!(await insidePilot(env.ctx, env.workspaceId, ...values))) refuse(OUTSIDE_PILOT);
+}
+
 // Stages one write tool call (appended to env.staged; answers what was staged). Throws InputError for a
 // malformed call, ToolRefusal / ToolQuestion from the handler.
 export async function stageCall(env: ToolEnv, tool: ToolName, input: Record<string, unknown>, what: string): Promise<StagedOp[]> {
@@ -68,8 +77,12 @@ export async function stageCall(env: ToolEnv, tool: ToolName, input: Record<stri
   const problems = inputProblems(tool, input);
   if (problems.length) throw new InputError(`${what}: ${problems.join("; ")}`);
   const handler = HANDLERS[tool];
+  // Nothing outside the Testing data workspace, even where the person is a member (pilot-lock.ts): the
+  // ids the call names, then every id the staged changes carry.
+  await refuseOutsidePilot(env, input);
   const result = await handler.stage(env, input, what);
   const ops = Array.isArray(result) ? result : [result];
+  await refuseOutsidePilot(env, ops.map(opTargets));
   for (const op of ops) {
     // What the change was previewed against (Apply refuses when it no longer matches).
     if (op.expect === null && HANDLERS[op.op].read && !isCreation(op)) op.expect = (await HANDLERS[op.op].read!(env.ctx, op, null)) as OpState;
@@ -85,7 +98,14 @@ export async function runReadTool(env: ToolEnv, tool: ToolName, input: Record<st
   if (meta.kind !== "read" || !READ_HANDLERS[tool]) throw new InputError(`${tool} isn’t a lookup`);
   const problems = inputProblems(tool, input);
   if (problems.length) throw new InputError(problems.join("; "));
-  return READ_HANDLERS[tool].run(env, input);
+  // The lock (pilot-lock.ts) on what the lookup is asked about and on everything it answers with (ids for
+  // MCP; for the assistant, the ids behind the refs it handed out).
+  await refuseOutsidePilot(env, input);
+  const before = new Set(env.refs.keys());
+  const answer = await READ_HANDLERS[tool].run(env, input);
+  const handedOut = [...env.refs].filter(([ref]) => !before.has(ref)).map(([, v]) => v.id);
+  await refuseOutsidePilot(env, answer, handedOut);
+  return answer;
 }
 
 // ---- Confirm / Undo ------------------------------------------------------------------------------------
@@ -96,6 +116,8 @@ export async function runReadTool(env: ToolEnv, tool: ToolName, input: Record<st
 export async function checkOp(ctx: ApiContext, workspaceId: string, op: StagedOp, opts: { undoing?: boolean } = {}): Promise<void> {
   if (!isToolName(op.op) || !HANDLERS[op.op]) throw new ApiError("invalid", "That change isn’t one the AI makes");
   const undoing = Boolean(opts.undoing);
+  // The lock again just before every write and Undo (pilot-lock.ts): nothing outside Testing data.
+  await assertInsidePilot(ctx, workspaceId, opTargets(op));
   await checkScopeNow(ctx, workspaceId, op, { undoing });
   await HANDLERS[op.op].verify?.(ctx, workspaceId, op, { undoing });
 }

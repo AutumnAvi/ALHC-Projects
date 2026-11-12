@@ -1,6 +1,6 @@
 // AI builder round 3 (experimental, note 171): the global assistant's web side — the panel opens from
 // every kind of page (and the shortcut), the page goes to the server as kinds and ids only, the provider
-// call for the assistant's two kinds, the route's guards, and the preview auto-login is unchanged.
+// call for the assistant's two kinds, the route's guards, and that there is no preview auto-login (security audit 2).
 // Synthetic fixtures: no network, no database, nothing billable.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -118,12 +118,8 @@ test("the key stays on the server: no client file reads ANTHROPIC_API_KEY, nothi
   assert.ok(!/console\.\w+\([^)]*(prompt|system|params)/.test(anthropic), "never logs the prompt");
 });
 
-test("the preview auto-login is unchanged: Vercel Preview AND ALHC_PREVIEW_AUTOLOGIN=1, never on API routes", () => {
+test("there is no preview auto-login: previews sign in like production (security audit 2)", () => {
   const proxy = read("src/lib/supabase/proxy.ts");
-  assert.ok(
-    proxy.includes(`function previewAutoLogin(): { email: string; password: string } | null {
-  if (process.env.VERCEL_ENV !== "preview") return null;
-  if (process.env.ALHC_PREVIEW_AUTOLOGIN !== "1") return null;`),
-  );
-  assert.ok(proxy.includes(`if (auto && !signedIn && !request.nextUrl.pathname.startsWith("/api/")) {`));
+  assert.ok(!/ALHC_PREVIEW_AUTOLOGIN|previewAutoLogin|signInWithPassword/.test(proxy));
+  assert.ok(proxy.includes("const signedIn = Boolean(data?.claims?.sub);"));
 });

@@ -1,6 +1,6 @@
 // AI builder round 2 (experimental, feat/ai-builder-p2): the preview draws a draft with the app's real List
 // and Board over an in-memory data source (note 168); the edit / automation calls use Haiku with a smaller,
-// faster budget (note 169); the AI routes keep phase 1's guards; the preview auto-login is unchanged.
+// faster budget (note 169); the AI routes keep phase 1's guards; there is no preview auto-login (security audit 2).
 // Synthetic fixtures, a fake Anthropic client: no network, no database writes, nothing billable.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -235,7 +235,7 @@ test("a 429 on an edit is a rate-limited code, never the provider's message", as
   assert.ok(!JSON.stringify(res).includes("sk-ant"));
 });
 
-// ---- Routes and the preview auto-login ------------------------------------------------------------------
+// ---- Routes, and no preview auto-login ------------------------------------------------------------------
 
 test("the AI change and automation routes refuse cross-site, non-JSON, and oversized requests before anything else", async () => {
   for (const [post, url, size] of [
@@ -253,18 +253,7 @@ test("the AI change and automation routes refuse cross-site, non-JSON, and overs
   }
 });
 
-test("the preview auto-login is unchanged: Vercel Preview AND ALHC_PREVIEW_AUTOLOGIN=1, never on API routes", () => {
+test("there is no preview auto-login: previews sign in like production (security audit 2)", () => {
   const proxy = fs.readFileSync(path.resolve(import.meta.dirname, "../../src/lib/supabase/proxy.ts"), "utf8");
-  assert.ok(
-    proxy.includes(`function previewAutoLogin(): { email: string; password: string } | null {
-  if (process.env.VERCEL_ENV !== "preview") return null;
-  if (process.env.ALHC_PREVIEW_AUTOLOGIN !== "1") return null;
-  const email = process.env.ALHC_PREVIEW_AUTOLOGIN_EMAIL;
-  const password = process.env.ALHC_PREVIEW_AUTOLOGIN_PASSWORD;
-  if (!email || !password) return null;
-  return { email, password };
-}`),
-    "the gate is exactly phase 1's",
-  );
-  assert.ok(proxy.includes(`if (auto && !signedIn && !request.nextUrl.pathname.startsWith("/api/")) {`), "never on API routes");
+  assert.ok(!/ALHC_PREVIEW_AUTOLOGIN|previewAutoLogin|signInWithPassword/.test(proxy), "no auto sign-in on any path");
 });

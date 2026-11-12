@@ -478,7 +478,7 @@ The app sends users to `/auth/callback?next=…` after Google sign-in. Supabase 
    | `CRON_SECRET` | Secret for `/api/cron/workflows` (also stored in Supabase Vault as `alhc_cron_secret` for the every-minute delivery kick) |
    | `RESEND_WEBHOOK_SECRET` | Optional. Resend webhook signing secret (`whsec_…`) for reply by email, email forwarding, and bounce / complaint tracking; without it all three are off |
    | `EMAIL_REPLY_DOMAIN` | Optional. Receiving domain for reply addresses (default `reply.mail.autumnlakemarketing.com`) |
-   | `NEXT_PUBLIC_APP_URL` | Optional. Canonical origin for public form links, webhook `task.url` links, and Slack task links |
+   | `NEXT_PUBLIC_APP_URL` | Optional (set it in Production). Canonical origin for public form links, webhook `task.url` links, and Slack task links; also a trusted origin for sign-up and password-reset links |
    | `AUTH_GOOGLE_ENABLED` | Optional. `true` shows "Continue with Google" once the Google provider is configured |
 
    The Supabase ↔ Vercel Marketplace integration sets the same names automatically if you prefer it.
