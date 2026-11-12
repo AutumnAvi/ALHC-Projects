@@ -28,6 +28,9 @@ const PUBLIC_PATHS = [
   // AI builder round 5 (note 178): the MCP endpoint authorizes ONLY with a personal access token
   // (Authorization: Bearer); it never reads the session cookie, so the preview auto-login can't reach it.
   "/api/mcp",
+  // Security audit 2 (Nov 12, batch 41): browsers' reports of the report-only content policy, sent from
+  // signed-out pages too (sign-in, public forms). It stores nothing and answers 204.
+  "/api/csp-report",
 ];
 
 // AI builder pilot ONLY (feat/ai-builder, never merged): on this branch's Vercel Preview, sign visitors in
