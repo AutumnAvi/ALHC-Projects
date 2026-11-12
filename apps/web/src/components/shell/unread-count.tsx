@@ -5,7 +5,7 @@ import { subscribeLive } from "@/lib/live";
 import { userTopic } from "@alhc/core/live-patch";
 import { countUnreadInboxRows, unreadInboxCount } from "@alhc/core/api/client/inbox";
 import { createApiContext } from "@alhc/core/api/core/context";
-import { createClient } from "@/lib/supabase/client";
+import { loadBrowserClient } from "@/lib/supabase/lazy-client";
 
 const POLL_MS = 60_000;
 
@@ -20,7 +20,9 @@ export function useUnreadCount(initial: number, memberId: string, scope: string)
     const ticket = ++request.current;
     // Same rows as countUnreadInbox: unread and still in the inbox. Counting archived
     // items made the badge jump when the server render landed.
-    const ctx = createApiContext(createClient());
+    const client = await loadBrowserClient().catch(() => null);
+    if (!client) return;
+    const ctx = createApiContext(client);
     const counted = await unreadInboxCount(ctx);
     if (ticket !== request.current) return;
     if (typeof counted === "number") {

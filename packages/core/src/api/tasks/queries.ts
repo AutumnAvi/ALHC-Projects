@@ -100,6 +100,27 @@ export const listProjectTaskPage = read(
   },
 );
 
+// Nov 12 notes (batch 40, item 4): one group's next page for List / Board's "Show more" — the cards after
+// the first `after` of group `key`, in the page's own order and with its own counts. Every other group
+// comes back with one card (page size 1), which this leaves out. Null on a database without
+// project_task_card_page (the page then holds every card already).
+export async function listProjectTaskGroupNext(
+  ctx: ApiContext, projectId: string,
+  filters: ViewFilters,
+  timeZone: string,
+  groupBy: string,
+  sorts: ViewSort[],
+  key: string,
+  after: number,
+  pageSize: number,
+): Promise<ProjectTaskGroupPage | null> {
+  const pages = await listProjectTaskPage(ctx, projectId, filters, timeZone, groupBy, sorts, 1, { [key]: after + pageSize });
+  if (!pages) return null;
+  const group = pages.find((page) => page.key === key);
+  if (!group) return { key, total: 0, nextId: null, nextSortOrder: null, tasks: [] };
+  return { ...group, tasks: group.tasks.slice(after) };
+}
+
 // Active tasks per section, including ones the current view hides (delete-section checks).
 // Null when the function is not there yet; the page then counts the tasks it already loaded.
 export const listSectionTaskCounts = read(async (ctx: ApiContext, projectId: string): Promise<Record<string, number> | null> => {
@@ -274,9 +295,16 @@ export const listSubtaskTrees = read(async (ctx: ApiContext, rootIds: string[], 
     await supabase.from("tasks").select(SUBTASK_COLUMNS).in("root_task_id", rootIds).is("deleted_at", null),
     "subtasks",
   );
-  const blocked = await openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id));
-  const items = toSubtaskItems(list, list).map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0 }));
-  return withRequestLabels(ctx, await withSubtaskApprovals(supabase, items), projectId);
+  // Nov 12 notes (batch 40, item 7): the blocker counts, approval states, and numbers all key off the
+  // subtasks just read, so they're read side by side (one wait instead of three in a row).
+  const base = toSubtaskItems(list, list);
+  const ids = base.map((item) => item.id);
+  const [blocked, withApprovals, labels] = await Promise.all([
+    openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id)),
+    withSubtaskApprovals(supabase, base),
+    projectId ? visibleRequestLabelsIn(ctx, projectId, ids) : firstVisibleNumbers(ctx, ids),
+  ]);
+  return withApprovals.map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0, requestLabel: labels.get(item.id) ?? null }));
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).

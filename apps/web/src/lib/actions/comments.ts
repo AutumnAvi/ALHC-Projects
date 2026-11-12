@@ -26,8 +26,14 @@ export async function loadOlderComments(
 }
 
 // Returns the new comment's id, so the pane can swap its optimistic row for the real one.
-export async function addComment(taskId: string, body: string): Promise<ActionResult & { commentId?: string }> {
-  const result = await runWith((ctx) => commentsApi.addComment(ctx, taskId, body));
+// `screenOnly` (batch 40, item 1): the screen shows the comment and the row's comment count by itself
+// (src/lib/patched-writes.ts), so skip the refresh and keep the router's recently visited pages.
+export async function addComment(
+  taskId: string,
+  body: string,
+  screenOnly = false,
+): Promise<ActionResult & { commentId?: string }> {
+  const result = await runWith((ctx) => commentsApi.addComment(ctx, taskId, body), screenOnly ? SCREEN_ONLY : {});
   return { ...result, commentId: result.error ? undefined : result.commentId };
 }
 
@@ -55,8 +61,8 @@ export async function toggleReaction(commentId: string, emoji: string): Promise<
   return run((ctx) => commentsApi.toggleReaction(ctx, commentId, emoji), SCREEN_ONLY);
 }
 
-export async function deleteComment(commentId: string): Promise<ActionResult> {
-  return run((ctx) => commentsApi.deleteComment(ctx, commentId));
+export async function deleteComment(commentId: string, screenOnly = false): Promise<ActionResult> {
+  return run((ctx) => commentsApi.deleteComment(ctx, commentId), screenOnly ? SCREEN_ONLY : {});
 }
 
 // Nov 2 notes (batch 17, 128): saved quietly. Going through run()'s refresh made the action wait for the

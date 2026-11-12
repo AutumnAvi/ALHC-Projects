@@ -23,6 +23,10 @@ export type TaskEdit =
 export type TaggedEdit = { token: number; edit: TaskEdit; at: number };
 
 export const EDIT_GRACE_MS = 4_000;
+// Nov 12 notes (batch 40, item 1): a write saved without a refresh gives no screen the server's copy, so
+// its edits stay while a page drawn from the router's cache (ROUTER_CACHE_SECONDS) may still show the
+// old value — until that page's background render lands.
+export const HELD_EDIT_GRACE_MS = 35_000;
 // An edit whose write never reported its end (nothing waits longer than this).
 export const EDIT_TTL_MS = 60_000;
 const MAX_EDITS = 300;
@@ -37,7 +41,13 @@ export type EditStatus = {
   failed: (token: number) => boolean;
   dropped: (token: number, taskId: string) => boolean;
   endedAt: (token: number) => number | undefined;
+  // The write skipped its refresh (batch 40).
+  held?: (token: number) => boolean;
 };
+
+function graceOf(item: TaggedEdit, status: EditStatus): number {
+  return item.token !== 0 && status.held?.(item.token) ? HELD_EDIT_GRACE_MS : EDIT_GRACE_MS;
+}
 
 const editKey = (edit: TaskEdit) => `${edit.taskId}:${edit.type}`;
 
@@ -46,7 +56,7 @@ function expired(item: TaggedEdit, status: EditStatus, now?: number): boolean {
   if (status.failed(item.token) || status.dropped(item.token, item.edit.taskId)) return true;
   if (now === undefined) return false;
   const ended = item.token === 0 ? item.at : status.endedAt(item.token);
-  if (ended !== undefined && now - ended > EDIT_GRACE_MS) return true;
+  if (ended !== undefined && now - ended > graceOf(item, status)) return true;
   return now - item.at > EDIT_TTL_MS;
 }
 
@@ -77,7 +87,7 @@ export function pruneTaskEdits(client: QueryClient, status: EditStatus, now = Da
   let next: number | null = null;
   for (const item of kept) {
     const ended = item.token === 0 ? item.at : status.endedAt(item.token);
-    const at = Math.min(item.at + EDIT_TTL_MS, ended !== undefined ? ended + EDIT_GRACE_MS : Infinity);
+    const at = Math.min(item.at + EDIT_TTL_MS, ended !== undefined ? ended + graceOf(item, status) : Infinity);
     next = next === null ? at : Math.min(next, at);
   }
   return next;

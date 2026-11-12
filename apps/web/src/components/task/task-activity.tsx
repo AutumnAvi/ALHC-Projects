@@ -1,5 +1,7 @@
 "use client";
 
+import { patchedAction } from "@/lib/patched-writes";
+import { noteCommentCountChange } from "@/components/project/use-project-tasks";
 import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useCallback, useEffect, useMemo, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -585,6 +587,7 @@ export function TaskActivity({
                     inPinned
                     people={profiles}
                     taskId={task.id}
+                    taskIsSubtask={task.isSubtask}
                     feedbackTask={canFeedbackSubtask ? task : null}
                   />
                 ))}
@@ -658,6 +661,7 @@ export function TaskActivity({
                   canPin={canPin}
                   people={profiles}
                   taskId={task.id}
+                  taskIsSubtask={task.isSubtask}
                   feedbackTask={canFeedbackSubtask ? task : null}
                 />
               ),
@@ -727,6 +731,7 @@ function CommentItem({
   inPinned = false,
   people = [],
   taskId,
+  taskIsSubtask = true,
   feedbackTask = null,
 }: {
   comment: TaskComment;
@@ -748,6 +753,8 @@ function CommentItem({
   // Everyone in the workspace: in an automation's comment their raw email addresses show as chips.
   people?: Profile[];
   taskId: string;
+  // Batch 40 (item 1): a subtask's comment changes always refresh (its row's count is the server's).
+  taskIsSubtask?: boolean;
   // Editors (131): a submitter's emailed reply or a review's outcome gets "Create subtask".
   feedbackTask?: TaskDetail | null;
 }) {
@@ -862,7 +869,12 @@ function CommentItem({
                 tone: "danger",
               })
             ) {
-              run(() => deleteComment(comment.id));
+              run(
+                patchedAction("comment", (screenOnly) => {
+                  if (screenOnly) noteCommentCountChange(taskId, -1);
+                  return deleteComment(comment.id, screenOnly);
+                }, { refresh: taskIsSubtask }),
+              );
             }
           }}
           className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600"
@@ -1269,7 +1281,14 @@ export function TaskPaneFooter({
     if (activityTab === "reviews") setActivityTab("comments");
     revealPendingComment(tempId);
     run(async () => {
-      const result = emailed ? await sendSubmitterResponse(task.id, body) : await addComment(task.id, body);
+      // Batch 40 (item 1): a plain comment skips the refresh where the screen shows it by itself (the
+      // rows' comment count is bumped here until their next copy).
+      const result = emailed
+        ? await sendSubmitterResponse(task.id, body)
+        : await patchedAction("comment", (screenOnly) => {
+            if (screenOnly) noteCommentCountChange(task.id, 1);
+            return addComment(task.id, body, screenOnly);
+          }, { refresh: task.isSubtask })();
       if (result.error || !result.commentId) {
         dropPendingComment(tempId);
         setDraft((current) => (current.trim() ? current : body));

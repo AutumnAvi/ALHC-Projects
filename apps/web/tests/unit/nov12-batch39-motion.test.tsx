@@ -78,7 +78,8 @@ test("Show more reads Loading… and can't be clicked again while the next page 
   assert.doesNotMatch(loading, / disabled=""/);
   for (const file of ["src/components/project/list-view.tsx", "src/components/project/board-view.tsx"]) {
     const source = readFileSync(file, "utf8");
-    assert.match(source, /const \[showMorePage, loadingPage\] = usePagedShowMore\(\);/, file);
+    // Batch 40 (item 4): the next page comes from usePagedGroups (one group's page, appended).
+    assert.match(source, /const loadingPage = paged\.loadingKey;/, file);
     assert.match(source, /loading=\{group\.total != null && loadingPage === group\.key\}/, file);
   }
 });

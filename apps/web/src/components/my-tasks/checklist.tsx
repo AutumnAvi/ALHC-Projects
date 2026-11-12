@@ -1,5 +1,7 @@
 "use client";
 
+import { patchedAction } from "@/lib/patched-writes";
+import { recordTaskEdits } from "@/components/task/task-edits";
 import Link from "next/link";
 import { memo, useEffect, useLayoutEffect, useMemo, useOptimistic, useRef, useState, type ReactNode } from "react";
 import { CalendarClock, CalendarDays, ChevronRight, FolderClosed, Lock, Repeat, Sparkles } from "lucide-react";
@@ -112,7 +114,13 @@ export function useChecklist(
     if (next) settle(task.id);
     run(
       async () => {
-        const result = await trackCompletion(task.id, next, () => setTaskCompleted(task.id, next))();
+        const result = await trackCompletion(
+          task.id,
+          next,
+          patchedAction("complete", (screenOnly) => setTaskCompleted(task.id, next, screenOnly), {
+            refresh: Boolean(task.rootTaskId || task.recurring),
+          }),
+        )();
         if (!result.error && next) {
           const name = bareTaskTitle(task.title, task.requestLabel);
           notify(task.recurring ? `Completed “${name}”. The next one is on your list.` : `Completed “${name}”`, {
@@ -126,7 +134,11 @@ export function useChecklist(
         }
         return result;
       },
-      () => setToggled({ id: task.id, completed: next }),
+      () => {
+        setToggled({ id: task.id, completed: next });
+        // Every screen showing the task (and this one, past the save: batch 40) draws it at once.
+        recordTaskEdits([{ type: "complete", taskId: task.id, completed: next }]);
+      },
     );
   }
 

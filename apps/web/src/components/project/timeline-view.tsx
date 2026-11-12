@@ -63,6 +63,9 @@ import {
   type Band,
 } from "./timeline-layout";
 import { useProjectTasks } from "./use-project-tasks";
+import { useScreenPatches } from "@/lib/patched-writes";
+import { hiddenByCompletion, projectViewPatches } from "@alhc/core/patched-writes";
+import { projectTopic } from "@alhc/core/live-patch";
 import { groupTasks } from "./view-groups";
 import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "./view-chrome";
 
@@ -129,7 +132,17 @@ export function TimelineView({
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
-  const [optimisticTasks, applyChange] = useProjectTasks(projectId, tasks);
+  const [overlaidTasks, applyChange, settledCompletions] = useProjectTasks(projectId, tasks);
+  // Nov 12 notes (batch 40, item 1): saves this view shows by itself skip the refresh; the person's own
+  // completions saved that way leave it when its completion filter drops them (as the refresh did).
+  useScreenPatches(projectViewPatches(config, { paged: false }), projectTopic(projectId));
+  const optimisticTasks = useMemo(
+    () =>
+      settledCompletions.size === 0
+        ? overlaidTasks
+        : overlaidTasks.filter((t) => !(settledCompletions.has(t.id) && hiddenByCompletion(config, t.completedAt))),
+    [overlaidTasks, settledCompletions, config],
+  );
   const shift = useDependencyShift();
   const canEdit = useProjectPermissions().canEdit;
   const [trayDragging, setTrayDragging] = useState<{ taskId: string; x: number; y: number } | null>(null);

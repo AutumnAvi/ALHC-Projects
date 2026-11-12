@@ -11,8 +11,8 @@ import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks
 import { DependencyShiftSettings } from "@/components/project/project-settings";
 import { ShellProvider } from "@/components/shell/shell-context";
 import { ToastProvider } from "@/components/toast";
+import { ShiftDialog } from "@/components/task/shift-dialog";
 import {
-  ShiftDialog,
   primaryShiftPlan,
   shiftConfirmLabel,
   shiftDirection,

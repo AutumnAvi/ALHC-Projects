@@ -6,7 +6,11 @@ import { completionsVersion, recentCompletion, subscribeCompletions } from "@/li
 import type { ProjectTask } from "@alhc/core/api/tasks/model";
 import {
   currentMutationToken,
+  mutationEndedAt,
   mutationFailed,
+  openMutationVersion,
+  subscribeOpenMutations,
+  writeWithoutRefresh,
   mutationFailureVersion,
   subscribeMutationFailures,
   tokenTaskDropped,
@@ -181,6 +185,65 @@ export function applyLiveTaskChanges(projectId: string, changes: TaskChange[]) {
 }
 
 const NO_CHANGES: StampedChange[] = [];
+const copiedEdits = new WeakSet<TaggedEdit>();
+
+// Nov 12 notes (batch 40, item 1): comments posted or removed in the pane without a refresh. A row draws
+// its count plus what was added here while its own (server) count is still the one it had then; the
+// row's next copy from the server wins. Dropped when the write fails, and after a minute.
+type CommentDelta = { base: number; delta: number; tokens: number[]; at: number };
+const commentDeltas = new Map<string, CommentDelta>();
+const commentListeners = new Set<() => void>();
+let commentVersion = 0;
+const COMMENT_DELTA_TTL_MS = 60_000;
+
+function commentsChanged() {
+  commentVersion += 1;
+  for (const listener of commentListeners) listener();
+}
+
+function shownCommentCount(taskId: string): number | null {
+  for (const list of shownTasks.values()) {
+    const task = list.find((t) => t.id === taskId);
+    if (task) return task.commentCount;
+  }
+  return null;
+}
+
+// Called inside the write (useServerAction's run): +1 for a new comment, −1 for a removed one. Rows not
+// on a mounted list need nothing (they're drawn by a later server render).
+export function noteCommentCountChange(taskId: string, delta: number, token = currentMutationToken()) {
+  const current = commentDeltas.get(taskId);
+  const base = current?.base ?? shownCommentCount(taskId);
+  if (base === null) return;
+  commentDeltas.set(taskId, {
+    base,
+    delta: (current?.delta ?? 0) + delta,
+    tokens: [...(current?.tokens ?? []), token],
+    at: Date.now(),
+  });
+  commentsChanged();
+}
+
+export function withCommentDeltas(tasks: ProjectTask[], now = Date.now()): ProjectTask[] {
+  if (commentDeltas.size === 0) return tasks;
+  let changed = false;
+  const next = tasks.map((task) => {
+    const entry = commentDeltas.get(task.id);
+    if (!entry) return task;
+    if (now - entry.at > COMMENT_DELTA_TTL_MS || entry.tokens.some((t) => mutationFailed(t)) || task.commentCount !== entry.base) {
+      commentDeltas.delete(task.id);
+      return task;
+    }
+    changed = true;
+    return { ...task, commentCount: Math.max(0, entry.base + entry.delta) };
+  });
+  return changed ? next : tasks;
+}
+
+function subscribeCommentDeltas(listener: () => void) {
+  commentListeners.add(listener);
+  return () => commentListeners.delete(listener);
+}
 
 export function useProjectTasks(projectId: string, tasks: ProjectTask[]) {
   const entry = useMemo(() => ({ queryKey: queryKeys.projectChanges(projectId) }), [projectId]);
@@ -198,6 +261,19 @@ export function useProjectTasks(projectId: string, tasks: ProjectTask[]) {
     [projectId],
   );
 
+  // Batch 40 (item 1): edits made on another screen (the pane) by a write saved without a refresh: this
+  // list has no server copy coming, so they join its overlay and stay until a copy shows them.
+  useEffect(() => {
+    const copy = edits.filter((item) => item.token !== 0 && writeWithoutRefresh(item.token) && !copiedEdits.has(item));
+    if (copy.length === 0) return;
+    for (const item of copy) copiedEdits.add(item);
+    const shownIds = new Set(tasks.map((t) => t.id));
+    enqueue(
+      projectId,
+      copy.filter((item) => shownIds.has(item.edit.taskId)).map((item) => ({ token: item.token, change: item.edit as TaskChange, at: item.at })),
+    );
+  }, [edits, projectId, tasks]);
+
   // `revision` re-renders this list when a write fails or a bulk skip drops rows.
   const pending = pendingChanges(stored, tasks, revision);
   useEffect(() => {
@@ -213,7 +289,11 @@ export function useProjectTasks(projectId: string, tasks: ProjectTask[]) {
   // Nov 2 notes (batch 15, 111): a task blocked only by tasks just completed here is unblocked at once.
   const completions = useSyncExternalStore(subscribeCompletions, completionsVersion, () => 0);
 
-  const shown = unblockCompleted(overlayWithEdits(tasks, pending, edits), completions);
+  const comments = useSyncExternalStore(subscribeCommentDeltas, () => commentVersion, () => 0);
+  const shown = useMemo(() => {
+    void comments;
+    return withCommentDeltas(unblockCompleted(overlayWithEdits(tasks, pending, edits), completions));
+  }, [tasks, pending, edits, completions, comments]);
   useEffect(() => {
     shownTasks.set(projectId, shown);
   });
@@ -223,7 +303,18 @@ export function useProjectTasks(projectId: string, tasks: ProjectTask[]) {
     },
     [projectId],
   );
-  return [shown, applyChange] as const;
+  // Batch 40 (item 1): the person's own completions (or reopens) saved without a refresh, once saved — a
+  // view whose completion filter leaves them out drops them then, as the refresh used to.
+  const ended = useSyncExternalStore(subscribeOpenMutations, openMutationVersion, () => 0);
+  const settled = useMemo(() => {
+    void ended;
+    const ids = new Set<string>();
+    const done = (token: number) => token !== 0 && writeWithoutRefresh(token) && mutationEndedAt(token) !== undefined;
+    for (const item of pending) if (item.change.type === "complete" && done(item.token)) ids.add(item.change.taskId);
+    for (const item of edits) if (item.edit.type === "complete" && done(item.token)) ids.add(item.edit.taskId);
+    return ids;
+  }, [pending, edits, ended]);
+  return [shown, applyChange, settled] as const;
 }
 
 // The project's own changes and the edits made on other screens, oldest first: the latest per task and

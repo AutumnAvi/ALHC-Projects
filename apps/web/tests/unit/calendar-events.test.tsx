@@ -381,3 +381,43 @@ test("an event's dialog: details for everyone, edit fields only for editors", ()
   assert.match(adding, /Thursday, November 12, 2026/);
   assert.ok(!/>Delete<\/button>/.test(adding), "nothing to delete yet");
 });
+
+// Nov 12 notes, batch 40 (item 6): a packed month draws three lanes a week and "+N more", worked out once
+// per render of the grid's props; weeks skip layout and paint while off screen (cv-week).
+test("batch 40: a packed month draws only the visible bars, with the same +N more", async () => {
+  const { layoutWeeks, hiddenPerDay } = await import("@/components/calendar/calendar-grid");
+  const packed = Array.from({ length: 300 }, (_, i) =>
+    task({ id: `t${i}`, title: `Task ${i}`, dueOn: `2026-11-${String((i % 28) + 1).padStart(2, "0")}` }),
+  );
+  const html = render(
+    <CalendarGrid
+      days={NOVEMBER}
+      month="2026-11"
+      today="2026-11-01"
+      items={packed}
+      drag={null}
+      onDragChange={() => {}}
+      onChange={() => {}}
+      label="Tasks, November 2026"
+    />,
+    "editor",
+  );
+  // Each editable bar is draggable three ways (its body and both ends).
+  const bars = (html.match(/draggable="true"/g) ?? []).length / 3;
+  const layouts = layoutWeeks(NOVEMBER, packed, []);
+  const expected = layouts.reduce((sum, w) => sum + w.segments.filter((s) => s.lane < 3).length, 0);
+  assert.equal(bars, expected, `bars drawn ${bars}, visible ${expected}`);
+  assert.ok(expected < packed.length / 3, "most of the 300 tasks sit behind +N more");
+  // The one-pass count is the per-day filter it replaced.
+  for (const { segments, lanes } of layouts) {
+    const visible = Math.min(lanes, 3);
+    const old = Array.from({ length: 7 }, (_, col) => {
+      const over = segments.filter((s) => s.lane >= visible && s.col <= col && col < s.col + s.span);
+      return { tasks: over.filter((s) => s.entry.kind === "task").length, events: over.filter((s) => s.entry.kind === "event").length };
+    });
+    assert.deepEqual(hiddenPerDay(segments, visible), old);
+  }
+  const total = layouts.reduce((sum, w) => sum + hiddenPerDay(w.segments, Math.min(w.lanes, 3)).reduce((a, c) => a + c.tasks, 0), 0);
+  assert.equal(total + expected, layouts.reduce((sum, w) => sum + w.segments.length, 0));
+  assert.match(html, /cv-week/);
+});

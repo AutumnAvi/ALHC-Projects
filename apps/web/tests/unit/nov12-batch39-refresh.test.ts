@@ -43,11 +43,20 @@ test("item 1: exactly the pane-only actions are screen-only", () => {
       if (body?.includes("SCREEN_ONLY")) screenOnly.push(match[1]);
     }
   }
-  assert.deepEqual(screenOnly.sort(), ["editComment", "setFollowing", "toggleReaction"]);
+  // Batch 40 (item 1) adds four that are screen-only only when the browser says so (`screenOnly`).
+  assert.deepEqual(screenOnly.sort(), [
+    "addComment",
+    "deleteComment",
+    "editComment",
+    "setFollowing",
+    "setTaskCompleted",
+    "toggleReaction",
+    "updateTask",
+  ]);
 });
 
 test("item 1: writes other screens show keep the full refresh", () => {
-  const full = ["setTaskCompleted", "updateTask", "addComment", "deleteComment", "renameSection", "decideApproval", "restoreTask", "deleteTask"];
+  const full = ["renameSection", "decideApproval", "restoreTask", "deleteTask"];
   for (const name of full) {
     const body = actionSources.map(({ source }) => functionBody(source, name)).find(Boolean);
     assert.ok(body, `${name} exists`);

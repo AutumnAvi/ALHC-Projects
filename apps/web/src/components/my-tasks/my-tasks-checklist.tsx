@@ -1,5 +1,9 @@
 "use client";
 
+import { useScreenPatches } from "@/lib/patched-writes";
+import { MY_TASKS_PATCHES } from "@alhc/core/patched-writes";
+import { userTopic } from "@alhc/core/live-patch";
+import { useShellMemberId } from "@/components/shell/shell-context";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronRight, CircleCheck, LayoutList, SlidersHorizontal } from "lucide-react";
@@ -46,6 +50,9 @@ export function MyTasksChecklist({
   awaiting: AwaitingApproval[];
 }) {
   const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted, loadedAt);
+  // Nov 12 notes (batch 40, item 1): My tasks shows these saves by itself, so they skip the refresh.
+  const patchesMemberId = useShellMemberId();
+  useScreenPatches(MY_TASKS_PATCHES, patchesMemberId ? userTopic(patchesMemberId) : null);
   const [mode, setMode] = useState<CheckedMode>(checked);
   const list = useChecklist(open, completed, mode, { today: serverToday, timeZone });
   const today = list.today;

@@ -15,23 +15,36 @@ import { routeContext } from "@/lib/server/context";
 export async function GET(request: NextRequest, { params }: RouteContext<"/api/task-pane/[taskId]">) {
   const { taskId } = await params;
   const ctx = await routeContext();
+  const started = performance.now();
+  const part = request.nextUrl.searchParams.get("part");
+  const extrasPart = part === "schedule" || part === "candidates" ? part : null;
+  // Nov 12 notes (batch 40, item 5): the identity check and the task's read run side by side instead of
+  // one after the other. Nothing changes about who gets what: the read is the person's own (RLS answers
+  // nothing to someone signed out or off the allowlist), and its result is used only once the check
+  // passed — every other answer is exactly the one before.
+  const load = isUuid(taskId)
+    ? extrasPart
+      ? getTaskExtras(ctx, taskId, extrasPart).then((value) => ({ kind: "extras" as const, value }))
+      : loadTaskPanePayload(ctx, taskId, request.nextUrl.searchParams.get("context") === "1").then((value) => ({ kind: "pane" as const, value }))
+    : null;
+  // Never an unhandled rejection while the check decides; a real failure is rethrown below.
+  load?.catch(() => undefined);
   const { user, allowlisted } = await getViewer(ctx);
   if (!user) return NextResponse.redirect(new URL("/login", request.nextUrl.origin));
   if (!allowlisted) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  if (!isUuid(taskId)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!load) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const headers = { "Cache-Control": "private, no-store" };
 
-  const started = performance.now();
-  const part = request.nextUrl.searchParams.get("part");
-  if (part === "schedule" || part === "candidates") {
-    const extras = await getTaskExtras(ctx, taskId, part);
+  const loaded = await load;
+  if (loaded.kind === "extras") {
+    const extras = loaded.value;
     if (!extras) return NextResponse.json({ error: "Not found" }, { status: 404, headers });
     return NextResponse.json(extras, {
       headers: { ...headers, "Server-Timing": `extras;dur=${Math.round(performance.now() - started)}` },
     });
   }
 
-  const payload = await loadTaskPanePayload(ctx, taskId, request.nextUrl.searchParams.get("context") === "1");
+  const payload = loaded.value;
   if (!payload.task) return NextResponse.json({ error: "Not found" }, { status: 404, headers });
   return NextResponse.json(payload, {
     headers: { ...headers, "Server-Timing": `pane;dur=${Math.round(performance.now() - started)}` },

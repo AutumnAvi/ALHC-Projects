@@ -126,10 +126,15 @@ type PdfPage = {
   render: (o: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }) => { promise: Promise<void> };
 };
 
+export function pdfWorkerUrl(version: string): string {
+  return `/pdfjs/pdf.worker.${version}.min.mjs`;
+}
+
 async function loadPdf(src: string): Promise<PdfDocument> {
   const pdfjs = await import("pdfjs-dist");
   if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+    // Batch 40 (item 7): the static copy of the worker (scripts/copy-pdf-worker.mjs), named by pdf.js's version.
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl(pdfjs.version);
   }
   const response = await fetch(src);
   if (!response.ok) throw new Error(`PDF ${response.status}`);
