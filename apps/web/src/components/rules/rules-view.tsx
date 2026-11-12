@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { AskAiAutomation } from "@/components/ai-builder/ask-ai-automation";
 import { EditWithAiButton } from "@/components/ai-assistant/edit-with-ai";
-import { Fragment, useId, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useOptimistic, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronRight, Copy, GitBranch, History, Pencil, Play, Plus, Search, Trash2, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { SmartPicker } from "@/components/smart-picker";
@@ -74,6 +74,7 @@ export function RulesView({
   context,
   view = "automations",
   historyRuleId = null,
+  focusRunId = null,
 }: {
   projectId: string;
   rules: RuleDef[];
@@ -82,6 +83,8 @@ export function RulesView({
   // automation History is narrowed to (?rule=<id>).
   view?: RulesPageView;
   historyRuleId?: string | null;
+  // Nov 11 notes (190): the run History opens at (expanded, scrolled to, highlighted): ?run=<id>.
+  focusRunId?: string | null;
   // Each rule's health (last run, failures in the last 7 days), by rule id.
   stats?: Record<string, RuleRunStats>;
   context: RuleContext;
@@ -463,6 +466,11 @@ export function RulesView({
         <p className="mt-1 text-xs text-zinc-500">
           The newest {HISTORY_LIMIT} runs: what ran, on which task, and each step. Open a run to see its steps.
         </p>
+        {focusRunId && !runs.some((r) => r.id === focusRunId) ? (
+          <p className="mt-2 text-sm text-zinc-500" data-focus-run-missing="">
+            That run isn’t among the newest {HISTORY_LIMIT} runs shown here any more.
+          </p>
+        ) : null}
         {runs.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">Nothing has run yet.</p>
         ) : shownRuns.length === 0 ? (
@@ -470,7 +478,7 @@ export function RulesView({
         ) : (
           <ul className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-200 text-sm">
             {shownRuns.map((r) => (
-              <RunRow key={r.id} run={r} ruleName={ruleNames.get(r.ruleId) ?? null} projectId={projectId} />
+              <RunRow key={r.id} run={r} ruleName={ruleNames.get(r.ruleId) ?? null} projectId={projectId} focused={r.id === focusRunId} />
             ))}
           </ul>
         )}
@@ -481,9 +489,24 @@ export function RulesView({
 }
 
 // One logged run; runs with steps (or an error) open to show each step.
-function RunRow({ run: r, ruleName, projectId }: { run: RuleRun; ruleName: string | null; projectId: string }) {
-  const [open, setOpen] = useState(false);
+function RunRow({
+  run: r,
+  ruleName,
+  projectId,
+  focused = false,
+}: {
+  run: RuleRun;
+  ruleName: string | null;
+  projectId: string;
+  focused?: boolean;
+}) {
+  const [open, setOpen] = useState(focused);
   const panelId = useId();
+  const rowRef = useRef<HTMLLIElement>(null);
+  // Nov 11 notes (190): a toast's "View this run" lands here, opened and in view.
+  useEffect(() => {
+    if (focused) rowRef.current?.scrollIntoView({ block: "center" });
+  }, [focused]);
   const outcome = runOutcome(r.status, r.detail);
   const reason = runReason(r.detail) ?? outcome.reason;
   const { steps, error } = runSteps(r.detail);
@@ -491,7 +514,13 @@ function RunRow({ run: r, ruleName, projectId }: { run: RuleRun; ruleName: strin
   const name = ruleName ?? "Deleted automation";
 
   return (
-    <li className="px-3 py-2">
+    <li
+      ref={rowRef}
+      className={`px-3 py-2 ${focused ? "bg-accent-50 ring-1 ring-inset ring-accent-200" : ""}`}
+      data-run-id={r.id}
+      data-run-focused={focused ? "" : undefined}
+      aria-current={focused ? "true" : undefined}
+    >
       <div className="flex flex-wrap items-center gap-2">
         {expandable ? (
           <button

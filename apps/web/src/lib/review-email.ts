@@ -1,6 +1,16 @@
 import "server-only";
 import { applyDesign, BRAND_BORDER, BRAND_PAGE, DESIGN_DEFAULTS, type AppliedDesign } from "@/lib/email-design";
-import { escapeHtml, layout, type Rendered } from "@/lib/email-layout";
+import {
+  EMAIL_BODY_TEXT,
+  EMAIL_CONTENT_WIDTH,
+  EMAIL_FONT,
+  EMAIL_INK,
+  EMAIL_MUTED,
+  emailSectionHeading,
+  escapeHtml,
+  layout,
+  type Rendered,
+} from "@/lib/email-layout";
 import { REVIEW_LINK_DAYS, reviewMediaKind, roundLabel } from "@alhc/core/review-checks";
 
 // Oct 26 notes (batch 3) / Oct 27 notes (batch 5): the review check email. The built-in requester look
@@ -42,7 +52,7 @@ export type ReviewEmailInput = {
 export const EMAIL_GRID_FILES = 9;
 // The width of the email's content (layout(): a 560 px card with 28 px padding on each side): a preview
 // fills it, one per row.
-export const EMAIL_IMAGE_WIDTH = 504;
+export const EMAIL_IMAGE_WIDTH = EMAIL_CONTENT_WIDTH;
 
 // The width a thumbnail is drawn at: the content width, or its own width when it's narrower (an image
 // smaller than that is never blown up).
@@ -72,7 +82,7 @@ function kindWord(asset: ReviewEmailAsset) {
   return kind === "image" ? "Image" : kind === "pdf" ? "PDF" : kind === "video" ? "Video" : "File";
 }
 
-const FONT = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const FONT = EMAIL_FONT;
 
 // One file: its preview (or a file tile) and its name under it, the whole row a link to that file on the
 // review page.
@@ -85,7 +95,9 @@ function fileRow(asset: ReviewEmailAsset, href: string) {
     : `<a href="${link}" target="_blank" style="display:block;text-decoration:none;color:#18181b"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="96" align="center" valign="middle" bgcolor="${BRAND_PAGE}" style="height:96px;background:${BRAND_PAGE};border:1px solid ${BRAND_BORDER};border-radius:8px;${FONT}"><span style="display:block;font-size:18px;font-weight:700;letter-spacing:0.5px;color:#52525b">${escapeHtml(
         extensionLabel(asset.name),
       )}</span><span style="display:block;margin-top:2px;font-size:12px;color:#71717a">${kindWord(asset)}</span></td></tr></table></a>`;
-  return `<tr><td valign="top" style="padding:0 0 16px 0">${picture}<a href="${link}" target="_blank" style="display:block;margin-top:6px;font-size:13px;line-height:18px;color:#3f3f46;text-decoration:none;word-break:break-word;${FONT}">${name}</a></td></tr>`;
+  return `<tr><td valign="top" style="padding:0 0 16px 0">${picture}<a href="${link}" target="_blank" style="display:block;margin-top:8px;font-size:14px;line-height:20px;font-weight:600;color:${EMAIL_INK};text-decoration:none;word-break:break-word;${FONT}">${name}<span style="font-weight:400;color:${EMAIL_MUTED}"> · ${kindWord(
+    asset,
+  )}</span></a></td></tr>`;
 }
 
 // The email's file list: one row per file (at most EMAIL_GRID_FILES; the rest counted), each a link.
@@ -98,7 +110,7 @@ export function emailFileList(assets: ReviewEmailAsset[], hrefFor: (asset: Revie
         .map((a) => fileRow(a, hrefFor(a)))
         .join("")}</table>${
         more > 0
-          ? `<p style="margin:0 0 4px 0;font-size:12px;color:#71717a;${FONT}">And ${more} more file${more === 1 ? "" : "s"} ${moreWhere}.</p>`
+          ? `<p style="margin:0 0 4px 0;font-size:13px;line-height:20px;color:${EMAIL_MUTED};${FONT}">And ${more} more file${more === 1 ? "" : "s"} ${moreWhere}.</p>`
           : ""
       }`
     : "";
@@ -125,19 +137,23 @@ export function renderReviewEmail(input: ReviewEmailInput): Rendered {
   const note = input.message?.trim() || "";
   const paragraphs = (nudge ? [greeting, nudge, note, intro] : [greeting, note, intro]).filter(Boolean);
 
-  const grid = emailFileList(input.assets, (a) => urls.file(a.assetId));
-  const buttons = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0 0 0"><tr><td bgcolor="${escapeHtml(
+  // Nov 11 notes (191): the files under a section title, then the two calls to action side by side (the
+  // brand orange Approve, an outlined Leave feedback), each full width on a phone.
+  const grid = input.assets.length
+    ? `${emailSectionHeading(input.assets.length === 1 ? "File to review" : "Files to review")}${emailFileList(input.assets, (a) => urls.file(a.assetId))}`
+    : "";
+  const buttons = `<table role="presentation" class="alhc-btn" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 0 0"><tr><td align="center" bgcolor="${escapeHtml(
     design.buttonColor,
   )}" style="border-radius:8px;background:${escapeHtml(design.buttonColor)}"><a href="${escapeHtml(
     urls.approve,
-  )}" target="_blank" style="display:inline-block;padding:10px 18px;font-size:14px;font-weight:600;line-height:20px;color:${
+  )}" target="_blank" style="display:inline-block;padding:12px 26px;font-size:15px;font-weight:600;line-height:20px;color:${
     design.buttonTextColor
-  };text-decoration:none;border-radius:8px;${FONT}">Approve</a></td><td width="10" style="width:10px">&nbsp;</td><td style="border-radius:8px;border:1px solid #d4d4d8;background:#ffffff"><a href="${escapeHtml(
+  };text-decoration:none;border-radius:8px;${FONT}">Approve</a></td><td width="10" style="width:10px">&nbsp;</td><td align="center" style="border-radius:8px;border:1px solid #cbd5e1;background:#ffffff"><a href="${escapeHtml(
     urls.feedback,
-  )}" target="_blank" style="display:inline-block;padding:9px 17px;font-size:14px;font-weight:600;line-height:20px;color:#18181b;text-decoration:none;border-radius:8px;${FONT}">Leave feedback</a></td></tr></table>`;
-  const deepLink = `<p style="margin:12px 0 0 0;font-size:13px;line-height:20px;${FONT}"><a href="${escapeHtml(
+  )}" target="_blank" style="display:inline-block;padding:11px 25px;font-size:15px;font-weight:600;line-height:20px;color:${EMAIL_INK};text-decoration:none;border-radius:8px;${FONT}">Leave feedback</a></td></tr></table>`;
+  const deepLink = `<p style="margin:14px 0 0 0;font-size:13px;line-height:20px;color:${EMAIL_BODY_TEXT};${FONT}"><a href="${escapeHtml(
     urls.page,
-  )}" target="_blank" style="color:${escapeHtml(design.accentColor)};font-weight:600;text-decoration:none">Open the review &rarr;</a> <span style="color:#71717a">every file in full quality</span></p>`;
+  )}" target="_blank" style="color:${escapeHtml(design.accentColor)};font-weight:600;text-decoration:none">Open the review &rarr;</a> <span style="color:${EMAIL_MUTED}">every file in full quality</span></p>`;
   const html = `${grid}${buttons}${deepLink}`;
   const text = [
     `Files:`,

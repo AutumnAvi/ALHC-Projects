@@ -34,6 +34,9 @@ import {
   finishedRunsFromNotes,
   partialNoteSummary,
   ranText,
+  runHistoryHref,
+  runHref,
+  runLinkLabel,
   stopText,
   type FeedbackResponse,
   type RanNote,
@@ -274,6 +277,9 @@ function RunningRow({ entry }: { entry: RunningEntry }) {
             {entry.detail}
           </p>
         ) : null}
+        {entry.kind === "automation" && entry.ruleId && entry.projectId && entryNeedsAttention(entry) ? (
+          <RunLinks projectId={entry.projectId} ruleId={entry.ruleId} runId={entry.runId ?? null} runCount={1} className="text-2xs" />
+        ) : null}
       </div>
       <span className={`shrink-0 text-2xs ${entryNeedsAttention(entry) ? "text-amber-700" : "text-zinc-500"}`}>{status}</span>
     </li>
@@ -303,6 +309,7 @@ function RanBody({ note }: { note: RanNote }) {
             ) : null}
           </p>
           {note.partial.reason ? <p className="mt-1 text-xs text-amber-900">{note.partial.reason}</p> : null}
+          <RunLinks projectId={note.projectId} ruleId={note.ruleId} runId={note.runId} runCount={note.runCount} />
         </div>
       </div>
     );
@@ -338,7 +345,37 @@ function StopBody({ note, back }: { note: StopNote; back: string }) {
           {STOP_EXPLAIN[note.stop]}
           {note.detail ? ` ${note.detail}` : ""}
         </p>
+        <RunLinks projectId={note.projectId} ruleId={note.ruleId} runId={note.runId} runCount={1} />
       </div>
     </div>
+  );
+}
+
+// Nov 11 notes (190): from a warning, the run itself (History opened at it) and the automation's run
+// history. Several runs folded into one toast link the latest one ("View latest run").
+export function RunLinks({
+  projectId,
+  ruleId,
+  runId,
+  runCount,
+  className = "text-xs",
+}: {
+  projectId: string;
+  ruleId: string;
+  runId: string | null;
+  runCount: number;
+  className?: string;
+}) {
+  return (
+    <p className={`mt-1 flex flex-wrap gap-x-3 gap-y-0.5 ${className}`} data-run-links="">
+      {runId ? (
+        <Link href={runHref(projectId, ruleId, runId)} className="font-medium underline underline-offset-2 hover:text-amber-800" data-run-link="run">
+          {runLinkLabel(runCount)}
+        </Link>
+      ) : null}
+      <Link href={runHistoryHref(projectId, ruleId)} className="font-medium underline underline-offset-2 hover:text-amber-800" data-run-link="history">
+        Run history
+      </Link>
+    </p>
   );
 }

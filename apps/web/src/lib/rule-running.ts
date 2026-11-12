@@ -31,6 +31,8 @@ export type RunningEntry = {
   endedAt: number | null;
   // What it did, or why it failed (one line).
   detail: string | null;
+  // Nov 11 notes (190): the logged run (rule_runs) the feedback check reported, for "View this run".
+  runId?: string | null;
 };
 
 // Shown once something has been running this long (quick ones never flash the indicator).
@@ -191,6 +193,7 @@ export type FinishedRun = {
   failed: boolean;
   partial?: boolean;
   detail: string | null;
+  runId?: string | null;
 };
 
 export function noteFinishedRuns(runs: readonly FinishedRun[], now = Date.now()) {
@@ -211,6 +214,7 @@ export function noteFinishedRuns(runs: readonly FinishedRun[], now = Date.now())
     startedAt: now,
     endedAt: now,
     detail: r.detail,
+    runId: r.runId ?? null,
   }));
   set({
     entries: trimEntries([...state.entries, ...added]),
