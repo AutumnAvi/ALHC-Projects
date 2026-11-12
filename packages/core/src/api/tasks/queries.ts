@@ -295,9 +295,16 @@ export const listSubtaskTrees = read(async (ctx: ApiContext, rootIds: string[], 
     await supabase.from("tasks").select(SUBTASK_COLUMNS).in("root_task_id", rootIds).is("deleted_at", null),
     "subtasks",
   );
-  const blocked = await openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id));
-  const items = toSubtaskItems(list, list).map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0 }));
-  return withRequestLabels(ctx, await withSubtaskApprovals(supabase, items), projectId);
+  // Nov 12 notes (batch 40, item 7): the blocker counts, approval states, and numbers all key off the
+  // subtasks just read, so they're read side by side (one wait instead of three in a row).
+  const base = toSubtaskItems(list, list);
+  const ids = base.map((item) => item.id);
+  const [blocked, withApprovals, labels] = await Promise.all([
+    openBlockerCounts(supabase, list.filter((t) => !t.completed_at).map((t) => t.id)),
+    withSubtaskApprovals(supabase, base),
+    projectId ? visibleRequestLabelsIn(ctx, projectId, ids) : firstVisibleNumbers(ctx, ids),
+  ]);
+  return withApprovals.map((item) => ({ ...item, blockedBy: blocked.get(item.id) ?? 0, requestLabel: labels.get(item.id) ?? null }));
 });
 
 // Critical path and slack over the project's readable tasks (read-only; see project_critical_path()).
