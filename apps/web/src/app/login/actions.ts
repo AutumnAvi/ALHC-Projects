@@ -1,10 +1,9 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import * as authApi from "@alhc/core/api/auth/mutations";
 import { safeNextPath } from "@/lib/auth";
-import { requestOrigin } from "@/lib/origin";
+import { authLinkOrigin } from "@/lib/origin";
 import { actionContext } from "@/lib/server/context";
 
 export type PasswordAuthState = { error?: string; notice?: string };
@@ -23,7 +22,7 @@ export async function passwordAuth(
 
   if (intent === "sign-up") {
     // The confirmation link returns through /auth/callback, which applies the allowlist gate.
-    const origin = (await headers()).get("origin") ?? (await requestOrigin());
+    const origin = await authLinkOrigin();
     const redirectTo = new URL("/auth/callback", origin);
     redirectTo.searchParams.set("next", next);
     const { error, session } = await authApi.signUp(ctx, {
