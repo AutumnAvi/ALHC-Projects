@@ -3,13 +3,16 @@
 // this the person's OWN context (a short-lived token for them; the service role is never used for the
 // work) and the token's identity, and serves the answers over the MCP Streamable HTTP transport.
 //
-//   read tools   run at once (search, read a task / project / automation, list your own things);
-//   write tools  need a token with the "write" scope. Staged exactly like the assistant's (resolved, the
-//                role checked as by hand, previewed), then — unless `confirm` is false — applied through
-//                the same Confirm path (checked again against the database, written through the typed API,
+//   read tools   run at once (search, read a task / project / automation, list your own things) — only
+//                the tools named in MCP_READ_TOOLS;
+//   write tools  (every other tool) need a token with the "write" scope. Staged exactly like the
+//                assistant's (resolved, the role checked as by hand, previewed). Security audit 2 (Nov 12,
+//                batch 41): EVERY write is only a preview — nothing changes — until the call says
+//                `confirm: true` (the boolean; anything else is a preview). Then it's applied through the
+//                same Confirm path (checked again against the database, written through the typed API,
 //                rolled back on a refusal) and logged as a run (source "mcp") with Undo in the app's run
-//                history. A destructive change, or one that messages people, is only a preview until the
-//                call says `confirm: true`.
+//                history. A tool added to the registry later needs confirmation until it's put on the
+//                read list here on purpose.
 import { ASSISTANT_LIMITS, opsSummary, withRefs, type AssistantPlan } from "../../ai-assistant";
 import { aiPeople } from "../../ai-builder";
 import { isToolName, toolInputSchema, toolMeta, toolsFor, type ToolName } from "../../ai-tools";
@@ -25,20 +28,62 @@ import { ToolQuestion, ToolRefusal } from "../capabilities/types";
 
 export type McpIdentity = { profileId: string; workspaceId: string; scopes: string[]; tokenId: string };
 
+// The tools that run without a confirmation: lookups only. An explicit list, so a new tool (whatever its
+// registry kind) is a change that needs `confirm: true` until it's added here on purpose.
+export const MCP_READ_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
+  "search_tasks",
+  "search_projects",
+  "search_people",
+  "get_task",
+  "get_project",
+  "get_automation",
+  "list_my_things",
+]);
+
+// Whether a call of this tool runs at once (a lookup on the read list) or needs `confirm: true`.
+export function mcpRunsWithoutConfirm(name: ToolName): boolean {
+  return MCP_READ_TOOLS.has(name) && toolMeta(name).kind === "read";
+}
+
+// What a call has to say to change anything: the boolean true, nothing else (not "true", not 1).
+export const isConfirmed = (value: unknown): value is true => value === true;
+
+export const CONFIRM_NOTE = "Nothing changed (preview). Call again with the same arguments and confirm: true to make this change.";
+
+// The tool's MCP input schema; every tool that needs a confirmation takes `confirm`.
+export function mcpInputSchema(name: ToolName): Record<string, unknown> {
+  const schema = toolInputSchema(name, "mcp") as { properties: Record<string, unknown> };
+  if (mcpRunsWithoutConfirm(name)) return schema;
+  const m = toolMeta(name);
+  const why = m.destructive ? " (it deletes something)" : m.notifies ? " (it messages people)" : "";
+  return {
+    ...schema,
+    properties: { ...schema.properties, confirm: { type: "boolean", description: `must be true to make this change${why}; without it you get a preview and nothing changes` } },
+  };
+}
+
 export type McpToolInfo = { name: string; description: string; inputSchema: Record<string, unknown>; annotations: { readOnlyHint: boolean; destructiveHint: boolean; title: string } };
 
 export function mcpListTools(identity: Pick<McpIdentity, "scopes">): McpToolInfo[] {
   const canWrite = identity.scopes.includes("write");
   return toolsFor("mcp")
-    .filter((n) => toolMeta(n).kind === "read" || canWrite)
+    .filter((n) => mcpRunsWithoutConfirm(n) || canWrite)
     .map((n) => {
       const m = toolMeta(n);
-      const flags = [m.destructive ? "Destructive: needs confirm: true." : "", m.notifies ? "Messages people: needs confirm: true." : "", m.kind === "write" && m.undo === "no" ? "Can’t be undone." : ""].filter(Boolean).join(" ");
+      const confirmFirst = !mcpRunsWithoutConfirm(n);
+      const flags = [
+        confirmFirst ? "Changes nothing until called with confirm: true (without it: a preview)." : "",
+        m.destructive ? "Destructive." : "",
+        m.notifies ? "Messages people." : "",
+        m.kind === "write" && m.undo === "no" ? "Can’t be undone." : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       return {
         name: n,
         description: `${m.description}${m.also ? ` (${m.also})` : ""}${flags ? ` ${flags}` : ""}`,
-        inputSchema: toolInputSchema(n, "mcp"),
-        annotations: { title: m.label, readOnlyHint: m.kind === "read", destructiveHint: Boolean(m.destructive) },
+        inputSchema: mcpInputSchema(n),
+        annotations: { title: m.label, readOnlyHint: !confirmFirst, destructiveHint: Boolean(m.destructive) },
       };
     });
 }
@@ -53,7 +98,8 @@ export async function mcpCallTool(ctx: ApiContext, identity: McpIdentity, name: 
   if (access.workspaceId !== identity.workspaceId) throw new ApiError("forbidden", "This token reaches another workspace");
   if (!isToolName(name) || !toolsFor("mcp").includes(name)) return { ok: false, error: `Unknown tool: ${String(name)}` };
   const meta = toolMeta(name);
-  if (meta.kind === "write" && !identity.scopes.includes("write")) return { ok: false, error: "This token can only read. Make a token with the write scope (Settings → AI & MCP)." };
+  const confirmFirst = !mcpRunsWithoutConfirm(name);
+  if (confirmFirst && !identity.scopes.includes("write")) return { ok: false, error: "This token can only read. Make a token with the write scope (Settings → AI & MCP)." };
   const args = rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? { ...(rawArgs as Record<string, unknown>) } : {};
   const confirm = args.confirm;
   delete args.confirm;
@@ -66,13 +112,16 @@ export async function mcpCallTool(ctx: ApiContext, identity: McpIdentity, name: 
   const env = toolEnv(ctx, access.workspaceId, me, "mcp", context, today());
 
   try {
-    if (meta.kind === "read") return { ok: true, data: await runReadTool(env, name, args) };
-    const ops = await stageCall(env, name, args, "Change");
-    const needsConfirm = ops.some((o) => o.destructive || o.notifies);
-    const preview = ops.map((o) => ({ change: o.label, before: o.before, after: o.after, destructive: o.destructive, messages: o.notifies, undo: !o.noUndo }));
-    if (confirm === false || (needsConfirm && confirm !== true)) {
-      return { ok: true, data: { applied: false, preview, note: needsConfirm ? "Nothing changed. Call again with confirm: true to make this change." : "Nothing changed (preview)." } };
+    if (meta.kind === "read") {
+      // A lookup that isn't on the read list waits for a yes like a change does.
+      if (confirmFirst && !isConfirmed(confirm)) return { ok: true, data: { applied: false, preview: [], note: CONFIRM_NOTE } };
+      return { ok: true, data: await runReadTool(env, name, args) };
     }
+    const ops = await stageCall(env, name, args, "Change");
+    const preview = ops.map((o) => ({ change: o.label, before: o.before, after: o.after, destructive: o.destructive, messages: o.notifies, undo: !o.noUndo }));
+    // Security audit 2 (Nov 12, batch 41): every change waits for an explicit yes (a crafted task title or
+    // comment can't talk a connected assistant into an edit nobody confirmed).
+    if (!isConfirmed(confirm)) return { ok: true, data: { applied: false, preview, note: CONFIRM_NOTE } };
     const runId = await logMcpRun(ctx, identity, name, ops);
     const records = await applyPlan(ctx, access.workspaceId, runId, ops, ops.map((_, i) => i), undefined);
     return {

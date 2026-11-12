@@ -135,7 +135,7 @@ export type ToolMeta = {
   minRole?: ProjectRole;
   // Extra conditions beyond the role, in plain words (matrix, help).
   also?: string;
-  // Deletes or removes something (red in the change set, with counts; MCP needs confirm: true).
+  // Deletes or removes something (red in the change set, with counts; MCP, like every change there, needs confirm: true).
   destructive?: boolean;
   // Messages people (an Inbox item, an email, a comment) — needs its own explicit confirmation that names
   // who (in the app: a tick; over MCP: confirm: true).
@@ -572,7 +572,8 @@ export function toolInputSchema(name: ToolName, audience: Audience): Record<stri
     if ("req" in p && p.req) required.push(key);
   }
   if (audience === "mcp" && cap.kind === "write") {
-    properties.confirm = { type: "boolean", description: cap.destructive || cap.notifies ? "must be true to make this change (it deletes something or messages people); without it you get a preview" : "false returns a preview without changing anything; otherwise the change is made" };
+    // Security audit 2 (Nov 12, batch 41): every MCP change waits for confirm: true.
+    properties.confirm = { type: "boolean", description: `must be true to make this change${cap.destructive ? " (it deletes something)" : cap.notifies ? " (it messages people)" : ""}; without it you get a preview and nothing changes` };
   }
   return { type: "object", properties, required, additionalProperties: false };
 }
