@@ -77,7 +77,7 @@ export function BoardView({
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange] = useProjectTasks(projectId, tasks);
   const pages = useGroupPages();
-  const showMorePage = usePagedShowMore();
+  const [showMorePage, loadingPage] = usePagedShowMore();
   const viewConfig = useViewConfig();
   const config = viewConfig?.current ?? configProp;
   const [, run] = useServerAction();
@@ -347,6 +347,7 @@ export function BoardView({
                 <li>
                   <ShowMoreRows
                     hidden={(group.total ?? group.tasks.length) - visibleTasks(group).length}
+                    loading={group.total != null && loadingPage === group.key}
                     onClick={() =>
                       group.total != null
                         ? showMorePage(group.key, visibleTasks(group).length)

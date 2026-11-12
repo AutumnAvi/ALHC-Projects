@@ -10,6 +10,7 @@ import {
   mergePatches,
   myTaskLivePatches,
   pruneMyTaskPatches,
+  touchesHiddenMyTask,
   userTopic,
   type MyTaskPatch,
 } from "@alhc/core/live-patch";
@@ -41,7 +42,19 @@ function setPatches(update: (current: ReadonlyMap<string, MyTaskPatch>) => Reado
 }
 
 // `loadedAt`: when the screen's reads started (server clock). Without it the props are drawn as they are.
-export function useLiveMyTasks(open: MyTask[], completed: MyTask[], loadedAt?: number): Rows {
+// `hiddenIds` (batch 39, item 3): this screen holds only some of the person's open tasks (Home's Today
+// card); these are the others. Its partial copy never replaces the shared one My tasks draws, and a
+// change that may bring a hidden task into view asks the server for the page.
+const NO_IDS: readonly string[] = [];
+
+export function useLiveMyTasks(
+  open: MyTask[],
+  completed: MyTask[],
+  loadedAt?: number,
+  hiddenIds: readonly string[] = NO_IDS,
+): Rows {
+  const partial = hiddenIds.length > 0;
+  const hidden = useMemo(() => new Set(hiddenIds), [hiddenIds]);
   const memberId = useShellMemberId();
   const held = useCacheEntry<Stamped<Rows>>(ROWS_ENTRY);
   const patches = useCacheEntry<ReadonlyMap<string, MyTaskPatch>>(PATCHES_ENTRY) ?? NO_PATCHES;
@@ -54,16 +67,22 @@ export function useLiveMyTasks(open: MyTask[], completed: MyTask[], loadedAt?: n
 
   // Hydrate: this screen's server copy goes into the cache when it's the newest.
   useEffect(() => {
-    if (loadedAt !== undefined) writeNewest<Rows>(getQueryClient(), queryKeys.myTasks(), { open, completed }, loadedAt);
-  }, [open, completed, loadedAt]);
+    if (loadedAt !== undefined && !partial) writeNewest<Rows>(getQueryClient(), queryKeys.myTasks(), { open, completed }, loadedAt);
+  }, [open, completed, loadedAt, partial]);
+
 
   // A new copy: drop the patches it already shows.
+  // (A partial copy keeps the patches of tasks it doesn't hold: My tasks draws those.)
   useEffect(() => {
     setPatches((current) => {
       const pruned = pruneMyTaskPatches(base.open, base.completed, current);
-      return pruned.size === current.size ? current : pruned;
+      if (pruned.size === current.size) return current;
+      if (hidden.size === 0) return pruned;
+      const kept = new Map(pruned);
+      for (const [id, patch] of current) if (hidden.has(id)) kept.set(id, patch);
+      return kept.size === current.size ? current : kept;
     });
-  }, [base]);
+  }, [base, hidden]);
 
   useLiveRefresher();
   useLiveTopic(
@@ -71,9 +90,10 @@ export function useLiveMyTasks(open: MyTask[], completed: MyTask[], loadedAt?: n
     (message) => {
       if (!memberId) return;
       const known = new Set([...base.open, ...base.completed].map((t) => t.id));
+      for (const id of hidden) known.add(id);
       const { patches: incoming, refresh } = myTaskLivePatches(message, memberId, known);
       if (incoming.length > 0) setPatches((current) => mergePatches(current, incoming));
-      if (refresh) requestLiveRefresh("skip");
+      if (refresh || touchesHiddenMyTask(message, hidden)) requestLiveRefresh("skip");
     },
     (status, rejoined) => {
       if (status === "live" && rejoined) requestLiveRefresh("skip");

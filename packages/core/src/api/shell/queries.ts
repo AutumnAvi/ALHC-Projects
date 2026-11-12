@@ -29,6 +29,7 @@ import {
   isSearchKind,
   type EmailSetup,
   type ForwardingSetup,
+  type QuickPerson,
   type QuickProject,
   type QuickResults,
   type QuickTask,
@@ -36,6 +37,7 @@ import {
   type RecentRef,
   type SearchKind,
 } from "../../shell";
+import { matchQuickPeople, matchQuickProjects, quickLimit, quickQuery } from "../../quick-match";
 import type { GalleryTemplate, TemplatePreview } from "../../templates";
 import { todayIn } from "../../workload";
 
@@ -44,35 +46,23 @@ async function signedIn(ctx: ApiContext) {
   return Boolean(user && allowlisted);
 }
 
-// Starts-with matches first, then the rest, each alphabetically.
-function rank<T>(items: T[], label: (item: T) => string, needle: string): T[] {
-  return [...items].sort((a, b) => {
-    const la = label(a).toLowerCase();
-    const lb = label(b).toLowerCase();
-    const sa = la.startsWith(needle) ? 0 : 1;
-    const sb = lb.startsWith(needle) ? 0 : 1;
-    return sa - sb || la.localeCompare(lb);
-  });
+// The palette's task results: search_tasks (RLS) and each task's numbers, in one call. Since Nov 12 speed
+// batch 39 the palette asks only for these (GET /api/quick-search); it matches people and projects itself
+// from the lists the app shell already loaded (quick-match.ts, the same rules as below).
+export async function quickSearchTasks(ctx: ApiContext, query: string, only: SearchKind | null = null): Promise<QuickTask[]> {
+  const q = quickQuery(query);
+  if (!q || !(await signedIn(ctx))) return [];
+  const kind = isSearchKind(only) ? only : null;
+  if (kind && kind !== "tasks") return [];
+  const taskResult = await ctx.db.rpc("search_tasks", { query: q, max_results: quickLimit(kind) });
+  return quickTasksFrom(ctx, taskResult && !taskResult.error ? (taskResult.data ?? []) : []);
 }
 
-// The palette's live results. `only` narrows to one kind (a chip), with more rows.
-export async function quickSearch(ctx: ApiContext, query: string, only: SearchKind | null = null): Promise<QuickResults> {
-  const q = typeof query === "string" ? query.trim().slice(0, 200) : "";
-  if (!q || !(await signedIn(ctx))) return EMPTY_RESULTS;
-  const kind = isSearchKind(only) ? only : null;
-  const limit = kind ? 20 : 5;
-  const needle = q.toLowerCase();
-  const supabase = ctx.db;
+type SearchTaskRow = { id: string; title: string; completed_at: string | null; home_project_id: string | null; home_project_name: string | null };
 
-  const [taskResult, projects, people] = await Promise.all([
-    !kind || kind === "tasks" ? supabase.rpc("search_tasks", { query: q, max_results: limit }) : null,
-    !kind || kind === "projects" ? listReadableProjects(ctx) : null,
-    !kind || kind === "people" ? listActivePeople(ctx) : null,
-  ]);
-
-  const taskRows = taskResult && !taskResult.error ? (taskResult.data ?? []) : [];
+async function quickTasksFrom(ctx: ApiContext, taskRows: SearchTaskRow[]): Promise<QuickTask[]> {
   const taskNumbers = await visibleTaskNumbers(ctx, taskRows.map((task) => task.id));
-  const tasks: QuickTask[] = taskRows.map((t) => {
+  return taskRows.map((t) => {
     const numbers = taskNumbers.get(t.id) ?? [];
     const label = numbers[0]?.label ?? null;
     return {
@@ -89,24 +79,31 @@ export async function quickSearch(ctx: ApiContext, query: string, only: SearchKi
       href: t.home_project_id ? `/projects/${t.home_project_id}?task=${t.id}` : `/my-tasks?task=${t.id}`,
     };
   });
-  const matchedProjects: QuickProject[] = projects
-    ? rank(
-        projects.filter((p) => p.name.toLowerCase().includes(needle)),
-        (p) => p.name,
-        needle,
-      )
-        // Active projects before archived ones.
-        .sort((a, b) => Number(a.archived_at !== null) - Number(b.archived_at !== null))
-        .slice(0, limit)
-        .map((p) => ({ id: p.id, name: p.name, archived: p.archived_at !== null }))
-    : [];
-  const matchedPeople = people
-    ? rank(
-        people.filter((p) => p.name.toLowerCase().includes(needle) || p.email.toLowerCase().includes(needle)),
-        (p) => p.name,
-        needle,
-      ).slice(0, limit)
-    : [];
+}
+
+// Everyone the palette can find (active people: on the allowlist, not removed), for the browser's own
+// matching; loaded once when the palette opens, not per keystroke.
+export async function quickSearchPeople(ctx: ApiContext): Promise<QuickPerson[]> {
+  if (!(await signedIn(ctx))) return [];
+  return listActivePeople(ctx);
+}
+
+// The palette's live results. `only` narrows to one kind (a chip), with more rows.
+export async function quickSearch(ctx: ApiContext, query: string, only: SearchKind | null = null): Promise<QuickResults> {
+  const q = quickQuery(query);
+  if (!q || !(await signedIn(ctx))) return EMPTY_RESULTS;
+  const kind = isSearchKind(only) ? only : null;
+  const supabase = ctx.db;
+
+  const [taskResult, projects, people] = await Promise.all([
+    !kind || kind === "tasks" ? supabase.rpc("search_tasks", { query: q, max_results: quickLimit(kind) }) : null,
+    !kind || kind === "projects" ? listReadableProjects(ctx) : null,
+    !kind || kind === "people" ? listActivePeople(ctx) : null,
+  ]);
+
+  const tasks = await quickTasksFrom(ctx, taskResult && !taskResult.error ? (taskResult.data ?? []) : []);
+  const matchedProjects: QuickProject[] = projects ? matchQuickProjects(projects, q, kind) : [];
+  const matchedPeople = people ? matchQuickPeople(people, q, kind) : [];
 
   return { tasks, projects: matchedProjects, people: matchedPeople };
 }

@@ -112,24 +112,40 @@ async function listMyTasksFromRows(ctx: ApiContext, profileId: string) {
   });
 }
 
+// The viewer's own My Tasks sections, as stored (no filing): empty until my_tasks_layout() first seeds them.
+async function readMyTaskSections(ctx: ApiContext): Promise<MyTaskSection[]> {
+  const result = await ctx.db
+    .from("my_task_sections")
+    .select("id, kind, name, sort_order")
+    .is("deleted_at", null)
+    .order("sort_order")
+    .order("created_at");
+  return rows(result, "my tasks sections").flatMap((s) =>
+    isMyTaskSectionKind(s.kind) ? [{ id: s.id, kind: s.kind, name: s.name, sortOrder: s.sort_order }] : [],
+  );
+}
+
 // The viewer's My Tasks sections and where each open task assigned to them sits. my_tasks_layout()
 // seeds the sections on first use and puts newly assigned tasks at the top of Recently assigned.
 export const listMyTaskLayout = read(
   async (ctx: ApiContext): Promise<{ sections: MyTaskSection[]; placements: Record<string, MyTaskPlacement> }> => {
-    const supabase = ctx.db;
-    const layout = rows(await supabase.rpc("my_tasks_layout"), "my tasks layout");
-    const result = await supabase
-      .from("my_task_sections")
-      .select("id, kind, name, sort_order")
-      .is("deleted_at", null)
-      .order("sort_order")
-      .order("created_at");
-    const sections = rows(result, "my tasks sections").flatMap((s) =>
-      isMyTaskSectionKind(s.kind) ? [{ id: s.id, kind: s.kind, name: s.name, sortOrder: s.sort_order }] : [],
-    );
+    const layout = rows(await ctx.db.rpc("my_tasks_layout"), "my tasks layout");
+    const sections = await readMyTaskSections(ctx);
     const placements: Record<string, MyTaskPlacement> = {};
     for (const row of layout) placements[row.task_id] = { sectionId: row.section_id, sortOrder: row.sort_order };
     return { sections, placements };
+  },
+);
+
+// Nov 12 batch 39 (2b): the checklist's sections (the My Tasks automations builder lists them) without
+// waiting on the filing my_tasks_layout() does — the checklist doesn't order by placements. Only a person
+// who has no sections yet (never opened My tasks) still waits for my_tasks_layout() to seed them, and then
+// the filing is done (`filed`); otherwise the page files after it answers (fileMyTaskPlacements).
+export const listChecklistSections = read(
+  async (ctx: ApiContext): Promise<{ sections: MyTaskSection[]; filed: boolean }> => {
+    const sections = await readMyTaskSections(ctx);
+    if (sections.length > 0) return { sections, filed: false };
+    return { sections: (await listMyTaskLayout(ctx)).sections, filed: true };
   },
 );
 

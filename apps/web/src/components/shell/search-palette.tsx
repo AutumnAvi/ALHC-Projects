@@ -2,22 +2,22 @@
 
 import { useClosesPopovers } from "@/components/overlay-registry";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CheckCircle2, Circle, Clock, Loader2, Lock, Search, SearchX } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { readRecents, recordRecent, useShell } from "@/components/shell/shell-context";
 import { isMac } from "@/components/shortcuts/keyboard";
 import { projectColorClass } from "@/lib/project-colors";
 import { TaskNumberBadge } from "@/components/task/task-number";
-import { quickSearch, resolveRecents } from "@/lib/actions/shell";
+import { resolveRecents } from "@/lib/actions/shell";
+import { fetchQuickSearchTasks, loadQuickSearchPeople, useQuickSearchProjects } from "@/components/shell/quick-search-directory";
+import { matchQuickPeople, matchQuickProjects } from "@alhc/core/quick-match";
 import {
-  EMPTY_RESULTS,
   SEARCH_KINDS,
   quickPersonHref,
   quickProjectHref,
   type QuickPerson,
   type QuickProject,
-  type QuickResults,
   type QuickTask,
   type RecentItem,
   type SearchKind,
@@ -32,7 +32,9 @@ const noopSubscribe = () => () => undefined;
 // opens a command palette — centered near the top of the window over a dimmed page (since batch 3; it
 // no longer covers the pill) — with Tasks / Projects / People chips, Recents, and results that update
 // as you type. Results come from the server with the person's own session, so they only ever include
-// what that person can open.
+// what that person can open. Since Nov 12 speed batch 39 only tasks are asked for as you type (GET
+// /api/quick-search, not a Server Action, so typing never queues behind a save); people and projects are
+// matched here from lists already loaded, with the server's own rules (quick-match.ts).
 export function SearchPalette() {
   const pathname = usePathname();
   const { workspace } = useShell();
@@ -104,7 +106,9 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<SearchKind | null>(null);
-  const [results, setResults] = useState<{ key: string; data: QuickResults } | null>(null);
+  const [taskResults, setTaskResults] = useState<{ key: string; tasks: QuickTask[] } | null>(null);
+  const [people, setPeople] = useState<QuickPerson[] | null>(null);
+  const readableProjects = useQuickSearchProjects();
   const [recents, setRecents] = useState<RecentItem[] | null>(null);
   const [active, setActive] = useState(0);
   const requestRef = useRef(0);
@@ -113,7 +117,20 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
 
   const trimmed = query.trim();
   const searchKey = `${kind ?? "all"}:${trimmed}`;
-  const loading = trimmed !== "" && results?.key !== searchKey;
+  const wantsTasks = !kind || kind === "tasks";
+  const wantsPeople = !kind || kind === "people";
+  // Everything a query shows appears together, as before: the tasks' answer and (when people are
+  // searched) the people list.
+  const ready = (!wantsTasks || taskResults?.key === searchKey) && (!wantsPeople || people !== null);
+  const loading = trimmed !== "" && !ready;
+  const matchedProjects = useMemo(
+    () => (!kind || kind === "projects" ? matchQuickProjects(readableProjects, trimmed, kind) : []),
+    [readableProjects, trimmed, kind],
+  );
+  const matchedPeople = useMemo(
+    () => (people && wantsPeople ? matchQuickPeople(people, trimmed, kind) : []),
+    [people, wantsPeople, trimmed, kind],
+  );
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -121,25 +138,31 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
     resolveRecents(readRecents(member.id))
       .then((items) => live && setRecents(items))
       .catch(() => live && setRecents([]));
+    void loadQuickSearchPeople().then((list) => live && setPeople(list));
     return () => {
       live = false;
     };
   }, [member.id]);
 
   useEffect(() => {
-    if (!trimmed) return;
+    if (!trimmed || !wantsTasks) return;
     const request = ++requestRef.current;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      quickSearch(trimmed, kind)
-        .then((data) => {
-          if (request === requestRef.current) setResults({ key: searchKey, data });
+      fetchQuickSearchTasks(trimmed, kind, controller.signal)
+        .then((tasks) => {
+          if (request === requestRef.current) setTaskResults({ key: searchKey, tasks });
         })
         .catch(() => {
-          if (request === requestRef.current) setResults({ key: searchKey, data: EMPTY_RESULTS });
+          if (request === requestRef.current && !controller.signal.aborted) setTaskResults({ key: searchKey, tasks: [] });
         });
     }, 150);
-    return () => window.clearTimeout(timer);
-  }, [trimmed, kind, searchKey]);
+    return () => {
+      window.clearTimeout(timer);
+      // A newer query (or closing the palette) cancels this one's request.
+      controller.abort();
+    };
+  }, [trimmed, kind, searchKey, wantsTasks]);
 
   const groups: Group[] = [];
   if (!trimmed) {
@@ -152,11 +175,11 @@ function Palette({ onClose }: { onClose: (refocus: boolean) => void }) {
         items: shown.slice(0, 8).map((r) => (r.kind === "task" ? taskItem(r, true) : projectItem(r, true))),
       });
     }
-  } else if (results?.key === searchKey) {
-    const { tasks, projects, people } = results.data;
+  } else if (ready) {
+    const tasks = wantsTasks && taskResults ? taskResults.tasks : [];
     if (tasks.length) groups.push({ heading: "Tasks", items: tasks.map((t) => taskItem(t, false)) });
-    if (projects.length) groups.push({ heading: "Projects", items: projects.map((p) => projectItem(p, false)) });
-    if (people.length) groups.push({ heading: "People", items: people.map(personItem) });
+    if (matchedProjects.length) groups.push({ heading: "Projects", items: matchedProjects.map((p) => projectItem(p, false)) });
+    if (matchedPeople.length) groups.push({ heading: "People", items: matchedPeople.map(personItem) });
   }
   const items = groups.flatMap((g) => g.items);
   const activeIndex = items.length ? Math.min(active, items.length - 1) : -1;

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { registerPopover } from "@/components/overlay-registry";
+import { leaveGhost } from "@/lib/exit-ghost";
 
 // A button with a floating panel. The panel is position: fixed and rendered on document.body (a portal),
 // so neither scrolling containers (e.g. the project tab bar) nor a transformed ancestor (the bulk bar is
@@ -47,7 +48,17 @@ export function Popover({
     placed?: boolean;
   } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // Batch 39: a short fade as the panel closes (an inert copy; the panel itself is gone at once). A ref
+  // callback, because it runs while the panel is still on the page.
+  const setPanel = useCallback((node: HTMLDivElement | null) => {
+    panelRef.current = node;
+    if (!node) return;
+    return () => {
+      panelRef.current = null;
+      leaveGhost(node, "ui-anim-fade-out", 110);
+    };
+  }, []);
   const open = position !== null;
   const close = () => setPosition(null);
   const onOpenChangeRef = useRef(onOpenChange);
@@ -172,13 +183,16 @@ export function Popover({
       {position
         ? createPortal(
             <div
-              ref={panelRef}
+              ref={setPanel}
               role="dialog"
               aria-label={label}
               style={{ top: position.top, bottom: position.bottom, left: position.left, right: position.right }}
               // Above dialogs (z-50): a popover opened from a dialog must not sit under it (layers.ts).
               data-popover-panel=""
-              className={`fixed z-[60] max-h-[70vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg ${panelClassName}`}
+              data-popover-side={side}
+              // Batch 39: it fades and scales in only once it has been measured and placed, so the
+              // measurement above never sees a scaled box.
+              className={`${position.placed ? "ui-anim-pop-in " : ""}fixed z-[60] max-h-[70vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3 text-sm shadow-lg ${panelClassName}`}
             >
               {children(close)}
             </div>,

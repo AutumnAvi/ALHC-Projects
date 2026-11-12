@@ -407,6 +407,18 @@ export type MyTaskPatch = {
   gone?: boolean;
 };
 
+// Nov 12 notes (batch 39, item 3): Home's Today card holds only the tasks it shows (todayCardSplit). A
+// change to one of the person's other open tasks that could bring it into Today — a new due date, or it
+// was reopened — asks the server for the page, as a newly assigned task does. Renames and other changes
+// to tasks the card doesn't show need nothing.
+export function touchesHiddenMyTask(message: LiveMessage, hiddenIds: ReadonlySet<string>): boolean {
+  if (message.table !== "tasks" || hiddenIds.size === 0) return false;
+  return message.rows.some((row) => {
+    const id = str(row, "id");
+    return id !== null && hiddenIds.has(id) && (rowChanged(row, "due_on") || rowChanged(row, "completed_at"));
+  });
+}
+
 export function myTaskLivePatches(
   message: LiveMessage,
   memberId: string,

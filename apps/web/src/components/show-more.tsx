@@ -25,27 +25,42 @@ export function ShowMoreRows({
   hidden,
   onClick,
   className = "",
+  loading = false,
 }: {
   hidden: number;
   onClick: () => void;
   className?: string;
+  // Batch 39: the next page is on its way from the server (List and Board): the button says so at once
+  // and can't be clicked again until it arrives. aria-disabled rather than disabled, so the focus a
+  // keyboard user put on it stays there.
+  loading?: boolean;
 }) {
   if (hidden <= 0) return null;
   const next = Math.min(ROW_PAGE, hidden);
   return (
-    <button type="button" onClick={onClick} className={`btn-ghost text-zinc-500 ${className}`}>
-      Show {next} more
+    <button
+      type="button"
+      onClick={loading ? undefined : onClick}
+      aria-disabled={loading || undefined}
+      aria-busy={loading || undefined}
+      className={`btn-ghost text-zinc-500 ${loading ? "cursor-wait" : ""} ${className}`}
+    >
+      {loading ? "Loading…" : `Show ${next} more`}
     </button>
   );
 }
 
 // List and Board ask the server for the next page. The count lives in ?n= so a refresh keeps it.
-export function usePagedShowMore() {
+// Returns the function and the group whose next page is still loading (batch 39: its button reads
+// "Loading…" until the page arrives).
+export function usePagedShowMore(): [(key: string, shown: number) => void, string | null] {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [, startTransition] = useTransition();
-  return (key: string, shown: number) => {
+  const [pending, startTransition] = useTransition();
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const show = (key: string, shown: number) => {
+    setLoadingKey(key);
     const limits = parsePageLimits(searchParams.get("n"));
     limits[key] = shown + ROW_PAGE;
     const params = new URLSearchParams(searchParams.toString());
@@ -55,4 +70,5 @@ export function usePagedShowMore() {
       router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
     });
   };
+  return [show, pending ? loadingKey : null];
 }
