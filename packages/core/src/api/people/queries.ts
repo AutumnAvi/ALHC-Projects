@@ -17,10 +17,19 @@ import { assignableRoles, hasRole, isProjectRole, type ProjectRole } from "../..
 
 // People in the workspace: profiles whose address is still on the allowlist (removed people left out).
 // The search palette's People and the Share dialog's invite search.
-export const listActivePeople = read(async (ctx: ApiContext): Promise<{ id: string; name: string; email: string }[]> => {
+export const listActivePeople = read(async (ctx: ApiContext): Promise<{ id: string; name: string; email: string }[]> =>
+  activePeopleOf(ctx, listProfiles(ctx)),
+);
+
+// The same, from a profile list the caller already has (Nov 12 notes, batch 40: Reports uses the app
+// shell's, so only the allowlist is read again).
+export async function activePeopleOf(
+  ctx: ApiContext,
+  profilesRead: Promise<Profile[]> | Profile[],
+): Promise<{ id: string; name: string; email: string }[]> {
   const supabase = ctx.db;
   const [profiles, allowed] = await Promise.all([
-    listProfiles(ctx),
+    profilesRead,
     supabase.from("allowed_emails").select("email").is("removed_at", null),
   ]);
   if (allowed.error) return [];
@@ -28,7 +37,7 @@ export const listActivePeople = read(async (ctx: ApiContext): Promise<{ id: stri
   return profiles
     .filter((p) => active.has(p.email.toLowerCase()))
     .map((p) => ({ id: p.id, name: displayName(p), email: p.email }));
-});
+}
 
 // Addresses on the allowlist whose owner hasn't signed in yet (no confirmed first sign-in). Adding one to a
 // team makes a pending invite they join on first sign-in (Oct 26 notes, batch 4: the team member picker).

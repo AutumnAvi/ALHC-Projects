@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type DragEvent } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import { CalendarClock, CalendarDays } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { DateRangePicker } from "@/components/task/date-picker";
@@ -168,16 +168,55 @@ function layoutWeek(week: string[], entries: Entry[], primaryWeek: Map<string, s
   });
 }
 
+// Nov 12 notes (batch 40, item 6): every week's lanes, worked out once for the grid's items and events
+// (not again on every render a drag's day preview causes). Same rules as layoutWeek, which it calls.
+export type WeekLayout = { week: string[]; segments: Segment[]; lanes: number };
+
+export function layoutWeeks(days: string[], items: CalendarItem[], events: CalendarEvent[]): WeekLayout[] {
+  const weeks: string[][] = [];
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+  const entries: Entry[] = [
+    ...items.map((item): Entry => ({ kind: "task", id: item.id, first: spanStart(item), last: item.dueOn, item })),
+    ...events.map((event): Entry => ({ kind: "event", id: event.id, first: event.startOn, last: event.endOn, event })),
+  ];
+  // Where each task's date button goes: the week of its due date, else the last visible week it reaches.
+  const primaryWeek = new Map<string, string>();
+  for (const week of weeks) {
+    for (const item of items) {
+      if (spanStart(item) <= week[6] && item.dueOn >= week[0]) primaryWeek.set(item.id, week[0]);
+    }
+  }
+  return weeks.map((week) => {
+    const segments = layoutWeek(week, entries, primaryWeek);
+    return { week, segments, lanes: Math.max(0, ...segments.map((s) => s.lane + 1)) };
+  });
+}
+
+// Per day of the week, how many tasks and events sit in lanes past `visibleLanes` ("+N more"): one pass.
+export function hiddenPerDay(segments: Segment[], visibleLanes: number): { tasks: number; events: number }[] {
+  const counts = Array.from({ length: 7 }, () => ({ tasks: 0, events: 0 }));
+  for (const s of segments) {
+    if (s.lane < visibleLanes) continue;
+    for (let col = s.col; col < s.col + s.span && col < 7; col += 1) {
+      if (s.entry.kind === "task") counts[col].tasks += 1;
+      else counts[col].events += 1;
+    }
+  }
+  return counts;
+}
+
 function spanText(item: Pick<CalendarItem, "startOn" | "dueOn">) {
   return item.startOn ? `${longDate(item.startOn)} to ${longDate(item.dueOn)}` : `due ${longDate(item.dueOn)}`;
 }
+
+const NO_EVENTS: CalendarEvent[] = [];
 
 export function CalendarGrid({
   days,
   month,
   today,
   items,
-  events = [],
+  events = NO_EVENTS,
   drag,
   onDragChange,
   onChange,
@@ -210,22 +249,9 @@ export function CalendarGrid({
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [target, setTarget] = useState<string | null>(null);
-  const weeks: string[][] = [];
-  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
-  const byId = new Map(items.map((item) => [item.id, item] as const));
+  const layouts = useMemo(() => layoutWeeks(days, items, events), [days, items, events]);
+  const byId = useMemo(() => new Map(items.map((item) => [item.id, item] as const)), [items]);
   const year = today ? Number(today.slice(0, 4)) : undefined;
-  const entries: Entry[] = [
-    ...items.map((item): Entry => ({ kind: "task", id: item.id, first: spanStart(item), last: item.dueOn, item })),
-    ...events.map((event): Entry => ({ kind: "event", id: event.id, first: event.startOn, last: event.endOn, event })),
-  ];
-
-  // Where each task's date button goes: the week of its due date, else the last visible week it reaches.
-  const primaryWeek = new Map<string, string>();
-  for (const week of weeks) {
-    for (const item of items) {
-      if (spanStart(item) <= week[6] && item.dueOn >= week[0]) primaryWeek.set(item.id, week[0]);
-    }
-  }
 
   // The days the dragged task would cover if dropped on the day under the pointer.
   const preview = new Set<string>();
@@ -282,22 +308,18 @@ export function CalendarGrid({
         ))}
       </div>
       <div className="flex min-h-0 flex-1 flex-col border-l border-zinc-200">
-        {weeks.map((week) => {
-          const segments = layoutWeek(week, entries, primaryWeek);
+        {layouts.map(({ week, segments, lanes }) => {
           const open = tall || expanded.has(week[0]);
-          const lanes = Math.max(0, ...segments.map((s) => s.lane + 1));
           const visibleLanes = open ? lanes : Math.min(lanes, MONTH_LANES);
-          const hidden = week.map((_, col) => {
-            const over = segments.filter((s) => s.lane >= visibleLanes && s.col <= col && col < s.col + s.span);
-            return { tasks: over.filter((s) => s.entry.kind === "task").length, events: over.filter((s) => s.entry.kind === "event").length };
-          });
+          const hidden = hiddenPerDay(segments, visibleLanes);
           return (
             <div
               key={week[0]}
               data-week
               role="group"
               aria-label={`Week of ${longDate(week[0])}`}
-              className={`relative flex-1 ${tall ? "min-h-[16rem]" : "min-h-[7rem]"}`}
+              // Batch 40 (item 6): a month's weeks off screen (a scrolled, expanded month) skip layout and paint.
+              className={`relative flex-1 ${tall ? "min-h-[16rem]" : "min-h-[7rem] cv-week"}`}
               onDoubleClick={
                 onAddEvent
                   ? (e) => {

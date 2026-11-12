@@ -11,7 +11,7 @@ import type { BulkOperation, BulkResult } from "@alhc/core/bulk";
 import type { DuplicateTaskOptions, DuplicateTaskResult } from "@alhc/core/duplicate-task";
 import type { Recurrence } from "@alhc/core/recurrence";
 import type { RequestLabel } from "@alhc/core/request-numbers";
-import { readAction, run, runWith } from "@/lib/server/action";
+import { readAction, run, runWith, SCREEN_ONLY } from "@/lib/server/action";
 import type { TaskKind } from "@alhc/core/task-kinds";
 import type { LastProjectCode } from "@alhc/core/task-projects";
 
@@ -64,16 +64,21 @@ export async function updateTask(
     dueAt?: string | null;
     timeZone?: string;
   },
+  // Nov 12 notes (batch 40, item 1): the screen shows the change by itself (src/lib/patched-writes.ts), so
+  // skip the refresh and keep the router's recently visited pages. Only a name, assignee, or description.
+  screenOnly = false,
 ): Promise<ActionResult> {
-  return run((ctx) => tasksApi.updateTask(ctx, taskId, patch));
+  const patchedKeys = Object.keys(patch).every((key) => key === "title" || key === "assigneeId" || key === "notes");
+  return run((ctx) => tasksApi.updateTask(ctx, taskId, patch), screenOnly && patchedKeys ? SCREEN_ONLY : {});
 }
 
 export async function setTaskRecurrence(taskId: string, rule: Recurrence | null): Promise<ActionResult> {
   return run((ctx) => tasksApi.setTaskRecurrence(ctx, taskId, rule));
 }
 
-export async function setTaskCompleted(taskId: string, completed: boolean): Promise<ActionResult> {
-  return run((ctx) => tasksApi.setTaskCompleted(ctx, taskId, completed));
+// `screenOnly` (batch 40, item 1): see updateTask.
+export async function setTaskCompleted(taskId: string, completed: boolean, screenOnly = false): Promise<ActionResult> {
+  return run((ctx) => tasksApi.setTaskCompleted(ctx, taskId, completed), screenOnly ? SCREEN_ONLY : {});
 }
 
 export async function deleteTask(taskId: string): Promise<ActionResult> {

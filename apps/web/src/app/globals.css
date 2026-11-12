@@ -151,6 +151,12 @@
   contain-intrinsic-size: auto 5.5rem;
 }
 
+/* A month Calendar's week (batch 40): skipped while scrolled off screen in a tall, expanded month. */
+@utility cv-week {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 7rem;
+}
+
 /* A row of underlined tabs (project and portfolio headers, Reports, Settings → Workspace, the Settings
    modal). It scrolls sideways when the tabs don't fit but never vertically — a 1px overflow there made
    Windows draw a stray stacked up/down scrollbar at the end of the row — and draws its hairline inside,

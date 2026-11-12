@@ -3,7 +3,7 @@
 import { parseAccessStatus, type ProjectAccessRequest, type ProjectAccessStatus } from "../../access-requests";
 import { getViewer } from "../auth/queries";
 import { type ApiContext, read } from "../core/context";
-import { isMissingColumn, maybe, rows } from "../core/db";
+import { isMissingColumn, maybe, rows, rpcMissing } from "../core/db";
 import { listMyTeamIds, listTeams } from "../teams/queries";
 import { listProjectTemplates } from "../templates/queries";
 import { getWorkspace } from "../workspace/queries";
@@ -600,8 +600,30 @@ const FILE_COLUMNS = "id, file_name, content_type, size_bytes, uploaded_by, crea
 
 const MAX_PROJECT_FILES = 500;
 
+// Nov 12 notes (batch 40, item 2): one read of the newest files (project_file_page: the project's tasks
+// and their subtasks, newest first, 500), with the caller's own access. Before that function is deployed,
+// the old reads below.
 export const listProjectFiles = read(async (ctx: ApiContext, projectId: string): Promise<ProjectFile[]> => {
   if (!isUuid(projectId)) return [];
+  const page = await ctx.db.rpc("project_file_page", { target_project: projectId, max_results: MAX_PROJECT_FILES });
+  if (!rpcMissing(page.error)) {
+    return rows(page, "project files").map((f) => ({
+      id: f.id,
+      fileName: f.file_name,
+      contentType: f.content_type,
+      sizeBytes: Number(f.size_bytes),
+      uploadedBy: f.uploaded_by,
+      source: f.source === "form" || f.source === "email" ? f.source : "upload",
+      createdAt: f.created_at,
+      taskId: f.task_id,
+      taskTitle: f.task_title,
+    }));
+  }
+  return listProjectFilesByTask(ctx, projectId);
+});
+
+// The reads before batch 40 (kept for a database without project_file_page).
+async function listProjectFilesByTask(ctx: ApiContext, projectId: string): Promise<ProjectFile[]> {
   const supabase = ctx.db;
   type FileRow = {
     id: string;
@@ -657,7 +679,7 @@ export const listProjectFiles = read(async (ctx: ApiContext, projectId: string):
     for (const task of rows(subtasks, "subtask files")) add(task as unknown as TaskRow);
   }
   return files.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_PROJECT_FILES);
-});
+}
 
 // A project's dependency-shift mode (Auto-shift / Ask me / Off). Ask me on a database without it.
 export const getDependencyShiftMode = read(async (ctx: ApiContext, projectId: string): Promise<DependencyShiftMode> => {

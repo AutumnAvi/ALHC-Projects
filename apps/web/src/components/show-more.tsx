@@ -1,8 +1,7 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
-import { parsePageLimits, ROW_PAGE } from "@alhc/core/views";
+import { useState } from "react";
+import { ROW_PAGE } from "@alhc/core/views";
 
 export { ROW_PAGE };
 
@@ -48,27 +47,4 @@ export function ShowMoreRows({
       {loading ? "Loading…" : `Show ${next} more`}
     </button>
   );
-}
-
-// List and Board ask the server for the next page. The count lives in ?n= so a refresh keeps it.
-// Returns the function and the group whose next page is still loading (batch 39: its button reads
-// "Loading…" until the page arrives).
-export function usePagedShowMore(): [(key: string, shown: number) => void, string | null] {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const [pending, startTransition] = useTransition();
-  const [loadingKey, setLoadingKey] = useState<string | null>(null);
-  const show = (key: string, shown: number) => {
-    setLoadingKey(key);
-    const limits = parsePageLimits(searchParams.get("n"));
-    limits[key] = shown + ROW_PAGE;
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("n", JSON.stringify(limits));
-    const query = params.toString();
-    startTransition(() => {
-      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-    });
-  };
-  return [show, pending ? loadingKey : null];
 }

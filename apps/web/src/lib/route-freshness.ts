@@ -33,20 +33,36 @@ export type FreshnessState = {
   shownAt: Map<string, number>;
   // When each screen was prefetched on hover.
   prefetchedAt: Map<string, number>;
+  // Nov 12 notes (batch 40, item 1): when the person's last save without a refresh finished. Those keep
+  // the router's cache, so a screen prefetched before one is drawn and then rendered again too.
+  lastWriteAt: number;
+  // When each screen's server copy was last rendered here (a fetch, or a background render on arrival).
+  renderedAt: Map<string, number>;
 };
 
 export function emptyFreshness(): FreshnessState {
-  return { shownAt: new Map(), prefetchedAt: new Map() };
+  return { shownAt: new Map(), prefetchedAt: new Map(), lastWriteAt: 0, renderedAt: new Map() };
+}
+
+export function noteRendered(state: FreshnessState, key: string, now: number) {
+  remember(state.renderedAt, key, now);
+}
+
+export function noteWriteWithoutRefresh(state: FreshnessState, at: number) {
+  state.lastWriteAt = Math.max(state.lastWriteAt, at);
 }
 
 // Arriving at `key`: was what's drawn possibly a copy the router kept (so render it again)?
 export function arrivalNeedsRevalidation(state: FreshnessState, key: string, now: number): boolean {
   const shown = state.shownAt.get(key);
   if (shown !== undefined && now - shown < ROUTER_CACHE_SECONDS * 1000 + SLACK_MS) return true;
+  // Back / Forward draws the router's copy however old it is; one rendered before a save that kept the
+  // cache (batch 40) may not show it.
+  const rendered = state.renderedAt.get(key);
+  if (rendered !== undefined && state.lastWriteAt > 0 && state.lastWriteAt >= rendered) return true;
   const prefetched = state.prefetchedAt.get(key);
-  return (
-    prefetched !== undefined && now - prefetched > FRESH_PREFETCH_MS && now - prefetched < HOVER_PREFETCH_SECONDS * 1000 + SLACK_MS
-  );
+  if (prefetched === undefined || now - prefetched >= HOVER_PREFETCH_SECONDS * 1000 + SLACK_MS) return false;
+  return now - prefetched > FRESH_PREFETCH_MS || (state.lastWriteAt > 0 && state.lastWriteAt >= prefetched);
 }
 
 const MAX_KEYS = 200;
