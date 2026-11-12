@@ -31,7 +31,10 @@ your role in each project allows by hand.
    `authenticated`) with the project's JWT secret (`SUPABASE_JWT_SECRET`) and makes a cookie-less client with
    it. Every read and write runs through PostgREST and **RLS as that person**, exactly as if they were signed
    in; the typed API's own checks and the registry's role table apply on top.
-3. Without `ALHC_MCP_TOKEN_PEPPER` (≥ 32 characters), `SUPABASE_JWT_SECRET`, and the service role key the
+3. An unknown, revoked, expired, or no-longer-allowed token (or a malformed one) always gets the same
+   `401 Token not accepted`, so a caller can't tell which; the reason goes to the server log only
+   (`[mcp] token refused reason=…`, never the token). Too many calls is `429`.
+4. Without `ALHC_MCP_TOKEN_PEPPER` (≥ 32 characters), `SUPABASE_JWT_SECRET`, and the service role key the
    endpoint answers 503 and reads nothing (fails closed).
 
 No token, prompt, tool input, or tool result is logged. OAuth 2.1 (the MCP authorization spec) is not built:

@@ -75,6 +75,32 @@ test("no token, a malformed one, unknown, revoked, expired, a removed owner → 
   });
 });
 
+test("unknown, revoked, expired, not-allowed, and malformed tokens get one identical answer; the reason is logged only", async () => {
+  await withEnv(CONFIGURED, async () => {
+    const warn = console.warn;
+    const lines: string[] = [];
+    console.warn = (line: string) => lines.push(line);
+    const answers: unknown[] = [];
+    const tokens: string[] = [];
+    try {
+      for (const status of ["unknown", "revoked", "expired", "not_allowed"] as const) {
+        const token = newAccessToken();
+        tokens.push(token);
+        answers.push(await authenticateMcp(`Bearer ${token}`, async () => ({ status })));
+      }
+      answers.push(await authenticateMcp("Bearer not-a-token", async () => ({ status: "unknown" })));
+    } finally {
+      console.warn = warn;
+    }
+    for (const a of answers) assert.deepEqual(a, { ok: false, status: 401, error: "Token not accepted" });
+    assert.deepEqual(lines, ["unknown", "revoked", "expired", "not_allowed"].map((r) => `[mcp] token refused reason=${r}`));
+    for (const t of tokens) assert.ok(!lines.join("\n").includes(t.slice(9)), "never the token");
+  });
+  // The route answers from status + message alone, so its HTTP responses are identical too.
+  const route = read("src/app/api/mcp/route.ts");
+  assert.ok(route.includes("if (!auth.ok) return denied(auth.status, auth.error);"));
+});
+
 test("a good token acts as its owner (the lookup only ever sees the hash), with the token's scopes", async () => {
   await withEnv(CONFIGURED, async () => {
     const token = newAccessToken();
@@ -115,8 +141,10 @@ test("only the Authorization header counts: the route never reads cookies, so a 
   const auth = read("src/lib/mcp/auth.ts");
   for (const src of [route, auth]) {
     assert.ok(!/cookies\(|\.cookies\b|renderContext|actionContext|routeContext/.test(src), "no cookie session");
-    assert.ok(!/console\.(log|info|warn|error)/.test(src), "nothing is logged");
   }
+  // Nothing is logged but a refused token's reason (never the token, a prompt, or a tool result).
+  assert.ok(!/console\.(log|info|warn|error)/.test(route), "the route logs nothing");
+  assert.deepEqual(auth.match(/console\.\w+\([^\n]*/g), ["console.warn(`[mcp] token refused reason=${result.status}`);"]);
   assert.ok(route.includes('request.headers.get("authorization")'));
   // Security audit 2 (Nov 12, batch 41): no preview auto-login at all (previews sign in like production).
   const proxy = read("src/lib/supabase/proxy.ts");
