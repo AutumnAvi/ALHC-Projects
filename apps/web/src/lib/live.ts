@@ -3,7 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { isLiveTopic, parseLiveMessage, type LiveMessage, type LiveTable } from "@alhc/core/live-patch";
-import { mutationInFlight, noteMutationTraffic, setMutationQuietHandler } from "@/lib/optimistic-session";
+import {
+  mutationInFlight,
+  noteMutationTraffic,
+  refreshingWriteInFlight,
+  setMutationQuietHandler,
+} from "@/lib/optimistic-session";
 import { createClient } from "@/lib/supabase/client";
 
 // Nov 4 notes, batch 26 (M3): live updates through Realtime Broadcast on private topics, instead of
@@ -129,6 +134,11 @@ function openTopic(topic: string, state: TopicState): () => void {
   };
 }
 
+// Whether a topic's channel is joined right now (batch 40: a save skips its refresh only then).
+export function topicIsLive(topic: string): boolean {
+  return topics.get(topic)?.status === "live";
+}
+
 // Listen to one topic. Returns the unsubscribe. A topic that isn't one of ours is ignored.
 export function subscribeLive(topic: string, listener: LiveListener): () => void {
   if (typeof window === "undefined" || !isLiveTopic(topic)) return () => {};
@@ -221,7 +231,13 @@ export type RefreshMode = "defer" | "skip";
 export function requestLiveRefresh(mode: RefreshMode = "defer") {
   if (typeof window === "undefined") return;
   if (mode === "skip") {
-    if (mutationInFlight()) return;
+    // The open write's own refresh covers it. A write saved without a refresh (batch 40) doesn't bring
+    // one: refresh once it's done instead.
+    if (refreshingWriteInFlight()) return;
+    if (mutationInFlight()) {
+      scheduleDeferred();
+      return;
+    }
     window.clearTimeout(refreshTimer);
     refreshTimer = window.setTimeout(runRefresh, REFRESH_MS);
     return;

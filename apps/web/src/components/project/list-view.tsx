@@ -113,6 +113,9 @@ import {
 } from "./list-grid";
 import { useProjectTaskSeeds } from "./task-seeds";
 import { sortOrderFor, useProjectTasks } from "./use-project-tasks";
+import { patchedAction, useScreenPatches } from "@/lib/patched-writes";
+import { hiddenByCompletion, projectViewPatches, withoutRows } from "@alhc/core/patched-writes";
+import { projectTopic } from "@alhc/core/live-patch";
 import { groupTasks, groupsFromPage, withPageCursors, type TaskGroup } from "./view-groups";
 import { TagChips } from "@/components/tags/tag-chip";
 import type { Tag } from "@alhc/core/tags";
@@ -191,8 +194,16 @@ export function ListView({
   const viewConfig = useViewConfig();
   // The page's (optimistic) config: column menus apply instantly as an unsaved draft.
   const config = viewConfig?.current ?? configProp;
+  // Nov 12 notes (batch 40, item 1): this view shows these saves by itself, so they skip the refresh
+  // (what both the server's config and the draft on screen allow).
+  useScreenPatches(
+    projectViewPatches(configProp, { paged: Boolean(taskPage) }).filter((kind) =>
+      projectViewPatches(config, { paged: Boolean(taskPage) }).includes(kind),
+    ),
+    projectTopic(projectId),
+  );
   const tagsOn = useTagsEnabled();
-  const [optimisticTasks, applyChange] = useProjectTasks(projectId, tasks);
+  const [optimisticTasks, applyChange, settledCompletions] = useProjectTasks(projectId, tasks);
   // Nov 2 notes (batch 14, 92): sections being added show at once (pending-sections.ts).
   const optimisticSections = useSectionsWithPending(projectId, sections);
   const [, run] = useServerAction();
@@ -321,13 +332,18 @@ export function ListView({
   const groupContext = { sections: orderSections(optimisticSections, config), profilesById, fields, tags };
   // A paged list keeps the server's groups until the loaded cards change (a drag) or the
   // saved config is what the page was built from. Sorting the partial page here would hide tasks.
-  const groups =
+  const groupedTasks =
     taskPage && optimisticTasks === tasks && sameConfig(config, configProp)
       ? groupsFromPage(taskPage, configProp, groupContext)
       : withPageCursors(
           groupTasks(optimisticTasks, taskPage ? configProp : config, groupContext),
           taskPage ?? [],
         );
+  // The person's own completions saved without a refresh leave a view whose completion filter drops them.
+  const settledHidden = new Set(
+    optimisticTasks.filter((t) => settledCompletions.has(t.id) && hiddenByCompletion(config, t.completedAt)).map((t) => t.id),
+  );
+  const groups = withoutRows(groupedTasks, settledHidden);
   const tagsById = new Map(tags.map((t) => [t.id, t] as const));
   const bySection = groupOf(config) === "section";
   // Precise drop positions only make sense in manual (sort_order) order, like Board.
@@ -355,14 +371,18 @@ export function ListView({
     // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
     if (completed && blockedCount(task) > 0) return;
     run(
-      trackCompletion(task.id, completed, () => setTaskCompleted(task.id, completed)),
+      trackCompletion(
+        task.id,
+        completed,
+        patchedAction("complete", (screenOnly) => setTaskCompleted(task.id, completed, screenOnly), { refresh: task.recurring }),
+      ),
       () => applyChange({ type: "complete", taskId: task.id, completed }),
     );
   };
 
   const rename = (task: ProjectTask, title: string) =>
     run(
-      () => updateTask(task.id, { title }),
+      patchedAction("title", (screenOnly) => updateTask(task.id, { title }, screenOnly)),
       () => applyChange({ type: "title", taskId: task.id, title }),
     );
 
@@ -391,7 +411,7 @@ export function ListView({
   const assign = (task: ProjectTask, assigneeId: string | null) => {
     if (assigneeId === task.assigneeId) return;
     run(
-      () => updateTask(task.id, { assigneeId }),
+      patchedAction("assign", (screenOnly) => updateTask(task.id, { assigneeId }, screenOnly)),
       () => applyChange({ type: "assign", taskId: task.id, assigneeId }),
     );
   };

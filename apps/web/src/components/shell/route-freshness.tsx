@@ -4,11 +4,14 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type ComponentProps, type FocusEvent, type PointerEvent } from "react";
 import { requestLiveRefresh, useLiveRefresher } from "@/lib/live";
+import { onWriteWithoutRefresh } from "@/lib/patched-writes";
 import {
   arrivalNeedsRevalidation,
   emptyFreshness,
   notePrefetch,
+  noteRendered,
   noteShown,
+  noteWriteWithoutRefresh,
   routeKey,
   routeKeyOfHref,
 } from "@/lib/route-freshness";
@@ -18,6 +21,8 @@ import {
 // the background so it doesn't stay a few seconds old. Mounted once in the app shell.
 
 const state = emptyFreshness();
+// Batch 40 (item 1): saves that kept the router's cache mark everything drawn from it before them.
+if (typeof window !== "undefined") onWriteWithoutRefresh((at) => noteWriteWithoutRefresh(state, at));
 // Loading skeletons drawn since the last arrival: one means the router fetched the screen (a fresh render
 // is on its way), so there's nothing to revalidate. (A background refresh empties the router's whole
 // cache, so the next screen may be fetched even though it was shown seconds ago.)
@@ -51,6 +56,8 @@ export function RouteFreshness() {
     const timer = window.setTimeout(() => {
       const fetched = skeletons > counted || document.querySelector(".skeleton") !== null;
       counted = skeletons;
+      // The first screen of the visit, a fetch, or a background render: its server copy is fresh now.
+      if (left === null || fetched || revisit) noteRendered(state, key, Date.now());
       if (revisit && !fetched) requestLiveRefresh();
     }, 50);
     return () => window.clearTimeout(timer);

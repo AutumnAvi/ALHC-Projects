@@ -38,6 +38,11 @@ export function mutationEndedAt(token: number): number | undefined {
 const openListeners = new Set<() => void>();
 const endListeners = new Set<(startedAt: number) => void>();
 
+let openVersion = 0;
+export function openMutationVersion(): number {
+  return openVersion;
+}
+
 export function subscribeOpenMutations(listener: () => void): () => void {
   openListeners.add(listener);
   return () => openListeners.delete(listener);
@@ -62,6 +67,7 @@ export function beginLocalMutation(): number {
   open.add(token);
   startedAt.set(token, Date.now());
   activeToken = token;
+  openVersion += 1;
   for (const listener of openListeners) listener();
   return token;
 }
@@ -90,6 +96,7 @@ export function endLocalMutation(token: number) {
     if (oldest !== undefined) endedAt.delete(oldest);
   }
   if (activeToken === token) activeToken = 0;
+  openVersion += 1;
   for (const listener of openListeners) listener();
   for (const listener of endListeners) listener(began);
   if (open.size === 0 && dirty) {
@@ -147,4 +154,28 @@ export function holdTaskChanges(): { ok: () => void; cancel: () => void } {
     endLocalMutation(token);
   };
   return { ok: () => settle(false), cancel: () => settle(true) };
+}
+
+// Nov 12 notes (batch 40, item 1): writes saved without a refresh (src/lib/patched-writes.ts). Their
+// optimistic edits stay on other screens until those screens render again (task-edits.ts), and a live
+// message that would otherwise wait for the write's own refresh asks for one (live.ts, "skip").
+const withoutRefresh = new Set<number>();
+
+export function markWriteWithoutRefresh(token: number) {
+  if (token === 0) return;
+  withoutRefresh.add(token);
+  if (withoutRefresh.size > 200) {
+    const oldest = withoutRefresh.values().next().value;
+    if (oldest !== undefined) withoutRefresh.delete(oldest);
+  }
+}
+
+export function writeWithoutRefresh(token: number): boolean {
+  return withoutRefresh.has(token);
+}
+
+// An open write whose end brings a refresh (so a "skip" live refresh can wait for it).
+export function refreshingWriteInFlight(): boolean {
+  for (const token of open) if (!withoutRefresh.has(token)) return true;
+  return false;
 }

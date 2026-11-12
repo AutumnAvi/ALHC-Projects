@@ -1,5 +1,10 @@
 "use client";
 
+import { patchedAction, useScreenPatches } from "@/lib/patched-writes";
+import { recordTaskEdits } from "@/components/task/task-edits";
+import { MY_TASKS_PATCHES } from "@alhc/core/patched-writes";
+import { userTopic } from "@alhc/core/live-patch";
+import { useShellMemberId } from "@/components/shell/shell-context";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useOptimistic, useState, type DragEvent, type ReactNode } from "react";
@@ -179,6 +184,9 @@ export function MyTasksView({
   profiles?: Profile[];
 }) {
   const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted, loadedAt);
+  // Nov 12 notes (batch 40, item 1): My tasks shows these saves by itself, so they skip the refresh.
+  const patchesMemberId = useShellMemberId();
+  useScreenPatches(MY_TASKS_PATCHES, patchesMemberId ? userTopic(patchesMemberId) : null);
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const openTask = useOpenTask();
@@ -248,14 +256,26 @@ export function MyTasksView({
     // A blocked task has a lock instead of a checkbox; never try (and undo) completing it.
     if (next && blockedCount(task) > 0) return;
     run(
-      trackCompletion(task.id, next, () => setTaskCompleted(task.id, next)),
-      () => setToggled({ id: task.id, completed: next }),
+      trackCompletion(
+        task.id,
+        next,
+        patchedAction("complete", (screenOnly) => setTaskCompleted(task.id, next, screenOnly), {
+          refresh: Boolean(task.rootTaskId || task.recurring),
+        }),
+      ),
+      () => {
+        setToggled({ id: task.id, completed: next });
+        recordTaskEdits([{ type: "complete", taskId: task.id, completed: next }]);
+      },
     );
   };
   const rename = (task: MyTask, title: string) =>
     run(
-      () => updateTask(task.id, { title }),
-      () => setTitle({ id: task.id, title }),
+      patchedAction("title", (screenOnly) => updateTask(task.id, { title }, screenOnly)),
+      () => {
+        setTitle({ id: task.id, title });
+        recordTaskEdits([{ type: "title", taskId: task.id, title }]);
+      },
     );
   // Subtasks shown under rows: edits show at once and are kept until fresh data arrives.
   const showMoves = (moves: { taskId: string; startOn: string | null; dueOn: string | null }[], before: Map<string, RowPatch | undefined>) => {

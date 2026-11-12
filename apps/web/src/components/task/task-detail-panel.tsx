@@ -1,5 +1,6 @@
 "use client";
 
+import { patchedAction } from "@/lib/patched-writes";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useMemo, useOptimistic, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
@@ -134,7 +135,9 @@ export function TaskDetailPanel({
 
   function assign(profileId: string | null) {
     run(
-      () => updateTask(task.id, { assigneeId: profileId }),
+      patchedAction("assign", (screenOnly) => updateTask(task.id, { assigneeId: profileId }, screenOnly), {
+        refresh: task.isSubtask,
+      }),
       () => {
         setOptimisticAssignee(profileId);
         // Nov 4 notes, batch 28 (M4): every other screen showing the task (the List beside the pane) too.
@@ -274,7 +277,13 @@ export function TaskDetailPanel({
             aria-pressed={completed}
             onClick={() =>
               run(
-                trackCompletion(task.id, !completed, () => setTaskCompleted(task.id, !completed)),
+                trackCompletion(
+                  task.id,
+                  !completed,
+                  patchedAction("complete", (screenOnly) => setTaskCompleted(task.id, !completed, screenOnly), {
+                    refresh: task.isSubtask || Boolean(task.recurrence),
+                  }),
+                ),
                 () => {
                   setOptimisticCompleted(completed ? null : new Date().toISOString());
                   recordTaskEdits([{ type: "complete", taskId: task.id, completed: !completed }]);
@@ -510,7 +519,7 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
     }
     if (!next || next === task.title) return;
     run(
-      () => updateTask(task.id, { title: next }),
+      patchedAction("title", (screenOnly) => updateTask(task.id, { title: next }, screenOnly), { refresh: task.isSubtask }),
       () => {
         setOptimisticTitle(next);
         recordTaskEdits([{ type: "title", taskId: task.id, title: next }]);

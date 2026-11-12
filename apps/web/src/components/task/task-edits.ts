@@ -9,6 +9,7 @@ import {
   onLocalMutationEnd,
   subscribeMutationFailures,
   tokenTaskDropped,
+  writeWithoutRefresh,
 } from "@/lib/optimistic-session";
 import { getQueryClient } from "@alhc/core/query/browser-client";
 import { queryKeys } from "@alhc/core/query/keys";
@@ -18,7 +19,12 @@ import { useCacheEntry } from "@/lib/query/use-cache-entry";
 // Nov 4 notes, batch 28 (M4): the browser side of packages/core/src/query/task-edits.ts — optimistic edits every
 // screen showing the task applies at once, rolled back the moment their write fails.
 
-const status: EditStatus = { failed: mutationFailed, dropped: tokenTaskDropped, endedAt: mutationEndedAt };
+const status: EditStatus = {
+  failed: mutationFailed,
+  dropped: tokenTaskDropped,
+  endedAt: mutationEndedAt,
+  held: writeWithoutRefresh,
+};
 let pruneTimer: number | undefined;
 
 function schedulePrune() {
