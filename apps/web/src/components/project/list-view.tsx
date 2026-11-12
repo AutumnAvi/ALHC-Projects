@@ -22,7 +22,8 @@ import { BulkBar, useBulkEdit, type BulkContext } from "@/components/bulk/bulk-b
 import { useTaskSelection, type TaskSelection } from "@/components/bulk/use-task-selection";
 import { MenuItem, Popover } from "@/components/popover";
 import type { TaskKind } from "@alhc/core/task-kinds";
-import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
+import { ShowMoreRows, useGroupPages } from "@/components/show-more";
+import { usePagedGroups } from "./paged-groups";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { EditFieldDialog, NewFieldDialog } from "@/components/project/field-dialog";
 import { FieldLockIcon, LockedFieldValue } from "@/components/project/field-lock";
@@ -173,12 +174,12 @@ function sortKeyFor(column: ColumnKey | "task", fieldsById: Map<string, FieldDef
 export function ListView({
   projectId,
   sections,
-  tasks,
+  tasks: serverTasks,
   profiles,
   fields,
   config: configProp,
   projectName = null,
-  taskPage = null,
+  taskPage: serverTaskPage = null,
   bulk,
   subtasks = null,
   expandedTaskIds,
@@ -187,6 +188,10 @@ export function ListView({
   collapsedGroups = [],
   sectionTaskCounts = {},
 }: Props) {
+  // Nov 12 notes (batch 40, item 4): "Show more" adds one group's next page to what's drawn.
+  const paged = usePagedGroups(projectId, configProp, serverTasks, serverTaskPage);
+  const tasks = paged.tasks;
+  const taskPage = paged.taskPage;
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
   const openTask = useOpenTask();
@@ -246,7 +251,8 @@ export function ListView({
     [projectId],
   );
   const pages = useGroupPages();
-  const [showMorePage, loadingPage] = usePagedShowMore();
+  const showMorePage = paged.show;
+  const loadingPage = paged.loadingKey;
   const [quickAdd, setQuickAdd] = useState<{ groupKey: string; nonce: number } | null>(null);
   const [draggingTask, setDraggingTask] = useState<string | null>(null);
   const [taskDrop, setTaskDrop] = useState<TaskDrop | null>(null);

@@ -100,6 +100,27 @@ export const listProjectTaskPage = read(
   },
 );
 
+// Nov 12 notes (batch 40, item 4): one group's next page for List / Board's "Show more" — the cards after
+// the first `after` of group `key`, in the page's own order and with its own counts. Every other group
+// comes back with one card (page size 1), which this leaves out. Null on a database without
+// project_task_card_page (the page then holds every card already).
+export async function listProjectTaskGroupNext(
+  ctx: ApiContext, projectId: string,
+  filters: ViewFilters,
+  timeZone: string,
+  groupBy: string,
+  sorts: ViewSort[],
+  key: string,
+  after: number,
+  pageSize: number,
+): Promise<ProjectTaskGroupPage | null> {
+  const pages = await listProjectTaskPage(ctx, projectId, filters, timeZone, groupBy, sorts, 1, { [key]: after + pageSize });
+  if (!pages) return null;
+  const group = pages.find((page) => page.key === key);
+  if (!group) return { key, total: 0, nextId: null, nextSortOrder: null, tasks: [] };
+  return { ...group, tasks: group.tasks.slice(after) };
+}
+
 // Active tasks per section, including ones the current view hides (delete-section checks).
 // Null when the function is not there yet; the page then counts the tasks it already loaded.
 export const listSectionTaskCounts = read(async (ctx: ApiContext, projectId: string): Promise<Record<string, number> | null> => {

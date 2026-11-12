@@ -3,7 +3,8 @@
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useEffect, useState, type DragEvent } from "react";
 import type { TaskKind } from "@alhc/core/task-kinds";
-import { ShowMoreRows, useGroupPages, usePagedShowMore } from "@/components/show-more";
+import { ShowMoreRows, useGroupPages } from "@/components/show-more";
+import { usePagedGroups } from "./paged-groups";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { SmartPicker } from "@/components/smart-picker";
 import { useViewConfig } from "@/components/project/view-config";
@@ -67,22 +68,27 @@ const DRAG_TYPE = "application/x-alhc-task";
 export function BoardView({
   projectId,
   sections,
-  tasks,
+  tasks: serverTasks,
   profiles,
   fields,
   config: configProp,
   projectName = null,
-  taskPage = null,
+  taskPage: serverTaskPage = null,
   tags,
   sectionTaskCounts = {},
 }: Props) {
+  // Nov 12 notes (batch 40, item 4): "Show more" adds one group's next page to what's drawn.
+  const paged = usePagedGroups(projectId, configProp, serverTasks, serverTaskPage);
+  const tasks = paged.tasks;
+  const taskPage = paged.taskPage;
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const tagsOn = useTagsEnabled();
   const openTaskId = useOpenTaskId();
   const seeds = useProjectTaskSeeds({ profiles, tags, sections, fields, projectName });
   const [optimisticTasks, applyChange, settledCompletions] = useProjectTasks(projectId, tasks);
   const pages = useGroupPages();
-  const [showMorePage, loadingPage] = usePagedShowMore();
+  const showMorePage = paged.show;
+  const loadingPage = paged.loadingKey;
   const viewConfig = useViewConfig();
   const config = viewConfig?.current ?? configProp;
   // Nov 12 notes (batch 40, item 1): this view shows these saves by itself, so they skip the refresh
