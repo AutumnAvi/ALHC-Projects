@@ -2,7 +2,7 @@
 
 import type { Tag } from "@alhc/core/tags";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useId, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type MouseEvent, type PointerEvent } from "react";
 import { Inbox, Keyboard, Route, Spline } from "lucide-react";
 import { displayName } from "@alhc/core/people";
 import { useProjectPermissions } from "@/components/project/project-access";
@@ -27,7 +27,7 @@ import type { Section } from "@alhc/core/api/projects/model";
 import { bareTaskTitle, displayTaskTitle } from "@alhc/core/request-numbers";
 import { TaskNumberBadge } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
-import { removeTaskDependency, setTaskDependency } from "@/lib/actions/dependencies";
+import { loadProjectCriticalPath, removeTaskDependency, setTaskDependency } from "@/lib/actions/dependencies";
 import { OPTION_COLOR_CLASSES, type FieldDef } from "@alhc/core/fields";
 import { groupOf, isIsoDate, type ViewConfig } from "@alhc/core/views";
 import { useOpenTaskId } from "@/components/shell/right-panel";
@@ -52,6 +52,16 @@ import {
   type DragMode,
   type Zoom,
 } from "./timeline-scale";
+import {
+  BAND_ROWS,
+  arrowInView,
+  frameThrottle,
+  layoutSlots,
+  sameBand,
+  viewportBand,
+  visibleSlots,
+  type Band,
+} from "./timeline-layout";
 import { useProjectTasks } from "./use-project-tasks";
 import { groupTasks } from "./view-groups";
 import { PeriodNav, Segmented, TRAY_EMPTY, TRAY_HEADING, VIEW_BODY, VIEW_HINT, ViewLoading, trayClass } from "./view-chrome";
@@ -66,8 +76,9 @@ type Props = {
   // What the task pane's preview shows for a clicked bar.
   projectName?: string | null;
   dependencies?: ProjectDependency[];
-  // Slack per dated task of the whole project (not just this view), from project_critical_path().
-  criticalPath?: CriticalPath;
+  // Slack per dated task of the whole project (not just this view), from project_critical_path(). Null:
+  // not worked out on the server (the switch is off), so the chart asks for it after it paints.
+  criticalPath?: CriticalPath | null;
   tags?: Tag[];
   // The server already loaded this scale. Moving the window asks it for the next one.
   // Without the schedule function, every scheduled task is here and the window stays in the browser.
@@ -101,7 +112,7 @@ export function TimelineView({
   config,
   projectName = null,
   dependencies = [],
-  criticalPath = EMPTY_CRITICAL_PATH,
+  criticalPath: criticalPathProp = null,
   tags = [],
   windowed = false,
   today: todayFromServer = null,
@@ -125,7 +136,9 @@ export function TimelineView({
   const [dropDay, setDropDay] = useState<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [viewport, setViewport] = useState({ top: 0, height: 720 });
+  // Nov 12 (batch 39, item 4): the scrolled band (timeline-layout.ts), not the raw scroll position, so
+  // scrolling re-renders only when the rows to draw change, and at most once per frame.
+  const [viewport, setViewport] = useState<Band>({ top: 0, bottom: BAND_ROWS * ROW_HEIGHT * 4 });
   const [draggedId, setDraggedId] = useState<string | null>(null);
   // Nov 3 notes (batch 19, 148): the bar being dragged, how far, and the keys held — the dependents that
   // would move are drawn where they'd go, and the arrows follow.
@@ -229,7 +242,65 @@ export function TimelineView({
   const anchor = windowed ? anchorFromServer : isIsoDate(requested) ? requested : clientToday;
   const today = windowed ? (todayFromServer ?? anchor) : clientToday;
   const showCritical = searchParams.get("cp") === "1";
-  const profilesById = new Map(profiles.map((p) => [p.id, p]));
+  const profilesById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  // Nov 12 (batch 39, item 4): the critical path the server didn't work out (switch off) is asked for once
+  // the chart has painted, and again after each refresh of the tasks or links (the bars' slack tooltips
+  // and the switch read the same numbers as before).
+  const [loadedCriticalPath, setLoadedCriticalPath] = useState<CriticalPath | null>(null);
+  useEffect(() => {
+    if (criticalPathProp) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void loadProjectCriticalPath(projectId)
+        .then((result) => {
+          if (!cancelled && result.data) setLoadedCriticalPath(result.data);
+        })
+        .catch(() => undefined);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [criticalPathProp, projectId, tasks, dependencies]);
+  const criticalPath = criticalPathProp ?? loadedCriticalPath ?? EMPTY_CRITICAL_PATH;
+
+  // Rows and their positions: once per change of the tasks, the view, or the grouping — never on scroll.
+  const layout = useMemo(() => {
+    const scheduledTasks = optimisticTasks.filter((t) => t.startOn || t.dueOn);
+    const trayTasks = optimisticTasks.filter((t) => !t.startOn && !t.dueOn && !t.completedAt);
+    const taskGroups = groupTasks(scheduledTasks, config, { sections, profilesById, fields, tags }).filter((g) => g.tasks.length > 0);
+    const grouped = groupOf(config) !== "none";
+    return {
+      tray: trayTasks,
+      groups: taskGroups,
+      ...layoutSlots<ProjectTask, (typeof taskGroups)[number]>(taskGroups, grouped, { header: HEADER_HEIGHT, group: GROUP_HEIGHT, row: ROW_HEIGHT }),
+      tasksById: new Map(optimisticTasks.map((t) => [t.id, t] as const)),
+    };
+  }, [optimisticTasks, config, sections, profilesById, fields, tags]);
+
+  // The dependency arrows while nothing is being dragged: once per change of the tasks, links, window, or
+  // critical path — not on scroll (while a bar is dragged they follow it, worked out as it moves).
+  const windowAt = anchor ? visibleWindow(anchor, zoom) : null;
+  const windowStart = windowAt?.start ?? null;
+  const windowDays = windowAt?.days ?? 0;
+  const restingArrows = useMemo(
+    () =>
+      windowStart === null || dragState
+        ? null
+        : buildArrows({
+            dependencies,
+            removed: removedDeps,
+            tasksById: layout.tasksById,
+            rowCenter: layout.rowCenter,
+            placed: (task) => task,
+            start: windowStart,
+            days: windowDays,
+            dayWidth: dayWidthOf(zoom),
+            criticalPath,
+            showCritical,
+          }),
+    [windowStart, windowDays, zoom, dragState, dependencies, removedDeps, layout, criticalPath, showCritical],
+  );
 
   function navigate(next: { d?: string | null; tl?: Zoom; cp?: boolean }) {
     const params = new URLSearchParams(searchParams.toString());
@@ -299,14 +370,22 @@ export function TimelineView({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const update = () => setViewport({ top: el.scrollTop, height: el.clientHeight });
+    const update = () => {
+      const next = viewportBand(el.scrollTop, el.clientHeight, BAND_ROWS * ROW_HEIGHT);
+      setViewport((current) => (sameBand(current, next) ? current : next));
+    };
     update();
-    el.addEventListener("scroll", update, { passive: true });
-    const observer = new ResizeObserver(update);
+    const frame = frameThrottle(update, {
+      request: (callback) => window.requestAnimationFrame(callback),
+      cancel: (handle) => window.cancelAnimationFrame(handle),
+    });
+    el.addEventListener("scroll", frame.schedule, { passive: true });
+    const observer = new ResizeObserver(frame.schedule);
     observer.observe(el);
     return () => {
-      el.removeEventListener("scroll", update);
+      el.removeEventListener("scroll", frame.schedule);
       observer.disconnect();
+      frame.cancel();
     };
   }, [anchor, zoom, today]);
 
@@ -321,36 +400,16 @@ export function TimelineView({
   const todayOffset = daysBetween(start, today);
   const label = windowLabel(start, days);
 
-  const scheduled = optimisticTasks.filter((t) => t.startOn || t.dueOn);
-  const tray = optimisticTasks.filter((t) => !t.startOn && !t.dueOn && !t.completedAt);
-  const groups = groupTasks(scheduled, config, { sections, profilesById, fields, tags }).filter((g) => g.tasks.length > 0);
-  const showGroups = groupOf(config) !== "none";
-
-  // Vertical centre of every row, in content coordinates (below the sticky header). Arrows use
-  // these positions even when the row itself is outside the painted window.
-  const rowCenter = new Map<string, number>();
-  const slots: { key: string; top: number; height: number; group?: (typeof groups)[number]; task?: ProjectTask }[] = [];
-  let contentHeight = HEADER_HEIGHT;
-  for (const group of groups) {
-    if (showGroups) {
-      slots.push({ key: `group-${group.key}`, top: contentHeight, height: GROUP_HEIGHT, group });
-      contentHeight += GROUP_HEIGHT;
-    }
-    for (const task of group.tasks) {
-      rowCenter.set(task.id, contentHeight + ROW_HEIGHT / 2);
-      slots.push({ key: task.id, top: contentHeight, height: ROW_HEIGHT, task });
-      contentHeight += ROW_HEIGHT;
-    }
-  }
+  // Vertical centre of every row, in content coordinates (below the sticky header): `layout` above. Arrows
+  // use these positions even when the row itself is outside the painted window.
+  const { tray, groups, rowCenter, slots, contentHeight, tasksById } = layout;
+  // The band holds the viewport; twelve rows more on each side, as before.
   const viewTop = viewport.top - ROW_HEIGHT * 12;
-  const viewBottom = viewport.top + viewport.height + ROW_HEIGHT * 12;
-  const shownSlots = slots.filter(
-    (slot) =>
-      slot.task?.id === draggedId ||
-      slot.task?.id === openTaskId ||
-      (slot.top + slot.height >= viewTop && slot.top <= viewBottom),
-  );
-  const tasksById = new Map(optimisticTasks.map((t) => [t.id, t] as const));
+  const viewBottom = viewport.bottom + ROW_HEIGHT * 12;
+  const pinned = new Set<string>();
+  if (draggedId) pinned.add(draggedId);
+  if (openTaskId) pinned.add(openTaskId);
+  const shownSlots = visibleSlots(slots, viewTop, viewBottom, pinned);
   // While a bar is dragged: where it would go, and where its dependents would go with the keys held.
   const dragged = dragState ? tasksById.get(dragState.taskId) : undefined;
   const dragDates = dragged && dragState && dragState.delta !== 0 ? draggedDates(dragged, dragState.mode, dragState.delta) : null;
@@ -384,51 +443,11 @@ export function TimelineView({
     const preview = previews.get(task.id);
     return preview ? { ...task, ...preview } : task;
   };
-  const arrows = dependencies.flatMap((dep) => {
-    if (removedDeps.has(dep.id)) return [];
-    const predTask = tasksById.get(dep.predecessorId);
-    const succTask = tasksById.get(dep.successorId);
-    const pred = predTask ? placed(predTask) : undefined;
-    const succ = succTask ? placed(succTask) : undefined;
-    const y1 = rowCenter.get(dep.predecessorId);
-    const y2 = rowCenter.get(dep.successorId);
-    if (!pred || !succ || y1 === undefined || y2 === undefined) return [];
-    const a = spanOf(pred)!;
-    const b = spanOf(succ)!;
-    const predEnd = daysBetween(start, a.end) + 1;
-    const succStart = daysBetween(start, b.start);
-    // Only when both bars are at least partly inside the window.
-    if (predEnd <= 0 || daysBetween(start, a.start) >= days || succStart >= days || daysBetween(start, b.end) < 0) return [];
-    // Finish-to-start leaves the predecessor's end; start-to-start leaves its start (both enter the
-    // successor's start). Red when the successor starts before the link (kind + lag) allows.
-    const fromStart = fromPredecessorStart(dep.kind);
-    const x1 = fromStart
-      ? Math.max(daysBetween(start, a.start), 0) * dayWidth
-      : Math.min(predEnd, days) * dayWidth;
-    // *_to_finish links enter the successor's end (from the right).
-    const toEnd = toSuccessorFinish(dep.kind);
-    const x2 = toEnd ? Math.min(daysBetween(start, b.end) + 1, days) * dayWidth : Math.max(succStart, 0) * dayWidth;
-    const pad = 8;
-    const out = fromStart ? x1 - pad : x1 + pad;
-    const path = toEnd
-      ? `M${x1},${y1} H${Math.max(out, x2 + pad)} V${y2} H${x2}`
-      : fromStart
-      ? `M${x1},${y1} H${Math.min(out, x2 - pad)} V${y2} H${x2}`
-      : x2 - x1 >= 2 * pad
-        ? `M${x1},${y1} H${out} V${y2} H${x2}`
-        : `M${x1},${y1} H${out} V${y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 2)} H${x2 - pad} V${y2} H${x2}`;
-    const onPath = Boolean(
-      criticalPath.tasks[dep.predecessorId]?.critical && criticalPath.tasks[dep.successorId]?.critical,
-    );
-    const conflict = dependencyConflict(pred, succ, dep.kind, dep.lagDays);
-    // Where the × sits: on the line's vertical stretch, halfway between the rows.
-    const handleX = toEnd ? Math.max(out, x2 + pad) : fromStart ? Math.min(out, x2 - pad) : out;
-    const handleY = !toEnd && !fromStart && x2 - x1 < 2 * pad ? y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 4) : (y1 + y2) / 2;
-    const label = `“${bareTaskTitle(succ.title, succ.requestLabel)}” waits on “${bareTaskTitle(pred.title, pred.requestLabel)}”`;
-    return [
-      { id: dep.id, path, conflict, tone: showCritical ? (onPath ? "path" : "dim") : "normal", handle: { x: handleX, y: handleY }, label } as const,
-    ];
-  });
+  const builtArrows =
+    restingArrows ??
+    buildArrows({ dependencies, removed: removedDeps, tasksById, rowCenter, placed, start, days, dayWidth, criticalPath, showCritical });
+  // Nov 12 (batch 39, item 4): only the lines on (or passing through) the drawn band; the selected one stays.
+  const arrows = builtArrows.filter((arrow) => arrow.id === selectedDep || arrowInView(arrow.y1, arrow.y2, viewTop, viewBottom));
 
   function dayAt(clientX: number, clientY: number) {
     const box = scrollRef.current?.getBoundingClientRect();
@@ -892,7 +911,74 @@ type Arrow = {
   tone: "normal" | "path" | "dim";
   handle: { x: number; y: number };
   label: string;
+  // The rows it joins (content coordinates), to keep only the lines on screen.
+  y1: number;
+  y2: number;
 };
+
+// The dependency lines over the bars, in content coordinates (Nov 12, batch 39: a function of its own so
+// the chart works them out once per change, not on every scroll).
+type ArrowInput = {
+  dependencies: readonly ProjectDependency[];
+  removed: ReadonlySet<string>;
+  tasksById: ReadonlyMap<string, ProjectTask>;
+  rowCenter: ReadonlyMap<string, number>;
+  placed: (task: ProjectTask) => ProjectTask;
+  start: string;
+  days: number;
+  dayWidth: number;
+  criticalPath: CriticalPath;
+  showCritical: boolean;
+};
+
+function buildArrows(input: ArrowInput): Arrow[] {
+  const { removed, tasksById, rowCenter, placed, start, days, dayWidth, criticalPath, showCritical } = input;
+  return input.dependencies.flatMap((dep) => {
+    if (removed.has(dep.id)) return [];
+    const predTask = tasksById.get(dep.predecessorId);
+    const succTask = tasksById.get(dep.successorId);
+    const pred = predTask ? placed(predTask) : undefined;
+    const succ = succTask ? placed(succTask) : undefined;
+    const y1 = rowCenter.get(dep.predecessorId);
+    const y2 = rowCenter.get(dep.successorId);
+    if (!pred || !succ || y1 === undefined || y2 === undefined) return [];
+    const a = spanOf(pred)!;
+    const b = spanOf(succ)!;
+    const predEnd = daysBetween(start, a.end) + 1;
+    const succStart = daysBetween(start, b.start);
+    // Only when both bars are at least partly inside the window.
+    if (predEnd <= 0 || daysBetween(start, a.start) >= days || succStart >= days || daysBetween(start, b.end) < 0) return [];
+    // Finish-to-start leaves the predecessor's end; start-to-start leaves its start (both enter the
+    // successor's start). Red when the successor starts before the link (kind + lag) allows.
+    const fromStart = fromPredecessorStart(dep.kind);
+    const x1 = fromStart
+      ? Math.max(daysBetween(start, a.start), 0) * dayWidth
+      : Math.min(predEnd, days) * dayWidth;
+    // *_to_finish links enter the successor's end (from the right).
+    const toEnd = toSuccessorFinish(dep.kind);
+    const x2 = toEnd ? Math.min(daysBetween(start, b.end) + 1, days) * dayWidth : Math.max(succStart, 0) * dayWidth;
+    const pad = 8;
+    const out = fromStart ? x1 - pad : x1 + pad;
+    const path = toEnd
+      ? `M${x1},${y1} H${Math.max(out, x2 + pad)} V${y2} H${x2}`
+      : fromStart
+      ? `M${x1},${y1} H${Math.min(out, x2 - pad)} V${y2} H${x2}`
+      : x2 - x1 >= 2 * pad
+        ? `M${x1},${y1} H${out} V${y2} H${x2}`
+        : `M${x1},${y1} H${out} V${y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 2)} H${x2 - pad} V${y2} H${x2}`;
+    const onPath = Boolean(
+      criticalPath.tasks[dep.predecessorId]?.critical && criticalPath.tasks[dep.successorId]?.critical,
+    );
+    const conflict = dependencyConflict(pred, succ, dep.kind, dep.lagDays);
+    // Where the × sits: on the line's vertical stretch, halfway between the rows.
+    const handleX = toEnd ? Math.max(out, x2 + pad) : fromStart ? Math.min(out, x2 - pad) : out;
+    const handleY = !toEnd && !fromStart && x2 - x1 < 2 * pad ? y1 + (y2 > y1 ? 1 : -1) * (ROW_HEIGHT / 4) : (y1 + y2) / 2;
+    const label = `“${bareTaskTitle(succ.title, succ.requestLabel)}” waits on “${bareTaskTitle(pred.title, pred.requestLabel)}”`;
+    return [
+      { id: dep.id, path, conflict, tone: showCritical ? (onPath ? "path" : "dim") : "normal", handle: { x: handleX, y: handleY }, label, y1, y2 } as const,
+    ];
+  });
+}
 
 function DependencyArrows({
   arrows,
@@ -1335,7 +1421,7 @@ function TimelineBar({
         >
           <span
             className={`block rotate-45 rounded-[2px] ${fill} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${outline} ${
-              drag?.moved ? "shadow-md" : ""
+              drag?.moved ? "shadow-lg shadow-zinc-900/20" : ""
             }`}
             style={{ width: size - 2, height: size - 2 }}
           />
@@ -1382,7 +1468,7 @@ function TimelineBar({
         className={`group absolute top-1.5 flex h-6 touch-pan-y items-center rounded-md text-xs select-none ${tone} ${
           clippedStart ? "rounded-l-none" : ""
         } ${clippedEnd ? "rounded-r-none" : ""} ${open ? "ring-2 ring-accent-200 ring-offset-1" : ""} ${outline} ${faded} ${
-          drag?.moved ? "z-10 cursor-grabbing shadow-md" : canEdit ? "cursor-grab" : "cursor-pointer"
+          drag?.moved ? "z-10 cursor-grabbing shadow-lg shadow-zinc-900/20" : canEdit ? "cursor-grab" : "cursor-pointer"
         }`}
         style={{ left, width }}
       >
