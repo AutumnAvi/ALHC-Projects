@@ -11,6 +11,9 @@ import { actionError, type ActionResult } from "@alhc/core/api/core/result";
 import { drainOutbox } from "@/lib/email";
 import { drainIntegrationOutbox } from "@/lib/integrations";
 import { actionContext } from "./context";
+import { afterWritePlan, type RunOptions } from "./after-write";
+
+export { SCREEN_ONLY, type RunOptions } from "./after-write";
 
 // Any write can make rules queue email, Slack messages, or webhooks, so deliver the outboxes once the
 // response is sent (a small integration batch keeps rule fires snappy between cron runs).
@@ -31,22 +34,11 @@ export function deliverQueuedEmail(before?: () => Promise<unknown>) {
   });
 }
 
-export type RunOptions = {
-  // false: answer without re-rendering the page (Nov 3 notes, batch 19, 141: the caller refreshes in the
-  // background; used where the answer is what the person is waiting on).
-  refresh?: boolean;
-  // false: nothing was written, so there's nothing to deliver.
-  deliver?: boolean;
-  // Work the queued emails wait on (see deliverQueuedEmail).
-  beforeEmail?: () => Promise<unknown>;
-  // Paths whose cached pages are out of date after the write (revalidatePath), before the refresh.
-  revalidate?: Array<[path: string, type?: "layout" | "page"]>;
-};
-
 function afterWrite(options: RunOptions) {
-  if (options.deliver !== false) deliverQueuedEmail(options.beforeEmail);
-  for (const [path, type] of options.revalidate ?? []) revalidatePath(path, type);
-  if (options.refresh !== false) refresh();
+  const plan = afterWritePlan(options);
+  if (plan.deliver) deliverQueuedEmail(options.beforeEmail);
+  for (const [path, type] of plan.revalidate) revalidatePath(path, type);
+  if (plan.refresh) refresh();
 }
 
 // A write: the layer call's ApiError becomes { error, code }; anything else (a bug) still throws. On

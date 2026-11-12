@@ -5,7 +5,7 @@ import * as commentsApi from "@alhc/core/api/comments/mutations";
 import * as commentsQueries from "@alhc/core/api/comments/queries";
 import type { ActionResult } from "@alhc/core/api/core/result";
 import type { SubmitterConversation, TaskComment } from "@alhc/core/api/task-pane/model";
-import { run, runWith } from "@/lib/server/action";
+import { run, runWith, SCREEN_ONLY } from "@/lib/server/action";
 import { actionContext } from "@/lib/server/context";
 
 // ---------------------------------------------------------------------------------------------
@@ -43,12 +43,16 @@ export async function setReplyThreadClosed(taskId: string, closed: boolean): Pro
   return run((ctx) => commentsApi.setReplyThreadClosed(ctx, taskId, closed));
 }
 
+// Nov 12 notes (batch 39, item 1): screen-only (src/lib/server/after-write.ts). Your own comment's text
+// shows only in the task pane (the Inbox lists other people's comments), and the pane keeps the edit on
+// screen until its own fresh copy arrives; so the save keeps the router's recently visited pages.
 export async function editComment(commentId: string, body: string): Promise<ActionResult> {
-  return run((ctx) => commentsApi.editComment(ctx, commentId, body));
+  return run((ctx) => commentsApi.editComment(ctx, commentId, body), SCREEN_ONLY);
 }
 
+// Batch 39 (item 1): screen-only — reactions show only in the task pane (live-patched, refetched).
 export async function toggleReaction(commentId: string, emoji: string): Promise<ActionResult> {
-  return run((ctx) => commentsApi.toggleReaction(ctx, commentId, emoji));
+  return run((ctx) => commentsApi.toggleReaction(ctx, commentId, emoji), SCREEN_ONLY);
 }
 
 export async function deleteComment(commentId: string): Promise<ActionResult> {
@@ -66,8 +70,10 @@ export async function setCommentPinned(commentId: string, pinned: boolean): Prom
 // Followers
 // ---------------------------------------------------------------------------------------------
 
+// Batch 39 (item 1): screen-only — followers show only in the task pane's footer, which keeps the change
+// on screen until its own fresh copy arrives.
 export async function setFollowing(taskId: string, profileId: string, following: boolean): Promise<ActionResult> {
-  return run((ctx) => commentsApi.setFollowing(ctx, taskId, profileId, following));
+  return run((ctx) => commentsApi.setFollowing(ctx, taskId, profileId, following), SCREEN_ONLY);
 }
 
 // ---------------------------------------------------------------------------------------------

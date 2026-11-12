@@ -103,6 +103,12 @@
 /* Buttons and controls shared by chrome, toolbars, and page headers. Zinc neutrals, one accent (blue). */
 @utility btn-primary {
   @apply inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md bg-accent-500 px-2.5 text-sm font-medium text-white hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50;
+  /* Batch 39: a very slight press (the color change on hover was already there). */
+  transition-property: color, background-color, border-color, opacity, transform;
+  transition-duration: 120ms;
+  &:active:not(:disabled) {
+    transform: scale(0.98);
+  }
 }
 
 @utility btn-secondary {
@@ -168,6 +174,13 @@
   }
 }
 
+/* Batch 39: the page eases to its new width when the side pane (or the Customize panel) opens and
+   closes, instead of jumping. (The pane itself isn't animated: it's redrawn when its preview gives way to
+   the full task, and a slide would play twice.) */
+.app-main {
+  transition: padding-right 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
 /* The bulk action bar (Oct 27 notes, batch 5) sits above the task pane. With the side pane open on a wide
    screen it centers on the part of the page left of the pane (and never runs under it); on narrower
    screens, where the pane covers the page, it rises above the pane's comment box. */
@@ -191,6 +204,142 @@
 @media (min-width: 64rem) {
   .app-main:has(#customize-panel) {
     padding-right: 20rem;
+  }
+}
+
+/* Batch 39 (speed and feel): short motion for things that used to pop in and out. Every one is under
+   200 ms, uses opacity and transform only, never waits for input or focus, and is switched off by the
+   reduced-motion rule below. Exits of overlays that unmount use an inert copy (src/lib/exit-ghost.ts). */
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes ui-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ui-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+@keyframes ui-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes ui-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes ui-toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes ui-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes ui-drawer-out {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+.ui-anim-fade-in {
+  animation: ui-fade-in 150ms ease-out;
+}
+
+.ui-anim-fade-out {
+  animation: ui-fade-out 140ms ease-in forwards;
+}
+
+.ui-anim-rise-in {
+  animation: ui-rise-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* A popover's panel: scaled from the side it opened toward (data-popover-side). */
+.ui-anim-pop-in {
+  animation: ui-pop-in 130ms cubic-bezier(0.2, 0, 0, 1);
+  transform-origin: top left;
+}
+
+.ui-anim-pop-in[data-popover-side="top"] {
+  transform-origin: bottom left;
+}
+
+.ui-anim-toast-in {
+  animation: ui-toast-in 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ui-anim-toast-out {
+  animation: ui-toast-out 140ms ease-in forwards;
+}
+
+.ui-anim-drawer-in {
+  animation: ui-drawer-in 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ui-anim-drawer-out {
+  animation: ui-fade-out 160ms ease-in forwards;
+}
+
+.ui-anim-drawer-out > aside {
+  animation: ui-drawer-out 160ms ease-in forwards;
+}
+
+/* A row someone just added (the My tasks checklist): only that row fades in. */
+.ui-anim-row-in {
+  animation: ui-fade-in 180ms ease-out;
+}
+
+/* A task row (List) or a timeline bar while it's being dragged: a soft lift, gone on drop. Only a shadow:
+   no z-index or position, so the List's pinned Name column (list-grid.ts) stacks as before. */
+.ui-dragging {
+  box-shadow: 0 6px 16px -4px rgb(24 24 27 / 0.18), 0 2px 4px -2px rgb(24 24 27 / 0.12);
+}
+
+/* Reduced motion (batch 39): nothing above moves for people who asked their system for less motion —
+   the panels, rows, and buttons simply appear, leave, and resize at once. */
+@media (prefers-reduced-motion: reduce) {
+  .app-main,
+  [data-exit-ghost],
+  .ui-anim-fade-in,
+  .ui-anim-fade-out,
+  .ui-anim-rise-in,
+  .ui-anim-pop-in,
+  .ui-anim-toast-in,
+  .ui-anim-toast-out,
+  .ui-anim-drawer-in,
+  .ui-anim-drawer-out,
+  .ui-anim-drawer-out > aside,
+  .ui-anim-row-in {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .btn-primary {
+    transition: none !important;
+  }
+
+  .btn-primary:active {
+    transform: none !important;
   }
 }
 

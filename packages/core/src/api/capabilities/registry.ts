@@ -81,6 +81,7 @@ export const TYPED_API_EXCLUSIONS: Record<string, string> = {
   "members/mutations.ts:transferProjectOwnership": "Hands the project to someone else and demotes you; too consequential for an AI change.",
   "members/mutations.ts:loadTaskRoles": "A read (get_task covers it), not a change.",
   "members/mutations.ts:setTaskRoleLink": "Role links on a task; left out this round (assign_task covers the assignee).",
+  "my-tasks/mutations.ts:fileMyTaskPlacements": "Background filing of newly assigned tasks after the My tasks page loads; not a person’s request.",
   "my-tasks/mutations.ts:placeMyTaskSection": "Drag order of My Tasks sections; left out.",
   "my-tasks/mutations.ts:quickAddTask": "Private tasks have no project (the AI works in pilot projects); create_task covers it.",
   "my-tasks/mutations.ts:setMyTasksChecked": "A display setting.",

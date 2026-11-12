@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { CircleCheck } from "lucide-react";
 import { bulkContextFrom } from "@/components/bulk/bulk-context";
 import { MyTasksView } from "@/components/my-tasks/my-tasks-view";
@@ -9,7 +10,9 @@ import { SyncCalendarButton } from "@/components/calendar/sync-calendar-dialog";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
 import { MyTaskRulesButton } from "@/components/my-tasks/my-task-rules";
-import { listMyTaskLayout, listSubtaskTrees } from "@/lib/data";
+import { listChecklistSections, listMyTaskLayout, listSubtaskTrees } from "@/lib/data";
+import { renderContext } from "@/lib/server/context";
+import { fileMyTaskPlacements } from "@alhc/core/api/my-tasks/mutations";
 import { type MyTask } from "@alhc/core/api/my-tasks/model";
 import { loadAppShell, loadMyTasksScreen } from "@/lib/screen-loaders";
 import { myTaskRuleContextFrom } from "@alhc/core/api/screens/model";
@@ -30,12 +33,17 @@ export default async function MyTasksPage({ searchParams }: PageProps<"/my-tasks
 
   if (layout === "checklist") {
     const timeZone = await getViewerTimeZone();
-    // Nov 1 notes (batch 9b, item 64): the checklist. The sections call still runs (it seeds the
-    // person's sections and keeps placements current for the classic view and My Tasks rules), side by
-    // side with the rest since the checklist doesn't order by it.
+    // Nov 1 notes (batch 9b, item 64): the checklist. It doesn't order by the person's sections, so
+    // (Nov 12 batch 39, 2b) it reads them as stored and the filing that keeps placements current for the
+    // classic view (my_tasks_layout's) runs after the page is sent; only someone with no sections yet
+    // waits for them to be seeded.
     // Nov 4 notes (batch 22, M1): everything else in one call (my_tasks_screen), with the app shell the
     // layout already read.
-    const [{ sections }, screen, shell] = await Promise.all([listMyTaskLayout(), loadMyTasksScreen(), loadAppShell()]);
+    const [{ sections, filed }, screen, shell] = await Promise.all([listChecklistSections(), loadMyTasksScreen(), loadAppShell()]);
+    if (!filed) {
+      const ctx = await renderContext();
+      after(() => fileMyTaskPlacements(ctx).catch((error) => console.error("My tasks filing failed", error)));
+    }
     const { open, completed, awaiting, rules, loadedAt } = screen;
     const { myTasksChecked: checked, workWeek, projects, myRoles: roles, profiles } = shell;
     const ruleCtx = myTaskRuleContextFrom(sections, shell, screen);

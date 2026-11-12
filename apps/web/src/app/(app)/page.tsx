@@ -7,7 +7,7 @@ import { TodayCard } from "@/components/home/today-card";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { checklistGroupOf, summaryLine } from "@alhc/core/checklist";
+import { checklistGroupOf, summaryLine, todayCardSplit } from "@alhc/core/checklist";
 import { loadAppShell, loadHomeScreen } from "@/lib/screen-loaders";
 import { firstName, greetingFor, hourIn, longDateIn } from "@alhc/core/home";
 import { permissionsFor } from "@alhc/core/permissions";
@@ -40,6 +40,8 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const summary = summaryLine(counts);
   const laterCount = open.length - counts.overdue - counts.today;
   const undated = open.filter((t) => t.datePrompt && t.canEdit).length;
+  // Batch 39 (item 3): the Today card gets only what it shows (counts above use the whole list).
+  const todayCard = todayCardSplit(open, today);
 
   const unreadItems = inbox.filter((item) => !item.readAt);
   // Every unread mention (the card counts them all and lists the first few).
@@ -78,7 +80,8 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
             <div className="grid gap-4 @4xl:grid-cols-2">
               <TodayCard
                 loadedAt={loadedAt}
-                open={open}
+                open={todayCard.shown}
+                hiddenIds={todayCard.hiddenIds}
                 completed={completed}
                 checked={checked}
                 workWeek={workWeek}

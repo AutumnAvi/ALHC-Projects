@@ -13,7 +13,11 @@ export type ToastAction = { label: string; onClick: () => void };
 // text when given (links); `message` stays the accessible text.
 export type ToastVariant = "default" | "quiet" | "warning";
 export type RichToast = { message: string; body?: ReactNode; variant?: ToastVariant; action?: ToastAction; durationMs?: number };
-type Toast = RichToast & { id: number };
+// `leaving`: fading out (batch 39); gone TOAST_EXIT_MS later.
+type Toast = RichToast & { id: number; leaving?: boolean };
+
+// Batch 39: how long a dismissed toast takes to fade out before it leaves the page.
+export const TOAST_EXIT_MS = 140;
 type Notify = (message: string, action?: ToastAction) => void;
 
 const ToastContext = createContext<Notify>(() => {});
@@ -40,14 +44,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dock, setDock] = useState<HTMLElement | null>(null);
 
+  // Dismissing (its timer, ✕, or its action) fades it out, then removes it. While it fades it's hidden from
+  // screen readers and can't be clicked, so it's as gone as before for everything but the eye.
   const dismiss = useCallback((id: number) => {
-    setToasts((current) => current.filter((t) => t.id !== id));
+    setToasts((current) => current.map((t) => (t.id === id && !t.leaving ? { ...t, leaving: true } : t)));
+    window.setTimeout(() => setToasts((current) => current.filter((t) => t.id !== id)), TOAST_EXIT_MS);
   }, []);
 
   const show = useCallback(
     (toast: RichToast) => {
       const id = nextId++;
-      setToasts((current) => [...current.slice(-3), { ...toast, id }]);
+      setToasts((current) => [...current.filter((t) => !t.leaving).slice(-3), { ...toast, id }]);
       // Toasts with an action stay a little longer, so there is time to use it.
       window.setTimeout(() => dismiss(id), toast.durationMs ?? (toast.action ? 12000 : 6000));
     },
@@ -70,7 +77,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             role={toast.variant === "quiet" ? "status" : "alert"}
             data-toast-variant={toast.variant ?? "default"}
             aria-label={toast.body ? toast.message : undefined}
-            className={TOAST_CLASS[toast.variant ?? "default"]}
+            aria-hidden={toast.leaving ? true : undefined}
+            inert={toast.leaving ? true : undefined}
+            className={`${TOAST_CLASS[toast.variant ?? "default"]} ${toast.leaving ? "ui-anim-toast-out" : "ui-anim-toast-in"}`}
           >
             <div className="min-w-0 flex-1">{toast.body ?? <p>{toast.message}</p>}</div>
             {toast.action ? (

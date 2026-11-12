@@ -7,6 +7,8 @@ import type { ActionResult } from "@alhc/core/api/core/result";
 import type { DateChangeOutcome, TaskBlocker } from "@alhc/core/api/dependencies/model";
 import * as dependenciesApi from "@alhc/core/api/dependencies/mutations";
 import * as dependenciesQueries from "@alhc/core/api/dependencies/queries";
+import * as tasksQueries from "@alhc/core/api/tasks/queries";
+import type { CriticalPath } from "@alhc/core/critical-path";
 import type {
   DependencyKind,
   DependencyShiftMode,
@@ -106,4 +108,10 @@ export async function setDependencyShiftMode(projectId: string, mode: Dependency
 // their numbers and project names, plus how many more they can't open.
 export async function loadTaskBlockers(taskId: string): Promise<{ error?: string; data?: { total: number; blockers: TaskBlocker[] } }> {
   return readAction((ctx) => dependenciesQueries.loadTaskBlockers(ctx, taskId));
+}
+
+// Nov 12 (batch 39, item 4): the Timeline's critical path and slack, asked for after the chart paints
+// (the server only works it out up front while the Critical path switch is on). The person's own context.
+export async function loadProjectCriticalPath(projectId: string): Promise<ActionResult & { data?: CriticalPath }> {
+  return readAction((ctx) => tasksQueries.projectCriticalPath(ctx, projectId));
 }
