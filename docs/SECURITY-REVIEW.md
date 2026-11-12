@@ -167,8 +167,8 @@ These were examined and did not show a cross-tenant leak.
 ## Residual notes (not filed as their own findings)
 
 - Public forms are unauthenticated task creation by design, with a per-address rate limit inside `submit_form` and no CAPTCHA. Rotating the address avoids the limit.
-- `requestOrigin` (`src/lib/origin.ts` lines 8–12) uses `X-Forwarded-Host` when `NEXT_PUBLIC_APP_URL` is unset. Set that variable in every deployed environment.
-- `next.config.ts` adds no `Content-Security-Policy`, `X-Frame-Options`, or `X-Content-Type-Options`. Supabase session cookies default to `SameSite=Lax`, which keeps a cross-site iframe from sending the session.
+- `requestOrigin` (`src/lib/origin.ts` lines 8–12) uses `X-Forwarded-Host` when `NEXT_PUBLIC_APP_URL` is unset. Set that variable in every deployed environment. **Nov 12 (batch 41):** fixed in code — the Host and Origin headers are used only when they are one of this app's own addresses (`apps/web/src/lib/app-origin.ts`).
+- `next.config.ts` adds no `Content-Security-Policy`, `X-Frame-Options`, or `X-Content-Type-Options`. Supabase session cookies default to `SameSite=Lax`, which keeps a cross-site iframe from sending the session. **Nov 12 (batch 41):** `apps/web/security-headers.ts` now sends them (framing and `object-src` / `base-uri` enforced, the rest of the content policy report-only).
 - `storage.buckets` has RLS disabled. The exposed columns are not object bytes.
 
 ## How this was run
