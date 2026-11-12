@@ -5,7 +5,7 @@
 // through the typed API as that person, and logged as runs with Undo in the app (/ai-builder). A
 // destructive change, or one that messages people, is only previewed until the call says confirm: true.
 //
-// Only the bearer token counts — never cookies, so the preview's auto-login session can't use this. Only
+// Only the bearer token counts — never cookies, so a browser session can't use this. Only
 // workspace admins of the Testing data pilot have tokens, and every tool stays inside that workspace. No
 // token, prompt, or tool result is logged.
 //   POST /api/mcp   Authorization: Bearer alhc_pat_…   (JSON-RPC: initialize, tools/list, tools/call)

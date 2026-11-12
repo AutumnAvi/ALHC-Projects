@@ -109,7 +109,7 @@ test("fails closed: without the pepper, the JWT secret, or a long pepper, every 
   }
 });
 
-test("only the Authorization header counts: the route never reads cookies, so the preview auto-login can't use it", () => {
+test("only the Authorization header counts: the route never reads cookies, so a browser session can't use it", () => {
   assert.equal(bearerOf("Bearer x"), null);
   const route = read("src/app/api/mcp/route.ts");
   const auth = read("src/lib/mcp/auth.ts");
@@ -118,10 +118,9 @@ test("only the Authorization header counts: the route never reads cookies, so th
     assert.ok(!/console\.(log|info|warn|error)/.test(src), "nothing is logged");
   }
   assert.ok(route.includes('request.headers.get("authorization")'));
-  // The auto-login is unchanged: Vercel Preview AND ALHC_PREVIEW_AUTOLOGIN=1, never on /api routes.
+  // Security audit 2 (Nov 12, batch 41): no preview auto-login at all (previews sign in like production).
   const proxy = read("src/lib/supabase/proxy.ts");
-  assert.ok(proxy.includes('process.env.VERCEL_ENV !== "preview"') && proxy.includes('process.env.ALHC_PREVIEW_AUTOLOGIN !== "1"'));
-  assert.ok(proxy.includes('!request.nextUrl.pathname.startsWith("/api/")'));
+  assert.ok(!/ALHC_PREVIEW_AUTOLOGIN|previewAutoLogin|signInWithPassword/.test(proxy));
 });
 
 test("tokens are never stored or shown after creation: the database keeps a hash and a prefix only", () => {

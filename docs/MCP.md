@@ -9,7 +9,7 @@ your role in each project allows by hand.
 
 - `POST /api/mcp` — MCP Streamable HTTP, stateless (`@modelcontextprotocol/sdk`, JSON responses).
 - Auth: `Authorization: Bearer alhc_pat_…` (a personal access token). **Only that header counts**: the route
-  never reads cookies, so a browser session (and the preview's auto-login) can't reach it.
+  never reads cookies, so a browser session can't reach it.
 - Only workspace admins of the Testing data pilot can make tokens, and every tool stays inside that workspace.
 
 ## Tokens (Settings → AI & MCP, `/settings/mcp`)

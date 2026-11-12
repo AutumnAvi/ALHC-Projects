@@ -1,6 +1,6 @@
 import "server-only";
 // AI builder round 5 (note 178): who an MCP request is. Only an `Authorization: Bearer alhc_pat_…` header
-// counts — never cookies (so the preview's auto-login session can't reach the endpoint). The token's keyed
+// counts — never cookies (so a browser session can't reach the endpoint). The token's keyed
 // hash goes to the database's one lookup (mcp_token_verify, service role only: it answers the owner's id,
 // workspace, and scopes, enforces revocation, expiry, the pilot, and 120 calls a minute, and nothing else);
 // then the request acts as that person through a 5-minute token minted for them (RLS as them). Fails closed:

@@ -129,6 +129,9 @@ audit record; running it again answers `already_cleaned`.
 
 ## Admin manual test checklist (preview)
 
+Previews have no automatic sign-in (removed in security audit 2, Nov 12): sign in with your own account,
+which must be a workspace admin of the Testing data pilot.
+
 1. As a pilot admin: New project shows **Build with AI**; as anyone else (or before the migration) it
    doesn't, and `/ai-builder` is a 404.
 2. Generate from a short brief; edit a section name, remove a task, Create. The project is private, in the
