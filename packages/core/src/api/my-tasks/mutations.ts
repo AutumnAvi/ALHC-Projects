@@ -18,6 +18,13 @@ import { isIsoDate } from "../../views";
 // My Tasks sections and placements
 // ---------------------------------------------------------------------------------------------
 
+// Nov 12 batch 39 (2b): file newly assigned tasks into Recently assigned (and seed the sections) — what
+// my_tasks_layout() does before it answers. The checklist runs it after its page is sent; it's idempotent
+// (a task already validly placed is left where it is), so running it again changes nothing.
+export async function fileMyTaskPlacements(ctx: ApiContext): Promise<void> {
+  check(await ctx.db.rpc("sync_my_task_placements"));
+}
+
 export async function createMyTaskSection(ctx: ApiContext, name: string): Promise<void> {
   const supabase = ctx.db;
   check(await supabase.rpc("ensure_my_task_sections"));
