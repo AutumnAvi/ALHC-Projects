@@ -7,6 +7,7 @@ import { ShellProvider } from "@/components/shell/shell-context";
 import { TagsEnabledProvider } from "@/components/tags/tags-enabled";
 import { SubtaskPrefsProvider } from "@/components/task/subtask-prefs";
 import { PeopleDirectoryProvider } from "@/components/task/title-text";
+import { QuickSearchDirectoryProvider } from "@/components/shell/quick-search-directory";
 import { KeyboardShortcuts } from "@/components/shortcuts/keyboard-shortcuts";
 import { TimeZoneCookie } from "@/components/shell/time-zone-cookie";
 import { SetupRequired } from "@/components/setup-required";
@@ -32,6 +33,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (shellOrError instanceof Error) throw shellOrError;
   const shell = shellOrError;
   // Nov 4 notes (batch 27, 162): names for "@person" chips in task names.
+  // Nov 12 speed batch 39 (item 5): the search palette matches projects from this list in the browser.
+  const searchProjects = shell.readableProjects.map(({ id, name, archived_at }) => ({ id, name, archived_at }));
   const people = shell.profiles.map((p) => ({ id: p.id, name: p.full_name?.trim() || p.email, email: p.email }));
   const { workspace, projects, starIds: starredIds, unreadCount, isWorkspaceAdmin: admin, avatars, tagsEnabled: tagsOn, folders, subtaskPrefs, goalsEnabled: goalsOn } = shell;
 
@@ -51,6 +54,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             <TagsEnabledProvider enabled={tagsOn}>
               <SubtaskPrefsProvider initial={subtaskPrefs}>
                 <PeopleDirectoryProvider people={people}>
+                <QuickSearchDirectoryProvider projects={searchProjects}>
                 <TimeZoneCookie />
                 <KeyboardShortcuts />
                 <AppShell
@@ -61,6 +65,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 >
                   {children}
                 </AppShell>
+                </QuickSearchDirectoryProvider>
                 </PeopleDirectoryProvider>
               </SubtaskPrefsProvider>
             </TagsEnabledProvider>
