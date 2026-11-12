@@ -68,8 +68,8 @@ test("the people list is loaded once per palette session, not per keystroke", as
     await loadQuickSearchPeople(3_000);
     assert.equal(calls, 1);
     assert.equal(first[0].id, "u1");
-    await loadQuickSearchPeople(1_000 + 5 * 60_000 + 1);
-    assert.equal(calls, 2, "reloaded after a few minutes");
+    await loadQuickSearchPeople(1_000 + 10_000 + 1);
+    assert.equal(calls, 2, "loaded again on a later opening");
   } finally {
     globalThis.fetch = realFetch;
     resetQuickSearchPeople();

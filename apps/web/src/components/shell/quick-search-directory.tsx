@@ -8,7 +8,7 @@ import type { QuickPerson, QuickTask, SearchKind } from "@alhc/core/shell";
 // shell's readable projects (the same list quickSearch reads: every project the person can open, archived
 // ones included), handed down by the app layout. People are the active people list, fetched once from
 // GET /api/quick-search?people=1 when the palette opens (the shell's profiles include people removed from
-// the workspace, which the palette never lists) and kept for a few minutes.
+// the workspace, which the palette never lists) (a re-open within a few seconds reuses it).
 
 const ProjectsContext = createContext<readonly MatchableProject[]>([]);
 
@@ -20,7 +20,9 @@ export function useQuickSearchProjects(): readonly MatchableProject[] {
   return useContext(ProjectsContext);
 }
 
-export const PEOPLE_DIRECTORY_TTL_MS = 5 * 60_000;
+// Batch 39: fresh on each opening of the palette (before, every keystroke read people); only a quick
+// re-open reuses the last load.
+export const PEOPLE_DIRECTORY_TTL_MS = 10_000;
 let people: { at: number; list: Promise<QuickPerson[]> } | null = null;
 
 export function loadQuickSearchPeople(now = Date.now()): Promise<QuickPerson[]> {
