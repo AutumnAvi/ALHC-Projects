@@ -23,7 +23,10 @@ export function TodayCard({
   today,
   timeZone,
   loadedAt,
+  hiddenIds,
 }: {
+  // The person's other open tasks (batch 39, item 3: Home sends only what this card shows).
+  hiddenIds?: string[];
   // When the server's reads started (Nov 4 notes, batch 28: the newest copy of the person's tasks wins).
   loadedAt?: number;
   today: string;
@@ -37,7 +40,7 @@ export function TodayCard({
   // Open tasks due after today or with no date (what My tasks shows beyond this card).
   laterCount: number;
 }) {
-  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted, loadedAt);
+  const { open, completed } = useLiveMyTasks(serverOpen, serverCompleted, loadedAt, hiddenIds);
   const list = useChecklist(open, completed, checked, { today, timeZone });
   return (
     <Widget

@@ -4,6 +4,7 @@ import { TaskReviews } from "@/components/task/task-reviews";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
 import { useCallback, useEffect, useMemo, useOptimistic, useState, useSyncExternalStore, type ReactNode } from "react";
 import { commentEditMsLeft, commentEditWindowOpen } from "@alhc/core/comment-edit";
+import { heldValue, sameIdSet, type Held } from "@alhc/core/held-edit";
 import { clearPinOverrides, setPinOverride, settledPinOverrides, usePinOverrides } from "@/components/task/pinned-comments-store";
 import { FeedbackSubtaskButton } from "@/components/task/feedback-subtask";
 import Link from "next/link";
@@ -763,13 +764,22 @@ function CommentItem({
   const editable = useCommentEditWindow(comment.createdAt, mayEdit);
   const removable = mine && canComment && !comment.deleted && !sending;
 
+  // Batch 39 (item 1): an edit saves without a page refresh; the new text stays until the pane's own copy
+  // of the comment changes (its refetch after the save, or a live message).
+  const [savedBody, setSavedBody] = useState<Held<string> | null>(null);
+  const shownBody = heldValue(comment.body, savedBody);
+
   function save() {
     const body = draft?.trim();
     if (!body) return;
-    if (body === comment.body) return setDraft(null);
+    if (body === shownBody) return setDraft(null);
+    const base = comment.body;
     run(async () => {
       const result = await editComment(comment.id, body);
-      if (!result.error) setDraft(null);
+      if (!result.error) {
+        setSavedBody({ value: body, base });
+        setDraft(null);
+      }
       return result;
     });
   }
@@ -832,7 +842,7 @@ function CommentItem({
             type="button"
             aria-label="Edit comment"
             data-tooltip="Edit"
-            onClick={() => setDraft(comment.body)}
+            onClick={() => setDraft(shownBody)}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
           >
             <Pencil className="size-3.5" />
@@ -971,7 +981,7 @@ function CommentItem({
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
             <MentionText
-              body={comment.body}
+              body={shownBody}
               people={mentioned}
               describe={describe}
               teams={teams}
@@ -1205,7 +1215,10 @@ export function TaskPaneFooter({
   const [focused, setFocused] = useState(false);
   // "Send response to submitter" (form tasks only; unchecked by default and after each send).
   const [toSubmitter, setToSubmitter] = useState(false);
-  const [followerIds, setFollowerIds] = useOptimistic(task.followerIds);
+  // Batch 39 (item 1): following saves without a page refresh; the change stays until the pane's own copy
+  // of the followers changes (useOptimistic covers the moment the save is in flight).
+  const [heldFollowers, setHeldFollowers] = useState<Held<string[]> | null>(null);
+  const [followerIds, setFollowerIds] = useOptimistic(heldValue(task.followerIds, heldFollowers, sameIdSet));
   const me = profiles.find((p) => p.id === memberId);
   const following = followerIds.includes(memberId);
   const followers = followerIds
@@ -1269,9 +1282,15 @@ export function TaskPaneFooter({
   }
 
   function follow(profileId: string, on: boolean) {
+    const next = on ? [...followerIds, profileId] : followerIds.filter((id) => id !== profileId);
+    const base = task.followerIds;
     run(
-      () => setFollowing(task.id, profileId, on),
-      () => setFollowerIds(on ? [...followerIds, profileId] : followerIds.filter((id) => id !== profileId)),
+      async () => {
+        const result = await setFollowing(task.id, profileId, on);
+        if (!result.error) setHeldFollowers({ value: next, base });
+        return result;
+      },
+      () => setFollowerIds(next),
     );
   }
 

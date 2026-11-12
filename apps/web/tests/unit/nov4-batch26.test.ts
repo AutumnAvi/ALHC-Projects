@@ -404,6 +404,6 @@ test("no Postgres Changes subscription is left; every live screen uses a private
   assert.match(live, /"broadcast", \{ event: "\*" \}/);
   assert.ok(!fs.existsSync("src/lib/realtime.ts"));
   for (const file of ["src/components/my-tasks/my-tasks-checklist.tsx", "src/components/my-tasks/my-tasks-view.tsx", "src/components/home/today-card.tsx"]) {
-    assert.match(fs.readFileSync(file, "utf8"), /useLiveMyTasks\(serverOpen, serverCompleted(, loadedAt)?\)/, file);
+    assert.match(fs.readFileSync(file, "utf8"), /useLiveMyTasks\(serverOpen, serverCompleted(, loadedAt)?(, hiddenIds)?\)/, file);
   }
 });

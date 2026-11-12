@@ -5730,6 +5730,14 @@ export type Database = {
         Args: { task_ids: string[] };
         Returns: Json;
       };
+      open_blocker_count_set: {
+        Args: { task_ids: string[] };
+        Returns: { task_id: string; blockers: number }[];
+      };
+      sync_my_task_placements: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
+      };
       dependency_shift_mode: {
         Args: { task_ids: string[] };
         Returns: string;

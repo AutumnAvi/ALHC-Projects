@@ -1,8 +1,9 @@
 "use client";
 
 import { useClosesPopovers } from "@/components/overlay-registry";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { leaveGhost } from "@/lib/exit-ghost";
 
 // A small modal: overlay, focus moves into the panel, Escape or the overlay closes it, and focus
 // returns to whatever opened it. Keyboard shortcuts stand down while a role="dialog" is open.
@@ -23,6 +24,7 @@ export function Dialog({
   compact?: boolean;
 }) {
   const titleId = useId();
+  const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -32,6 +34,12 @@ export function Dialog({
   useEffect(() => {
     closeRef.current = onClose;
   }, [onClose]);
+
+  // Batch 39: a short fade as it closes (an inert copy; the dialog itself is gone at once).
+  useLayoutEffect(() => {
+    const overlay = overlayRef.current;
+    return () => leaveGhost(overlay, "ui-anim-fade-out");
+  }, []);
 
   useEffect(() => {
     const returnFocus = document.activeElement as HTMLElement | null;
@@ -55,14 +63,18 @@ export function Dialog({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/30 p-4" onMouseDown={onClose}>
+    <div
+      ref={overlayRef}
+      className="ui-anim-fade-in fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/30 p-4"
+      onMouseDown={onClose}
+    >
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         onMouseDown={(e) => e.stopPropagation()}
-        className={`max-h-[90vh] w-full ${width} overflow-y-auto rounded-xl border border-zinc-200 bg-white text-sm shadow-xl ${compact ? "px-4 pb-4 pt-3.5" : "p-5"}`}
+        className={`ui-anim-rise-in max-h-[90vh] w-full ${width} overflow-y-auto rounded-xl border border-zinc-200 bg-white text-sm shadow-xl ${compact ? "px-4 pb-4 pt-3.5" : "p-5"}`}
       >
         <div className="flex items-start gap-2">
           <h2 id={titleId} className="flex-1 text-base font-semibold text-zinc-900">

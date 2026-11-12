@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useOptimistic, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useOptimistic, useRef, useState, type ReactNode } from "react";
 import { CalendarClock, CalendarDays, ChevronRight, FolderClosed, Lock, Repeat, Sparkles } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { useOpenTaskId } from "@/components/shell/right-panel";
@@ -10,6 +10,13 @@ import { RowCompleteControl } from "@/components/task/row-complete-control";
 import { useDependencyShift } from "@/components/task/dependency-shift";
 import { SingleDatePicker } from "@/components/task/date-picker";
 import { TaskLink, useOpenTask, useTaskPrefetch } from "@/components/task/task-link";
+import type { TaskSeed } from "@/lib/task-seed";
+import {
+  CHECKLIST_FIRST_ROWS,
+  checklistRowPropsEqual,
+  mountedCounts,
+  nextMountLimit,
+} from "./checklist-rows";
 import { MoreTaskNumbers } from "@/components/task/task-number";
 import { useNotify, useServerAction } from "@/components/toast";
 import { SkeletonRows } from "@/components/ui";
@@ -207,7 +214,16 @@ export function ChecklistView({
 }) {
   const [doneOpen, setDoneOpen] = useState(false);
   const [earlierOpen, setEarlierOpen] = useState(false);
+  // Batch 39 (item 3): the open task is read once here, and each row gets a yes / no, so opening a task
+  // re-renders only the row that was open and the one that is now (rows are memoized).
+  const openTaskId = useOpenTaskId();
+  const openTask = useOpenTask();
+  const actions = useRowActions(list, openTask);
   const { today } = list;
+  const grouped = today === null ? [] : groupedRows(list, today, scope);
+  const groupSizes = grouped.map((g) => g.tasks.length);
+  const total = groupSizes.reduce((sum, n) => sum + n, 0);
+  const [limit, sentinel] = useMountLimit(total);
   if (today === null) {
     return (
       <div role="status" className="mt-2">
@@ -216,24 +232,24 @@ export function ChecklistView({
       </div>
     );
   }
-  const inScope = (task: MyTask) => {
-    if (scope === "all") return true;
-    const due = list.dueOf(task);
-    return checklistGroupOf(due, today) === "overdue" || checklistGroupOf(due, today) === "today";
-  };
-  const visible = list.rows.filter(inScope);
-  const grouped = groupChecklist(
-    visible.filter((t) => list.placementOf(t) === "group"),
-    today,
-    list.dueOf,
-  );
+  const visible = list.rows.filter((task) => inScope(list, today, scope, task));
   const done = visible.filter((t) => list.placementOf(t) !== "group");
   const prompts = scope === "all" ? visible.filter(list.asksForDate) : [];
-  const groups = grouped.map((g) =>
-    // New dateless assignments first in No date.
-    g.key === "none" ? { ...g, tasks: [...g.tasks].sort((a, b) => Number(list.asksForDate(b)) - Number(list.asksForDate(a))) } : g,
-  );
+  const groups = grouped;
+  const shownCounts = mountedCounts(groupSizes, limit);
   const openCount = visible.filter((t) => !list.isDone(t)).length;
+  const rowProps = (task: MyTask, group: ChecklistGroupKey | "done", chips: boolean) => ({
+    task,
+    list: actions,
+    done: list.isDone(task),
+    due: list.dueOf(task),
+    today,
+    prompt: list.asksForDate(task),
+    isOpen: openTaskId === task.id,
+    group,
+    workWeek,
+    chips,
+  });
 
   return (
     <div className="flex flex-col gap-5">
@@ -253,7 +269,7 @@ export function ChecklistView({
 
       {openCount === 0 && emptyState ? emptyState : null}
 
-      {groups.map((group) => (
+      {groups.map((group, groupIndex) => (
         <section
           key={group.key}
           id={`checklist-${group.key}`}
@@ -274,19 +290,14 @@ export function ChecklistView({
             ) : null}
           </h2>
           <ul className="flex flex-col">
-            {group.tasks.map((task) => (
-              <ChecklistRow
-                key={task.id}
-                task={task}
-                list={list}
-                group={group.key}
-                workWeek={workWeek}
-                chips={group.key === "none"}
-              />
+            {group.tasks.slice(0, shownCounts[groupIndex]).map((task) => (
+              <ChecklistRow key={task.id} {...rowProps(task, group.key, group.key === "none")} />
             ))}
           </ul>
         </section>
       ))}
+      {/* The rest of a long list mounts as the person scrolls near here (and when the browser is idle). */}
+      {limit < total ? <div ref={sentinel} aria-hidden className="h-px" /> : null}
 
       {done.length > 0 && mode !== "stay" ? (
         <section aria-label="Done today">
@@ -305,7 +316,7 @@ export function ChecklistView({
           {doneOpen ? (
             <ul className="mt-1 flex flex-col">
               {done.map((task) => (
-                <ChecklistRow key={task.id} task={task} list={list} group="done" workWeek={workWeek} chips={false} />
+                <ChecklistRow key={task.id} {...rowProps(task, "done", false)} />
               ))}
             </ul>
           ) : null}
@@ -325,7 +336,7 @@ export function ChecklistView({
           {earlierOpen ? (
             <ul className="mt-1 flex flex-col">
               {earlier.map((task) => (
-                <ChecklistRow key={task.id} task={task} list={list} group="done" workWeek={workWeek} chips={false} />
+                <ChecklistRow key={task.id} {...rowProps(task, "done", false)} />
               ))}
             </ul>
           ) : null}
@@ -336,29 +347,96 @@ export function ChecklistView({
   );
 }
 
-function ChecklistRow({
-  task,
-  list,
-  group,
-  workWeek,
-  chips,
-}: {
+type RowActions = {
+  check: (task: MyTask) => void;
+  setDue: (task: MyTask, dueOn: string | null, close?: () => void) => void;
+  notNow: (task: MyTask) => void;
+  openTask: (taskId: string, seed?: TaskSeed | null) => void;
+};
+
+// Stable callbacks for the memoized rows: they call the list's latest functions.
+function useRowActions(list: Checklist, openTask: RowActions["openTask"]): RowActions {
+  const latest = useRef({ list, openTask });
+  useLayoutEffect(() => {
+    latest.current = { list, openTask };
+  });
+  return useMemo<RowActions>(
+    () => ({
+      check: (task) => latest.current.list.check(task),
+      setDue: (task, dueOn, close) => latest.current.list.setDue(task, dueOn, close),
+      notNow: (task) => latest.current.list.notNow(task),
+      openTask: (taskId, seed) => latest.current.openTask(taskId, seed),
+    }),
+    [],
+  );
+}
+
+function inScope(list: Checklist, today: string, scope: ChecklistScope, task: MyTask): boolean {
+  if (scope === "all") return true;
+  const group = checklistGroupOf(list.dueOf(task), today);
+  return group === "overdue" || group === "today";
+}
+
+function groupedRows(list: Checklist, today: string, scope: ChecklistScope) {
+  const visible = list.rows.filter((task) => inScope(list, today, scope, task));
+  return groupChecklist(
+    visible.filter((t) => list.placementOf(t) === "group"),
+    today,
+    list.dueOf,
+  ).map((g) =>
+    // New dateless assignments first in No date.
+    g.key === "none" ? { ...g, tasks: [...g.tasks].sort((a, b) => Number(list.asksForDate(b)) - Number(list.asksForDate(a))) } : g,
+  );
+}
+
+// The first CHECKLIST_FIRST_ROWS rows at once; more when the sentinel comes within a screen of view, and
+// in idle time, until every row is mounted.
+function useMountLimit(total: number): [number, (node: HTMLDivElement | null) => void] {
+  const [limit, setLimit] = useState(CHECKLIST_FIRST_ROWS);
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const more = limit < total;
+  useEffect(() => {
+    if (!more) return;
+    const grow = () => setLimit((current) => nextMountLimit(current, total));
+    let idle: number | undefined;
+    const idleApi = typeof window.requestIdleCallback === "function";
+    if (idleApi) idle = window.requestIdleCallback(grow, { timeout: 1500 });
+    else idle = window.setTimeout(grow, 300);
+    let observer: IntersectionObserver | undefined;
+    if (node && typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting)) grow();
+      }, { rootMargin: "800px 0px" });
+      observer.observe(node);
+    }
+    return () => {
+      if (idle !== undefined) {
+        if (idleApi) window.cancelIdleCallback(idle);
+        else window.clearTimeout(idle);
+      }
+      observer?.disconnect();
+    };
+  }, [more, total, limit, node]);
+  return [limit, setNode];
+}
+
+type ChecklistRowProps = {
   task: MyTask;
-  list: Checklist;
+  list: RowActions;
+  done: boolean;
+  due: string | null;
+  today: string;
+  prompt: boolean;
+  isOpen: boolean;
   group: ChecklistGroupKey | "done";
   workWeek?: readonly number[];
   chips: boolean;
-}) {
+};
+
+const ChecklistRow = memo(function ChecklistRow({ task, list, done, due, today, prompt, isOpen, group, workWeek, chips }: ChecklistRowProps) {
   const { member } = useShell();
-  const openTaskId = useOpenTaskId();
-  const openTask = useOpenTask();
   const seed = () => seedFromMyTask(task, { id: member.id, name: member.name });
   const prefetch = useTaskPrefetch(task.id, seed);
-  const done = list.isDone(task);
-  const isOpen = openTaskId === task.id;
-  const due = list.dueOf(task);
-  const today = list.today ?? "";
-  const prompt = list.asksForDate(task);
   const blocked = done ? 0 : blockedCount(task);
   const title = bareTaskTitle(task.title, task.requestLabel);
   const label = formatRequestLabel(task.requestLabel);
@@ -373,9 +451,10 @@ function ChecklistRow({
       onClick={(e) => {
         const target = e.target as HTMLElement;
         if (!e.currentTarget.contains(target) || target.closest("a, button, input, textarea, label, [role='dialog']")) return;
-        if (!isOpen) openTask(task.id, seed());
+        if (!isOpen) list.openTask(task.id, seed());
       }}
-      className={`group flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 transition-colors ${
+      // cv-row: the browser skips laying out and painting rows that are off screen (they stay in the page).
+      className={`cv-row group flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 transition-colors [contain-intrinsic-size:auto_3.5rem] ${
         isOpen ? "bg-accent-50/70" : "hover:bg-zinc-50"
       } ${prompt ? "shadow-[inset_3px_0_0_var(--color-accent-500)]" : ""}`}
     >
@@ -431,17 +510,28 @@ function ChecklistRow({
           {task.externalApproved ? <ExternalApprovedDot /> : null}
           {prompt ? <span className="font-medium text-accent-700">New · Set a date</span> : null}
         </div>
-        {chips && task.canEdit && !done ? <DateChips task={task} list={list} workWeek={workWeek} prompt={prompt} /> : null}
+        {chips && task.canEdit && !done ? <DateChips task={task} list={list} today={today} workWeek={workWeek} prompt={prompt} /> : null}
       </div>
       {group !== "none" ? <DueControl task={task} list={list} due={due} today={today} done={done} /> : null}
     </li>
   );
-}
+}, (a, b) => checklistRowPropsEqual({ ...a, actions: a.list }, { ...b, actions: b.list }));
 
 // One-tap dates for a task with none: Today, Tomorrow, This (or Next) week, Pick date. A "Set a date"
 // prompt also has Not now.
-function DateChips({ task, list, workWeek, prompt }: { task: MyTask; list: Checklist; workWeek?: readonly number[]; prompt: boolean }) {
-  const today = list.today;
+function DateChips({
+  task,
+  list,
+  today,
+  workWeek,
+  prompt,
+}: {
+  task: MyTask;
+  list: RowActions;
+  today: string;
+  workWeek?: readonly number[];
+  prompt: boolean;
+}) {
   if (!today) return null;
   const chip = "inline-flex h-8 items-center gap-1 rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:border-accent-300 hover:bg-accent-50 hover:text-accent-800";
   return (
@@ -497,7 +587,8 @@ function RepeatsMark() {
 // A task typed into the quick add, in the group it will land in, until the saved row arrives.
 function PendingChecklistRow({ task, due, today }: { task: MyTask; due: string | null; today: string }) {
   return (
-    <li data-checklist-row={task.id} data-pending="" aria-busy="true" className="flex items-start gap-3 rounded-lg px-2 py-2">
+    // Batch 39: only the row just added fades in (ui-anim-row-in; off under reduced motion).
+    <li data-checklist-row={task.id} data-pending="" aria-busy="true" className="ui-anim-row-in flex items-start gap-3 rounded-lg px-2 py-2">
       <span className="mt-0.5 inline-flex size-[22px] shrink-0 rounded-full border-2 border-dashed border-zinc-300" aria-hidden />
       <div className="min-w-0 flex-1 py-0.5">
         <span className="block min-w-0 truncate text-[15px] leading-6 text-zinc-500">{task.title}</span>
@@ -522,7 +613,7 @@ function PendingChecklistRow({ task, due, today }: { task: MyTask; due: string |
   );
 }
 
-function DueControl({ task, list, due, today, done }: { task: MyTask; list: Checklist; due: string | null; today: string; done: boolean }) {
+function DueControl({ task, list, due, today, done }: { task: MyTask; list: RowActions; due: string | null; today: string; done: boolean }) {
   const overdue = Boolean(due && !done && due < today);
   const text = due ? checklistDueLabel(due, today) : "";
   const shown = (

@@ -191,3 +191,22 @@ export function summaryLine(counts: { today: number; overdue: number; week: numb
   if (!parts.length && counts.week) parts.push(`${counts.week} due this week`);
   return parts.join(" · ");
 }
+
+// Nov 12 notes (batch 39, item 3): Home's Today card shows only overdue and today's tasks, so Home sends
+// the browser only those — plus tomorrow's, so the card is right if the page stays open past midnight —
+// and just the ids of the rest (to tell the card's live updates that a change to one of them may bring it
+// into Today, which asks the server for the page). Counts on Home are worked out on the server from the
+// whole list first.
+export function todayCardSplit<T extends { id: string; dueOn: string | null }>(
+  open: readonly T[],
+  today: string,
+): { shown: T[]; hiddenIds: string[] } {
+  const until = shiftDays(today, 1);
+  const shown: T[] = [];
+  const hiddenIds: string[] = [];
+  for (const task of open) {
+    if (task.dueOn && task.dueOn <= until) shown.push(task);
+    else hiddenIds.push(task.id);
+  }
+  return { shown, hiddenIds };
+}

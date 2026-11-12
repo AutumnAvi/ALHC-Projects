@@ -24,7 +24,6 @@ import {
 } from "@/lib/data";
 import { type ProjectTask, type SubtaskItem } from "@alhc/core/api/tasks/model";
 import { todayIn } from "@alhc/core/workload";
-import { EMPTY_CRITICAL_PATH } from "@alhc/core/critical-path";
 import { getViewerTimeZone } from "@/lib/timezone";
 import {
   decodeConfig,
@@ -100,7 +99,9 @@ export async function ProjectViewPage({
     getViewerTimeZone(),
     paging || scheduling ? Promise.resolve(null) : listProjectTasks(projectId),
     layout === "timeline" ? listProjectDependencies(projectId) : Promise.resolve([]),
-    layout === "timeline" ? projectCriticalPath(projectId) : Promise.resolve(EMPTY_CRITICAL_PATH),
+    // Nov 12 (batch 39, item 4): the critical path is worked out here only when its switch is on (?cp=1);
+    // otherwise the Timeline paints without it and asks for it right after (the bars' slack tooltips).
+    layout === "timeline" && searchParams.cp === "1" ? projectCriticalPath(projectId) : Promise.resolve(null),
     // Nov 2 notes (batch 16, 125): Timeline moves dependents at once with Auto-shift.
     layout === "timeline" ? getDependencyShiftMode(projectId) : Promise.resolve(null),
   ]);
