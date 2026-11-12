@@ -53,6 +53,12 @@ const NOT_FRAMEABLE = [
   "/api/inbound/alhc_in_abc",
   "/api/calendar/alhc_cal_abc.ics",
   "/api/csp-report",
+  // The AI pilot's pages and APIs (this branch): the MCP endpoint, the assistant, the builder.
+  "/api/mcp",
+  "/api/ai-assistant/propose",
+  "/api/ai-builder/generate",
+  "/ai-builder",
+  "/settings/mcp",
   "/export/list",
   "/_next/static/chunks/app.js",
   // Close to the frameable paths, but not them.
