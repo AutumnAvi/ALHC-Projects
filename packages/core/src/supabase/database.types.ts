@@ -5734,6 +5734,24 @@ export type Database = {
         Args: { task_ids: string[] };
         Returns: { task_id: string; blockers: number }[];
       };
+      project_file_page: {
+        Args: { target_project: string; max_results?: number };
+        Returns: {
+          id: string;
+          file_name: string;
+          content_type: string | null;
+          size_bytes: number;
+          uploaded_by: string;
+          source: string;
+          created_at: string;
+          task_id: string;
+          task_title: string;
+        }[];
+      };
+      workspace_report_groups: {
+        Args: { filters?: Json; tz?: string };
+        Returns: Json;
+      };
       sync_my_task_placements: {
         Args: Record<PropertyKey, never>;
         Returns: string;

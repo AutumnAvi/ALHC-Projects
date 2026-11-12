@@ -1,5 +1,6 @@
 "use client";
 
+import { patchedAction } from "@/lib/patched-writes";
 import { useState } from "react";
 import { Pencil } from "lucide-react";
 import { MentionText } from "@/components/task/comment-parts";
@@ -85,7 +86,7 @@ export function TaskDescription({ task, canEdit }: { task: TaskDetail; canEdit: 
         // The draft (the body with its links), not the box's own text, which shows links as chips.
         const notes = draft;
         setEditing(false);
-        if (notes.trim() !== saved.trim()) run(() => updateTask(task.id, { notes }));
+        if (notes.trim() !== saved.trim()) run(patchedAction("notes", (screenOnly) => updateTask(task.id, { notes }, screenOnly)));
       }}
       placeholder="What is this task about? Add details or context. Type # to link a task or project."
       // Borderless until hovered or focused, like Asana's description.

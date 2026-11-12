@@ -2,7 +2,8 @@ import "server-only";
 import { displayName } from "@alhc/core/people";
 import type { BarDatum } from "@/components/dashboard/bar-chart";
 import type { OverdueRow } from "@/components/reports/report-blocks";
-import { allProjectsReport, listProfiles, listSectionLabels, listVisibleTags, reportOverdueTasks } from "@/lib/data";
+import { allProjectsReport, listSectionLabels, reportOverdueTasks } from "@/lib/data";
+import { loadAppShell } from "@/lib/screen-loaders";
 import { type OverdueTask, type ReportRow } from "@alhc/core/api/reports/model";
 import type { ReportFilters } from "@alhc/core/reports";
 
@@ -18,7 +19,11 @@ export type ReportContext = {
 };
 
 export async function loadReportContext(timeZone: string): Promise<ReportContext> {
-  const [projects, profiles, tags] = await Promise.all([allProjectsReport(timeZone), listProfiles(), listVisibleTags()]);
+  // Nov 12 notes (batch 40): people and tags from the app shell the layout already loaded (the same
+  // reads: every readable profile by name, the visible tags), not read again.
+  const [projects, shell] = await Promise.all([allProjectsReport(timeZone), loadAppShell()]);
+  const profiles = shell.profiles;
+  const tags = shell.visibleTags;
   const projectNames = new Map(projects.map((p) => [p.id, p.name]));
   const people = profiles.map((p) => ({ id: p.id, name: displayName(p) }));
   const personNames = new Map(people.map((p) => [p.id, p.name]));

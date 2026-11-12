@@ -19,6 +19,12 @@ import { queryKeys } from "@alhc/core/query/keys";
 import { newestOf, writeNewest, type Stamped } from "@alhc/core/query/stamped";
 import { editsAsMyTaskPatches } from "@alhc/core/query/task-edits";
 import { useCacheEntry } from "@/lib/query/use-cache-entry";
+import { writeWithoutRefresh } from "@/lib/optimistic-session";
+import type { TaggedEdit } from "@alhc/core/query/task-edits";
+
+// Batch 40 (item 1): the person's own edits saved without a refresh become patches here (kept until the
+// server's copy agrees), since no fresh copy of this screen is coming with the save.
+const copiedEdits = new WeakSet<TaggedEdit>();
 
 // Nov 4 notes, batch 26 (M3): My tasks and Home's Today follow the person's Broadcast topic. Tasks assigned
 // to them that someone else renames, completes, reopens, or re-dates change in place (a completion moves
@@ -83,6 +89,19 @@ export function useLiveMyTasks(
       return kept.size === current.size ? current : kept;
     });
   }, [base, hidden]);
+
+  useEffect(() => {
+    const copy = edits.filter((item) => item.token !== 0 && writeWithoutRefresh(item.token) && !copiedEdits.has(item));
+    if (copy.length === 0) return;
+    for (const item of copy) copiedEdits.add(item);
+    const incoming = editsAsMyTaskPatches(copy, memberId);
+    if (incoming.size === 0) return;
+    setPatches((current) => {
+      const next = new Map(current);
+      for (const [id, patch] of incoming) next.set(id, { ...next.get(id), ...patch });
+      return next;
+    });
+  }, [edits, memberId]);
 
   useLiveRefresher();
   useLiveTopic(

@@ -1,7 +1,7 @@
 // Big move 1: the reports area's reads. Every function takes the caller's ApiContext first and reads only
 // through ctx.db (RLS decides); no Next.js here.
 import { type ApiContext, read } from "../core/context";
-import { maybe, rows } from "../core/db";
+import { maybe, rows, rpcMissing } from "../core/db";
 import type { AllProjectsRow, OverdueTask, ReportRow, SectionLabel, SeriesPoint } from "./model";
 import { tagsEnabled } from "../tags/queries";
 import { isReportKind, isScheduleFrequency, type ReportSchedule } from "../../email-schedules";
@@ -38,6 +38,50 @@ export async function workspaceReport(
     overdue: Number(r.overdue_count),
     completedRecent: Number(r.completed_recent_count),
   }));
+}
+
+export type ReportGroups = { none: ReportRow[]; project: ReportRow[]; assignee: ReportRow[]; section: ReportRow[] };
+
+type ReportRowJson = {
+  bucket: string | null;
+  project_id: string | null;
+  task_count: number | string;
+  completed_count: number | string;
+  incomplete_count: number | string;
+  overdue_count: number | string;
+  completed_recent_count: number | string;
+};
+
+function toReportRow(r: ReportRowJson): ReportRow {
+  return {
+    bucket: r.bucket,
+    projectId: r.project_id,
+    total: Number(r.task_count),
+    completed: Number(r.completed_count),
+    incomplete: Number(r.incomplete_count),
+    overdue: Number(r.overdue_count),
+    completedRecent: Number(r.completed_recent_count),
+  };
+}
+
+// Nov 12 notes (batch 40, item 3): Reports → Overview's four groupings from one scan
+// (workspace_report_groups: workspace_report's rules, one jsonb value). Before that function is
+// deployed, the four workspace_report calls.
+export async function workspaceReportGroups(ctx: ApiContext, filters: ReportFilters, timeZone: string): Promise<ReportGroups> {
+  const json = reportFiltersJson(withoutReportTags(filters, await tagsEnabled(ctx)));
+  const result = await ctx.db.rpc("workspace_report_groups", { filters: json, tz: timeZone });
+  if (!rpcMissing(result.error)) {
+    const value = (maybe(result, "report") ?? {}) as Partial<Record<keyof ReportGroups, ReportRowJson[]>>;
+    const list = (key: keyof ReportGroups) => (Array.isArray(value[key]) ? value[key] : []).map(toReportRow);
+    return { none: list("none"), project: list("project"), assignee: list("assignee"), section: list("section") };
+  }
+  const [none, project, assignee, section] = await Promise.all([
+    workspaceReport(ctx, filters, "none", timeZone),
+    workspaceReport(ctx, filters, "project", timeZone),
+    workspaceReport(ctx, filters, "assignee", timeZone),
+    workspaceReport(ctx, filters, "section", timeZone),
+  ]);
+  return { none, project, assignee, section };
 }
 
 export async function workspaceTotals(ctx: ApiContext, filters: ReportFilters, timeZone: string): Promise<PortfolioCounts> {

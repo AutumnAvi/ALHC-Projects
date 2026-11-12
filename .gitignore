@@ -44,3 +44,6 @@ next-env.d.ts
 # supabase cli
 supabase/.temp
 supabase/.branches
+
+# pdf.js worker copied at build time (apps/web/scripts/copy-pdf-worker.mjs)
+apps/web/public/pdfjs/

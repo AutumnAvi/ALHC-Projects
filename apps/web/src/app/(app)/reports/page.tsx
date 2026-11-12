@@ -21,13 +21,14 @@ import { ScheduleEmailButton } from "@/components/reports/schedule-email";
 import { SeriesChart } from "@/components/reports/series-chart";
 import { requireMember } from "@/lib/auth";
 import {
+  activePeopleFrom,
   countHiddenWorkspaceProjects,
-  listActivePeople,
   reportCompletedSeries,
   reportOverdueTasks,
   tagsEnabled,
-  workspaceReport,
+  workspaceReportGroups,
 } from "@/lib/data";
+import { loadAppShell } from "@/lib/screen-loaders";
 import { EMPTY_COUNTS, RECENT_DAYS } from "@alhc/core/portfolios";
 import {
   describeDateRange,
@@ -67,19 +68,18 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   // Nov 3 notes (batch 19, 144): one wave of reads (the overdue list no longer waits for the rest), and the
   // side reads (hidden count, schedule-email people) never take the page down.
-  const [context, totals, byProject, byAssignee, bySection, series, hidden, member, people, overdueTasks] =
-    await Promise.all([
-      loadReportContext(timeZone),
-      workspaceReport(countFilters, "none", timeZone),
-      workspaceReport(countFilters, "project", timeZone),
-      workspaceReport(countFilters, "assignee", timeZone),
-      workspaceReport(countFilters, "section", timeZone),
-      reportCompletedSeries(filters, interval, timeZone),
-      softRead("reports hidden count", countHiddenWorkspaceProjects(), 0),
-      requireMember(),
-      softRead("reports people", listActivePeople(), []),
-      reportOverdueTasks(countFilters, timeZone),
-    ]);
+  // Nov 12 notes (batch 40, item 3): the four groupings from one scan (workspace_report_groups); the
+  // schedule-email people from the app shell's profiles (only the allowlist is read again).
+  const [context, groups, series, hidden, member, people, overdueTasks] = await Promise.all([
+    loadReportContext(timeZone),
+    workspaceReportGroups(countFilters, timeZone),
+    reportCompletedSeries(filters, interval, timeZone),
+    softRead("reports hidden count", countHiddenWorkspaceProjects(), 0),
+    requireMember(),
+    softRead("reports people", activePeopleFrom(loadAppShell().then((shell) => shell.profiles)), []),
+    reportOverdueTasks(countFilters, timeZone),
+  ]);
+  const { none: totals, project: byProject, assignee: byAssignee, section: bySection } = groups;
   const sections = await sectionBars(bySection, context);
   const overdue = overdueRows(overdueTasks, context);
   const counts = totals[0] ?? EMPTY_COUNTS;

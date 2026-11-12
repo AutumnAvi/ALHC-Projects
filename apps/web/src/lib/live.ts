@@ -3,8 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { isLiveTopic, parseLiveMessage, type LiveMessage, type LiveTable } from "@alhc/core/live-patch";
-import { mutationInFlight, noteMutationTraffic, setMutationQuietHandler } from "@/lib/optimistic-session";
-import { createClient } from "@/lib/supabase/client";
+import {
+  mutationInFlight,
+  noteMutationTraffic,
+  refreshingWriteInFlight,
+  setMutationQuietHandler,
+} from "@/lib/optimistic-session";
+import { loadBrowserClient } from "@/lib/supabase/lazy-client";
 
 // Nov 4 notes, batch 26 (M3): live updates through Realtime Broadcast on private topics, instead of
 // Postgres Changes. The database sends a message per topic when rows change (alhc_live_capture); joining
@@ -41,12 +46,15 @@ const topics = new Map<string, TopicState>();
 // Channels still leaving, per topic: a new join on the same topic waits for them.
 const leaving = new Map<string, Promise<unknown>>();
 
+type BrowserClient = Awaited<ReturnType<typeof loadBrowserClient>>;
+
 function openTopic(topic: string, state: TopicState): () => void {
-  const supabase = createClient();
+  // Batch 40 (item 7): the client arrives a moment after the first paint (lazy-client.ts).
+  let supabase: BrowserClient | null = null;
   let stopped = false;
   let attempt = 0;
   let reconnectTimer: number | undefined;
-  let active: ReturnType<typeof supabase.channel> | null = null;
+  let active: ReturnType<BrowserClient["channel"]> | null = null;
 
   const emitStatus = (status: ChannelStatus) => {
     const rejoined = status === "live" && state.wasLive && state.status !== "live";
@@ -56,7 +64,7 @@ function openTopic(topic: string, state: TopicState): () => void {
   };
 
   const release = () => {
-    if (!active) return;
+    if (!active || !supabase) return;
     const previous = active;
     active = null;
     const done = supabase.removeChannel(previous).catch(() => undefined);
@@ -66,26 +74,34 @@ function openTopic(topic: string, state: TopicState): () => void {
     });
   };
 
-  const authorize = async (): Promise<boolean> => {
-    const { data } = await supabase.auth.getSession();
+  const authorize = async (client: BrowserClient): Promise<boolean> => {
+    const { data } = await client.auth.getSession();
     const token = data.session?.access_token;
     if (!token) return false;
-    if (supabase.realtime.accessTokenValue !== token) await supabase.realtime.setAuth();
-    return supabase.realtime.accessTokenValue === token;
+    if (client.realtime.accessTokenValue !== token) await client.realtime.setAuth();
+    return client.realtime.accessTokenValue === token;
   };
 
   const connect = async () => {
     if (stopped) return;
     release();
     await leaving.get(topic);
-    const authorized = await authorize().catch(() => false);
+    const client = supabase ?? (await loadBrowserClient().catch(() => null));
+    if (stopped) return;
+    if (!client) {
+      stopped = true;
+      emitStatus("off");
+      return;
+    }
+    supabase = client;
+    const authorized = await authorize(client).catch(() => false);
     if (stopped) return;
     if (!authorized) {
       stopped = true;
       emitStatus("off");
       return;
     }
-    const channel = supabase.channel(topic, { config: { private: true } });
+    const channel = client.channel(topic, { config: { private: true } });
     channel.on("broadcast", { event: "*" }, (event: { payload?: unknown }) => {
       if (stopped) return;
       const message = parseLiveMessage(event.payload);
@@ -127,6 +143,11 @@ function openTopic(topic: string, state: TopicState): () => void {
     window.clearTimeout(reconnectTimer);
     release();
   };
+}
+
+// Whether a topic's channel is joined right now (batch 40: a save skips its refresh only then).
+export function topicIsLive(topic: string): boolean {
+  return topics.get(topic)?.status === "live";
 }
 
 // Listen to one topic. Returns the unsubscribe. A topic that isn't one of ours is ignored.
@@ -221,7 +242,13 @@ export type RefreshMode = "defer" | "skip";
 export function requestLiveRefresh(mode: RefreshMode = "defer") {
   if (typeof window === "undefined") return;
   if (mode === "skip") {
-    if (mutationInFlight()) return;
+    // The open write's own refresh covers it. A write saved without a refresh (batch 40) doesn't bring
+    // one: refresh once it's done instead.
+    if (refreshingWriteInFlight()) return;
+    if (mutationInFlight()) {
+      scheduleDeferred();
+      return;
+    }
     window.clearTimeout(refreshTimer);
     refreshTimer = window.setTimeout(runRefresh, REFRESH_MS);
     return;
