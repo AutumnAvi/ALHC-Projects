@@ -164,10 +164,12 @@ function loadPdfJs(): Promise<PdfJs> {
 // Node finds a package — node_modules here, else in a parent folder: since big move 2 the app runs from
 // apps/web (locally and in its Vercel function) while npm installs pdf.js in the monorepo root's
 // node_modules, which next.config.ts traces into this route.
+// (turbopackIgnore: the fonts are traced by next.config.ts's include; without it, Next.js 16.4 traces the
+// whole project into this function for this lookup.)
 export function standardFontDataUrl(start: string = process.cwd()): string | undefined {
-  for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
-    const fonts = path.join(dir, "node_modules", "pdfjs-dist", "standard_fonts");
-    if (existsSync(fonts)) return `${fonts}${path.sep}`;
+  for (let dir = path.resolve(/* turbopackIgnore: true */ start); ; dir = path.dirname(dir)) {
+    const fonts = path.join(/* turbopackIgnore: true */ dir, "node_modules", "pdfjs-dist", "standard_fonts");
+    if (existsSync(/* turbopackIgnore: true */ fonts)) return `${fonts}${path.sep}`;
     if (path.dirname(dir) === dir) return undefined;
   }
 }
