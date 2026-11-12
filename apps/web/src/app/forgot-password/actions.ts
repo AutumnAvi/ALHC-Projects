@@ -1,8 +1,7 @@
 "use server";
 
-import { headers } from "next/headers";
 import * as authApi from "@alhc/core/api/auth/mutations";
-import { requestOrigin } from "@/lib/origin";
+import { authLinkOrigin } from "@/lib/origin";
 import {
   RESET_RATE_LIMITED,
   RESET_SENT_NOTICE,
@@ -28,7 +27,7 @@ export async function requestPasswordReset(
   if (!email) return { error: "Enter a valid email address.", email: typed };
 
   const ctx = await actionContext();
-  const origin = (await headers()).get("origin") ?? (await requestOrigin());
+  const origin = await authLinkOrigin();
   const { error } = await authApi.requestPasswordReset(ctx, email, resetRedirectUrl(origin));
   // The code only, never the address.
   if (error) console.warn(`[auth:reset] request failed code=${error.code ?? "unknown"} status=${error.status ?? "?"}`);
