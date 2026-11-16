@@ -26,6 +26,7 @@ import {
   HOVER_PREFETCH_SECONDS,
 } from "@/lib/route-freshness";
 import { onHomeWrite, patchedAction, resetPatchedWritesForTests, type HomeWriteEvent } from "@/lib/patched-writes";
+import { editsKeptLongerFor, keepEditsLonger } from "@/lib/optimistic-session";
 import { FULL_PREFETCH, HOME_WARM_BUMP_DELAY_MS, HOME_WARM_DELAY_MS } from "@/components/shell/route-freshness";
 import { listInbox, listInboxPage } from "@alhc/core/api/inbox/queries";
 import { INBOX_LIMIT, inboxLimitNote } from "@alhc/core/inbox";
@@ -110,23 +111,41 @@ test("item 1: the cache is emptied at most every 10 s; heading for Home never th
   assert.equal(arrivalNeedsRevalidation(state, HOME_KEY, 61_000), true);
 });
 
-test("item 1: Home's summary line leaves out what the person just completed or gave away", () => {
-  const ids = { overdue: ["a"], today: ["b", "c"], week: ["d"] };
-  assert.equal(summaryLine(liveSummaryCounts(ids, new Map(), new Set())), "2 due today · 1 overdue");
-  assert.equal(summaryLine(liveSummaryCounts(ids, new Map([["b", true]]), new Set())), "1 due today · 1 overdue");
-  assert.equal(summaryLine(liveSummaryCounts(ids, new Map([["b", false]]), new Set(["c", "a"]))), "1 due today");
-  assert.equal(summaryLine(liveSummaryCounts(ids, new Map([["a", true], ["b", true], ["c", true]]), new Set())), "1 due this week");
+test("item 1: Home's summary line counts the Today card's live list (completions, reopens, reassignments)", () => {
+  const today = "2026-11-16";
+  const open = [
+    { id: "a", dueOn: "2026-11-10" },
+    { id: "b", dueOn: today },
+    { id: "c", dueOn: today },
+    { id: "t", dueOn: "2026-11-17" },
+  ];
+  const none = new Map<string, boolean>();
+  assert.equal(summaryLine(liveSummaryCounts(open, ["w"], none, new Set(), today)), "2 due today · 1 overdue");
+  // The card's live list after a tick no longer holds the task: the line follows it.
+  assert.equal(summaryLine(liveSummaryCounts(open.filter((t) => t.id !== "b"), ["w"], none, new Set(), today)), "1 due today · 1 overdue");
+  // A task reopened elsewhere comes back onto the live list, so the line counts it again (Codex r2 F4).
+  assert.equal(summaryLine(liveSummaryCounts([...open, { id: "r", dueOn: today }], [], none, new Set(), today)), "3 due today · 1 overdue");
+  // This week's tasks the card doesn't hold: by id, minus what was just completed or given away.
+  assert.equal(summaryLine(liveSummaryCounts([], ["w", "x", "y"], new Map([["w", true]]), new Set(["x"]), today)), "1 due this week");
+  assert.equal(liveSummaryCounts(open, ["t"], none, new Set(), today).week, 1, "tomorrow's task once, held or hidden");
   const page = readFileSync(new URL("../../src/app/(app)/page.tsx", import.meta.url), "utf8");
-  assert.match(page, /<HomeSummary ids=\{summaryIds\}/);
+  assert.match(page, /<HomeSummary\s+open=\{todayCard\.shown\}/);
+});
+
+test("item 1: checklist Undo is a save Home shows and records the reopen (Grok r2 F5)", () => {
+  const src = readFileSync(new URL("../../src/components/my-tasks/checklist.tsx", import.meta.url), "utf8");
+  assert.match(src, /patchedAction\("complete", \(\) => undoTaskCompleted\(task\.id\), \{ refresh: true \}\)/);
+  assert.match(src, /recordTaskEdits\(\[\{ type: "complete", taskId: task\.id, completed: false \}\]\)/);
 });
 
 test("item 1: on Home itself nothing is warmed; reaching Home during the save renders it again", () => {
   const state = emptyFreshness();
   assert.deepEqual(homeWarmPlan(state, HOME_KEY, 10), { bump: false, prefetch: [] });
   noteShown(state, HOME_KEY, 5000);
-  assert.equal(homeNeedsRenderAfterSave(state, HOME_KEY, 4000), true, "arrived after the save started");
-  assert.equal(homeNeedsRenderAfterSave(state, HOME_KEY, 6000), false, "the save started after arriving");
-  assert.equal(homeNeedsRenderAfterSave(state, "/my-tasks", 4000), false);
+  assert.equal(homeNeedsRenderAfterSave(state, HOME_KEY, 4000, 5500), true, "arrived while the save ran");
+  assert.equal(homeNeedsRenderAfterSave(state, HOME_KEY, 4000, 4500), false, "arrived after it ended (arrival handles it)");
+  assert.equal(homeNeedsRenderAfterSave(state, HOME_KEY, 6000, 7000), false, "the save started after arriving");
+  assert.equal(homeNeedsRenderAfterSave(state, "/my-tasks", 4000, 5500), false);
 });
 
 test("item 1: a warmed Home is still rendered again in the background on arrival when it's older than 10 s", () => {
@@ -135,6 +154,17 @@ test("item 1: a warmed Home is still rendered again in the background on arrival
   applyWarmPlan(state, plan, "/my-tasks", 100_000);
   assert.equal(arrivalNeedsRevalidation(state, HOME_KEY, 103_000), false, "fresh: drawn as is");
   assert.equal(arrivalNeedsRevalidation(state, HOME_KEY, 125_000), true, "older: drawn, then rendered again");
+});
+
+test("item 1: saves Home shows keep their edits as long as saves without a refresh (Opus r2 F8)", () => {
+  const token = 987_654;
+  assert.equal(editsKeptLongerFor(token), false);
+  keepEditsLonger(token);
+  assert.equal(editsKeptLongerFor(token), true);
+  const src = readFileSync(new URL("../../src/lib/patched-writes.ts", import.meta.url), "utf8");
+  assert.match(src, /if \(home\) keepEditsLonger\(token\);/);
+  const edits = readFileSync(new URL("../../src/components/task/task-edits.ts", import.meta.url), "utf8");
+  assert.match(edits, /held: editsKeptLongerFor/);
 });
 
 test("item 1: patchedAction tells Home's warmer when a save Home shows starts and ends (refreshing or not)", async () => {

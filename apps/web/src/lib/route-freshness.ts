@@ -129,11 +129,12 @@ export function applyWarmPlan(state: FreshnessState, plan: WarmPlan, current: st
 }
 
 // A save that started before the person reached Home and ended after: the copy of Home they're looking at
-// may not show it (the save skipped its refresh), so Home is rendered again.
-export function homeNeedsRenderAfterSave(state: FreshnessState, current: string, saveStartedAt: number): boolean {
+// may not show it (the save skipped its refresh), so Home is rendered again. (Arriving after it ended is
+// handled on arrival: arrivalNeedsRevalidation.)
+export function homeNeedsRenderAfterSave(state: FreshnessState, current: string, saveStartedAt: number, saveEndedAt: number): boolean {
   if (current !== HOME_KEY) return false;
   const arrived = state.shownAt.get(HOME_KEY);
-  return arrived !== undefined && arrived >= saveStartedAt;
+  return arrived !== undefined && arrived >= saveStartedAt && arrived < saveEndedAt;
 }
 
 export function noteRendered(state: FreshnessState, key: string, now: number) {

@@ -33,14 +33,16 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const { myTasksChecked: checked, workWeek, projects, myRoles: roles, archivedProjects: archived, profiles, unreadCount: unread } = shell;
 
   const groupOf = (dueOn: string | null) => checklistGroupOf(dueOn, today);
-  // Batch 42 (item 1): the summary line counts in the browser too (HomeSummary), so a copy of Home drawn
-  // right after a tick doesn't still count it.
-  const idsIn = (group: string) => open.filter((t) => groupOf(t.dueOn) === group).map((t) => t.id);
-  const summaryIds = { overdue: idsIn("overdue"), today: idsIn("today"), week: idsIn("week") };
-  const laterCount = open.length - summaryIds.overdue.length - summaryIds.today.length;
+  const overdueCount = open.filter((t) => groupOf(t.dueOn) === "overdue").length;
+  const todayCount = open.filter((t) => groupOf(t.dueOn) === "today").length;
+  const laterCount = open.length - overdueCount - todayCount;
   const undated = open.filter((t) => t.datePrompt && t.canEdit).length;
   // Batch 39 (item 3): the Today card gets only what it shows (counts above use the whole list).
   const todayCard = todayCardSplit(open, today);
+  // Batch 42 (item 1): the summary line counts in the browser from the card's live list (HomeSummary), so a
+  // copy of Home drawn right after a tick agrees with the card; this week's other tasks go as ids.
+  const shownIds = new Set(todayCard.shown.map((t) => t.id));
+  const hiddenWeekIds = open.filter((t) => groupOf(t.dueOn) === "week" && !shownIds.has(t.id)).map((t) => t.id);
 
   const unreadItems = inbox.filter((item) => !item.readAt);
   // Every unread mention (the card counts them all and lists the first few).
@@ -63,7 +65,15 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
               <h2 className="mt-1 text-3xl font-medium tracking-tight text-zinc-900">
                 {greetingFor(hourIn(timeZone))}, {firstName(member.name, member.email)}
               </h2>
-              <HomeSummary ids={summaryIds} awaiting={awaiting.length} />
+              <HomeSummary
+                open={todayCard.shown}
+                completed={completed}
+                loadedAt={loadedAt}
+                hiddenIds={todayCard.hiddenIds}
+                hiddenWeekIds={hiddenWeekIds}
+                today={today}
+                awaiting={awaiting.length}
+              />
             </div>
             <div className="grid gap-4 @4xl:grid-cols-2">
               <TodayCard

@@ -7,7 +7,7 @@
 import { useEffect } from "react";
 import { homeShowsWrite, screensPatch, type PatchedWriteKind } from "@alhc/core/patched-writes";
 import { topicIsLive } from "@/lib/live";
-import { currentMutationToken, markWriteWithoutRefresh } from "@/lib/optimistic-session";
+import { currentMutationToken, keepEditsLonger, markWriteWithoutRefresh } from "@/lib/optimistic-session";
 
 type Declaration = { kinds: readonly PatchedWriteKind[]; topic: string | null };
 
@@ -63,6 +63,7 @@ export function patchedAction<R extends { error?: string } | void>(
     const token = currentMutationToken();
     if (screenOnly) markWriteWithoutRefresh(token);
     const home = homeShowsWrite(kind);
+    if (home) keepEditsLonger(token);
     if (home) for (const listener of homeWriteListeners) listener({ phase: "start" });
     let ok = false;
     try {

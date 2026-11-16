@@ -61,8 +61,6 @@ let runWarm: (() => void) | null = null;
 // throw away the copy of Home the click is about to draw (warmOnIntent).
 export function flushHomeWarm() {
   if (warmTimer === undefined || !runWarm) return;
-  window.clearTimeout(warmTimer);
-  warmTimer = undefined;
   runWarm();
 }
 
@@ -92,22 +90,29 @@ export function RouteFreshness() {
   useEffect(() => {
     let inFlight = 0;
     let burstStartedAt = 0;
+    let burstEndedAt = 0;
     let anyOk = false;
     let lastBumpAt = -Infinity;
     const warm = (intent: boolean) => {
-      warmTimer = undefined;
+      if (!intent) warmTimer = undefined;
       if (!anyOk) return;
       const now = Date.now();
       const here = current.current;
       if (here === HOME_KEY) {
         anyOk = false;
         // Reached Home while the save was still going: render it again so it shows the save.
-        if (homeNeedsRenderAfterSave(state, here, burstStartedAt)) requestLiveRefresh();
+        if (homeNeedsRenderAfterSave(state, here, burstStartedAt, burstEndedAt)) requestLiveRefresh();
         return;
       }
       let plan: WarmPlan | null = homeWarmPlan(state, here, now);
-      if (intent) plan = warmOnIntent(plan);
-      else if (plan.bump && now < bumpAllowedAt(lastBumpAt)) {
+      if (intent) {
+        plan = warmOnIntent(plan);
+        // Not now (it would throw away the copy the click draws), but not cancelled either: the timer stays,
+        // so a pointer passing over the link changes nothing (Opus r2 F7).
+        if (!plan) return;
+        window.clearTimeout(warmTimer);
+        warmTimer = undefined;
+      } else if (plan.bump && now < bumpAllowedAt(lastBumpAt)) {
         // Emptied the cache moments ago: once more when the gap is up (or on the way to Home).
         warmTimer = window.setTimeout(() => warm(false), bumpAllowedAt(lastBumpAt) - now);
         return;
@@ -131,6 +136,7 @@ export function RouteFreshness() {
         return;
       }
       inFlight = Math.max(0, inFlight - 1);
+      burstEndedAt = event.at;
       if (event.ok) {
         anyOk = true;
         // Every copy drawn from the router's cache after this is rendered again on arrival. (A save's own

@@ -9,7 +9,7 @@ import {
   onLocalMutationEnd,
   subscribeMutationFailures,
   tokenTaskDropped,
-  writeWithoutRefresh,
+  editsKeptLongerFor,
 } from "@/lib/optimistic-session";
 import { getQueryClient } from "@alhc/core/query/browser-client";
 import { queryKeys } from "@alhc/core/query/keys";
@@ -23,7 +23,8 @@ const status: EditStatus = {
   failed: mutationFailed,
   dropped: tokenTaskDropped,
   endedAt: mutationEndedAt,
-  held: writeWithoutRefresh,
+  // Batch 42: saves Home shows keep their edits as long, refreshing or not (optimistic-session.ts).
+  held: editsKeptLongerFor,
 };
 let pruneTimer: number | undefined;
 

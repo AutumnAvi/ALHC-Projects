@@ -174,6 +174,24 @@ export function writeWithoutRefresh(token: number): boolean {
   return withoutRefresh.has(token);
 }
 
+// Nov 16 batch 42 (item 1): a save Home shows (patched-writes.ts) keeps its edits as long as a save without
+// a refresh does, even when it refreshed: a copy of Home the router holds from before it may be drawn
+// until the background render lands (route-freshness.tsx). Only the edits' grace — nothing else.
+const editsKeptLonger = new Set<number>();
+
+export function keepEditsLonger(token: number) {
+  if (token === 0) return;
+  editsKeptLonger.add(token);
+  if (editsKeptLonger.size > 200) {
+    const oldest = editsKeptLonger.values().next().value;
+    if (oldest !== undefined) editsKeptLonger.delete(oldest);
+  }
+}
+
+export function editsKeptLongerFor(token: number): boolean {
+  return withoutRefresh.has(token) || editsKeptLonger.has(token);
+}
+
 // An open write whose end brings a refresh (so a "skip" live refresh can wait for it).
 export function refreshingWriteInFlight(): boolean {
   for (const token of open) if (!withoutRefresh.has(token)) return true;
