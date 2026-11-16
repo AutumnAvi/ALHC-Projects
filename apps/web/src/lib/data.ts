@@ -61,6 +61,7 @@ export const listProjectFields = bind(fieldsApi.listProjectFields);
 export const listMyTaskLayout = bind(myTasksApi.listMyTaskLayout);
 export const listChecklistSections = bind(myTasksApi.listChecklistSections);
 export const listInbox = bind(inboxApi.listInbox);
+export const listInboxPage = bind(inboxApi.listInboxPage);
 export const listMessageThreads = bind(messagesApi.listMessageThreads);
 export const getMessageThread = bind(messagesApi.getMessageThread);
 export const canPostTeamMessage = bind(messagesApi.canPostTeamMessage);

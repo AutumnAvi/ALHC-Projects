@@ -6478,6 +6478,10 @@ export type Database = {
         Args: { inbox_tab: string };
         Returns: Json;
       };
+      inbox_page_window: {
+        Args: { inbox_tab: string; max_items: number };
+        Returns: Json;
+      };
       inbox_unread_count: {
         Args: Record<PropertyKey, never>;
         Returns: number;
