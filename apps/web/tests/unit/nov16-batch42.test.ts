@@ -6,10 +6,15 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { HOME_WRITE_KINDS, homeShowsWrite } from "@alhc/core/patched-writes";
 import { renderPlaceholders, samplePlaceholderValues } from "@alhc/core/rule-placeholders";
+import { liveSummaryCounts, summaryLine } from "@alhc/core/checklist";
 import {
   applyWarmPlan,
   arrivalNeedsRevalidation,
+  bumpAllowedAt,
   emptyFreshness,
+  MIN_BUMP_GAP_MS,
+  noteWriteWithoutRefresh,
+  warmOnIntent,
   HOME_KEY,
   homeNeedsRenderAfterSave,
   homeWarmPlan,
@@ -21,7 +26,7 @@ import {
   HOVER_PREFETCH_SECONDS,
 } from "@/lib/route-freshness";
 import { onHomeWrite, patchedAction, resetPatchedWritesForTests, type HomeWriteEvent } from "@/lib/patched-writes";
-import { FULL_PREFETCH } from "@/components/shell/route-freshness";
+import { FULL_PREFETCH, HOME_WARM_BUMP_DELAY_MS, HOME_WARM_DELAY_MS } from "@/components/shell/route-freshness";
 import { listInbox, listInboxPage } from "@alhc/core/api/inbox/queries";
 import { INBOX_LIMIT, inboxLimitNote } from "@alhc/core/inbox";
 
@@ -53,16 +58,20 @@ test("item 1: within the router's window an older Home copy is held: empty the c
   const state = emptyFreshness();
   const t0 = 2_000_000;
   noteCopy(state, HOME_KEY, t0, ROUTER_CACHE_SECONDS);
-  noteCopy(state, "/my-tasks", t0 + 1000, ROUTER_CACHE_SECONDS);
-  noteCopy(state, "/inbox", t0 + 2000, ROUTER_CACHE_SECONDS);
-  noteCopy(state, "/reports", t0 + 3000, ROUTER_CACHE_SECONDS);
-  noteCopy(state, "/projects/p/views/v", t0 + 4000, ROUTER_CACHE_SECONDS);
+  // Shown in turn (the screens the person was on), and one only rendered ahead on hover, never shown.
+  for (const [key, at] of [["/my-tasks", t0 + 1000], ["/inbox", t0 + 2000], ["/reports", t0 + 3000]] as const) {
+    noteShown(state, key, at);
+    noteCopy(state, key, at, ROUTER_CACHE_SECONDS);
+  }
+  noteCopy(state, "/goals", t0 + 3500, HOVER_PREFETCH_SECONDS);
+  noteShown(state, "/projects/p/views/v", t0 + 4000);
   const now = t0 + 5000;
   assert.equal(mayHoldCopy(state, HOME_KEY, now), true);
   const plan = homeWarmPlan(state, "/projects/p/views/v", now);
   assert.equal(plan.bump, true);
   assert.equal(plan.prefetch[0], HOME_KEY);
-  // The newest other screens, never the one on view (the refresh renders it) and at most two.
+  // The newest screens the person was on, never the one on view (the refresh renders it), never one only
+  // rendered ahead, at most two.
   assert.deepEqual(plan.prefetch.slice(1), ["/reports", "/inbox"]);
   assert.equal(plan.prefetch.length, 1 + MAX_RECENT_REWARMED);
   applyWarmPlan(state, plan, "/projects/p/views/v", now);
@@ -70,10 +79,45 @@ test("item 1: within the router's window an older Home copy is held: empty the c
   assert.equal(mayHoldCopy(state, "/my-tasks", now + 1), false);
   assert.equal(mayHoldCopy(state, HOME_KEY, now + 1), true);
   assert.equal(mayHoldCopy(state, "/projects/p/views/v", now + 1), true);
-  // A second tick soon after: our own copy of Home predates it, so the cache is emptied again.
+  // A second tick soon after: our own copy of Home predates it, so the cache is emptied again…
   assert.equal(homeWarmPlan(state, "/projects/p/views/v", now + 3000).bump, true);
+  // …but rendering a screen again never keeps it "recent" (Opus r1 F1): 31 s after it was last shown, it
+  // isn't rendered again, however many warm-ups ran.
+  const later = homeWarmPlan(state, "/projects/p/views/v", t0 + 3000 + ROUTER_CACHE_SECONDS * 1000 + 1000);
+  assert.deepEqual(later.prefetch, [HOME_KEY]);
   // A prefetched copy is kept 60 s.
   assert.equal(homeWarmPlan(state, "/projects/p/views/v", now + HOVER_PREFETCH_SECONDS * 1000 + 5000).bump, false);
+});
+
+test("item 1: the cache is emptied at most every 10 s; heading for Home never throws its copy away", () => {
+  assert.equal(MIN_BUMP_GAP_MS, 10_000);
+  // A warm-up that only prefetches runs soon; one that empties the cache waits for the person to settle, so
+  // a quick click still has the held copy to draw (Codex r1 F1).
+  assert.equal(HOME_WARM_DELAY_MS, 250);
+  assert.ok(HOME_WARM_BUMP_DELAY_MS >= 2000);
+  assert.equal(bumpAllowedAt(50_000), 60_000);
+  assert.ok(bumpAllowedAt(-Infinity) < 0, "the first may run at once");
+  // Pointer on the Home link (or a click) while a warm-up that would empty the cache waits: the click draws
+  // the held copy, rendered again on arrival (Codex r1 F1).
+  assert.equal(warmOnIntent({ bump: true, prefetch: [HOME_KEY, "/inbox"] }), null);
+  assert.deepEqual(warmOnIntent({ bump: false, prefetch: [HOME_KEY] }), { bump: false, prefetch: [HOME_KEY] });
+  // That copy is older than the save, so arriving renders it again.
+  const state = emptyFreshness();
+  noteCopy(state, HOME_KEY, 1000, ROUTER_CACHE_SECONDS);
+  state.renderedAt.set(HOME_KEY, 1000);
+  noteShown(state, HOME_KEY, 1500);
+  noteWriteWithoutRefresh(state, 60_000);
+  assert.equal(arrivalNeedsRevalidation(state, HOME_KEY, 61_000), true);
+});
+
+test("item 1: Home's summary line leaves out what the person just completed or gave away", () => {
+  const ids = { overdue: ["a"], today: ["b", "c"], week: ["d"] };
+  assert.equal(summaryLine(liveSummaryCounts(ids, new Map(), new Set())), "2 due today · 1 overdue");
+  assert.equal(summaryLine(liveSummaryCounts(ids, new Map([["b", true]]), new Set())), "1 due today · 1 overdue");
+  assert.equal(summaryLine(liveSummaryCounts(ids, new Map([["b", false]]), new Set(["c", "a"]))), "1 due today");
+  assert.equal(summaryLine(liveSummaryCounts(ids, new Map([["a", true], ["b", true], ["c", true]]), new Set())), "1 due this week");
+  const page = readFileSync(new URL("../../src/app/(app)/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /<HomeSummary ids=\{summaryIds\}/);
 });
 
 test("item 1: on Home itself nothing is warmed; reaching Home during the save renders it again", () => {
@@ -173,7 +217,7 @@ test("item 4: no 'latest 100' note at 99 or exactly 100 notifications; shown onl
     assert.equal(inboxLimitNote("activity", page.hasMore) !== null, more, `${total}: the note`);
     assert.deepEqual(calls.filter((c) => c.startsWith("inbox")), ["inbox_page_window"], "one read, one more than shown");
   }
-  // Same items, same order as listInbox (the page of before).
+  // Same items, same order as listInbox (the page of before, which had no team message rows here).
   const { ctx } = stubContext(150);
   const [page, plain] = [await listInboxPage(ctx, "activity"), await listInbox(stubContext(150).ctx, "activity")];
   assert.deepEqual(page.items.map((i) => i.id), plain.map((i) => i.id));

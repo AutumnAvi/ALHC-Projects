@@ -7,10 +7,12 @@
 -- 1. Audit C97 — the Inbox's "Showing the latest 100 notifications" note. inbox_page(tab) returns the
 --    newest 100 items, so the app couldn't tell "exactly 100" from "more than 100". inbox_page_window(tab,
 --    max_items) is the same function with the page size as an argument (1–200): the app asks for 101 and
---    shows the note only when the 101st exists. Generated from inbox_page's live definition (every
---    `limit 100` becomes the argument; each edit asserted), so it can never drift from what the Inbox
---    reads today. SECURITY DEFINER like inbox_page (it reads only the caller's own items, by the same
---    rules), authenticated only; pinned in suite 60.
+--    shows the note only when the 101st exists. It also leaves out items about a team message, which the
+--    Inbox never shows (Oct 26 notes, batch 4: teams have no Messages tab), so they don't count toward the
+--    page. Copied from inbox_page's definition as it is now (every `limit 100` becomes the argument; each
+--    edit asserted): a later patch of inbox_page must be made to inbox_page_window too. SECURITY DEFINER
+--    like inbox_page (it reads only the caller's own items, by the same rules), authenticated only;
+--    pinned in suite 60.
 --
 -- 2. Audit C71 — dates in automation text. {{task.due_date}}, {{task.start_date}}, and {{today}} were
 --    already "Oct 24, 2026" (rule_placeholder_value, to_char 'Mon FMDD, YYYY'), but a date custom field
@@ -71,6 +73,11 @@ begin
     raise exception 'inbox_page_window: expected 6 page limits in inbox_page, found %', limits;
   end if;
   body := replace(body, 'limit 100', 'limit page_limit');
+  -- Team message items: not on the page (the app dropped them after the limit before).
+  if (length(body) - length(replace(body, E'    from team_kept t\n', ''))) / length(E'    from team_kept t\n') <> 1 then
+    raise exception 'inbox_page_window: expected one read of team_kept';
+  end if;
+  body := replace(body, E'    from team_kept t\n', E'    from team_kept t\n    where false\n');
   execute body;
 end;
 $do$;
@@ -78,7 +85,7 @@ $do$;
 revoke all on function public.inbox_page_window(text, integer) from public, anon;
 grant execute on function public.inbox_page_window(text, integer) to authenticated;
 comment on function public.inbox_page_window(text, integer) is
-  'Nov 16 batch 42 (audit C97): inbox_page(tab) with the page size as an argument (1–200), generated from inbox_page''s definition. The Inbox asks for 101 so it knows whether there are more than 100.';
+  'Nov 16 batch 42 (audit C97): inbox_page(tab) with the page size as an argument (1–200) and without team message items, copied from inbox_page''s definition (patch both). The Inbox asks for 101 so it knows whether there are more than 100.';
 
 -- 2. Dates in automation text.
 create or replace function public.alhc_plain_date(value text)

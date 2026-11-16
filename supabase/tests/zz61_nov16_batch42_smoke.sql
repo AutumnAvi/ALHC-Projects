@@ -1,7 +1,8 @@
 -- Nov 16 batch 42 (20261116010000_nov16_batch42_a.sql).
 --   1. inbox_page_window(tab, max_items): definer like inbox_page, authenticated only; with 100 it is
---      exactly inbox_page; with 101 it adds the 101st item only when there is one (audit C97: the Inbox
---      tells "exactly 100" from "more than 100"); the size is capped to 1–200; someone else's items never.
+--      exactly inbox_page (without team message items, which the Inbox never shows); with 101 it adds the
+--      101st item only when there is one (audit C97: the Inbox tells "exactly 100" from "more than 100");
+--      team message items never count toward the page; the size is capped to 1–200; someone else's never.
 --   2. Dates in automation text (audit C71): {{task.due_date}}, {{task.start_date}}, {{today}} read
 --      "Oct 24, 2026" (empty without a date), and so does a date custom field ({{field.Launch}}) now.
 --
@@ -102,6 +103,48 @@ begin
   -- Someone with none of these items sees none of them.
   perform set_config('request.jwt.claim.sub', 'e4200000-0000-4000-8000-000000000001', false);
   assert jsonb_array_length(public.inbox_page_window('activity', 200)) = 0, 'never someone else''s items';
+end $$;
+
+-- Team message items (the Inbox drops them): someone with exactly 100 notifications and 5 newer team
+-- message items still has a full page of 100 and nothing more.
+reset role;
+alter table public.inbox_items disable trigger user;
+alter table public.team_messages disable trigger user;
+do $$
+declare
+  team uuid;
+  i integer;
+  m uuid;
+begin
+  insert into public.teams (workspace_id, name, created_by)
+  values ('00000000-0000-4000-8000-000000000001', 'B42 Team', 'e4200000-0000-4000-8000-000000000001') returning id into team;
+  for i in 1 .. 5 loop
+    insert into public.team_messages (team_id, title, body, author_id)
+    values (team, format('B42 thread %s', i), 'Hello', 'e4200000-0000-4000-8000-000000000001') returning id into m;
+    insert into public.inbox_items (recipient_id, actor_id, team_message_id, kind, data, created_at)
+    values ('e4200000-0000-4000-8000-000000000003', 'e4200000-0000-4000-8000-000000000001', m, 'message', '{}'::jsonb,
+            timestamptz '2026-11-15' + make_interval(mins => i));
+  end loop;
+end $$;
+alter table public.team_messages enable trigger user;
+alter table public.inbox_items enable trigger user;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'e4200000-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  page jsonb := public.inbox_page('activity');
+  win jsonb := public.inbox_page_window('activity', 101);
+begin
+  assert (select count(*) from jsonb_array_elements(page) e where jsonb_typeof(e -> 'team_message') = 'object') = 5,
+    'inbox_page still returns them (the release on main drops them in the app)';
+  assert jsonb_array_length(win) = 100, format('a full page, nothing more: %s', jsonb_array_length(win));
+  assert not exists (select 1 from jsonb_array_elements(win) e where jsonb_typeof(e -> 'team_message') = 'object'),
+    'no team message items in the window';
+  -- What the Inbox showed before (inbox_page without team items) leads the window, in order.
+  assert (select jsonb_agg(e order by o) from jsonb_array_elements(win) with ordinality x(e, o) where o <= 95)
+       = (select jsonb_agg(e order by o) from jsonb_array_elements(page) with ordinality x(e, o)
+          where jsonb_typeof(e -> 'team_message') is distinct from 'object'), 'same order as before';
 end $$;
 
 -- 2. Dates in automation text --------------------------------------------------------------------------

@@ -5,7 +5,9 @@
 // skeleton was ever drawn, the server renders it waited for, and whether the ticked task still shows as
 // open on Home (it must not). Usage:
 //   COOKIE=/path/to/session-cookie node scripts/perf/tick-home-timing.mjs <baseUrl> <label> [rounds]
-// Env: FROM=project|my-tasks (default project), PROJECT="Second project 1", STAY_MS (default 40000).
+// Env: FROM=project|my-tasks (default project), PROJECT="Second project 1", STAY_MS (default 40000),
+// CLICK_AFTER_MS: click Home this long after the tick instead of after its save settles (a quick click);
+// NO_TICK=1: the same moves without the tick (what the router keeps by itself).
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -95,10 +97,13 @@ function probeHome(page, title) {
     const name = (await box.getAttribute("aria-label")) ?? "";
     const title = name.replace(/^Mark “/, "").replace(/” complete$/, "");
     const tickAt = Date.now();
-    await box.click();
-    // The save (a server action POST) and anything it sets off.
-    await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(800);
+    if (!process.env.NO_TICK) await box.click();
+    if (process.env.CLICK_AFTER_MS) await page.waitForTimeout(Number(process.env.CLICK_AFTER_MS));
+    else {
+      // The save (a server action POST) and anything it sets off.
+      await page.waitForLoadState("networkidle").catch(() => {});
+      await page.waitForTimeout(800);
+    }
     const afterTick = rsc.filter((r) => r.at >= tickAt);
     const home = sidebar("Home");
     await home.hover();

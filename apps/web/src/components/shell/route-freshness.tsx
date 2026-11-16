@@ -23,6 +23,9 @@ import {
   ROUTER_CACHE_SECONDS,
   routeKey,
   routeKeyOfHref,
+  bumpAllowedAt,
+  warmOnIntent,
+  type WarmPlan,
 } from "@/lib/route-freshness";
 
 // Nov 4 notes, batch 28 (M4): stale-while-revalidate for whole screens (src/lib/route-freshness.ts). Going
@@ -48,10 +51,14 @@ function prefetchFull(router: AppRouterInstance, href: string) {
 // After a save Home shows, how long to wait for more (ticking several tasks quickly renders Home once; a
 // save that starts meanwhile puts it off again). Short, so the copy is usually ready before the click.
 export const HOME_WARM_DELAY_MS = 250;
+// A warm-up that must empty the router's cache throws away the copy of Home a quick click would draw at
+// once, so it waits for the person to settle (and runs at most every MIN_BUMP_GAP_MS, route-freshness.ts).
+export const HOME_WARM_BUMP_DELAY_MS = 2000;
 let warmTimer: number | undefined;
 let runWarm: (() => void) | null = null;
 
-// The sidebar's Home link (pointer on it, focus, click): a warm-up still waiting runs now.
+// The sidebar's Home link (pointer on it, focus, click): a warm-up still waiting runs now, unless it would
+// throw away the copy of Home the click is about to draw (warmOnIntent).
 export function flushHomeWarm() {
   if (warmTimer === undefined || !runWarm) return;
   window.clearTimeout(warmTimer);
@@ -86,23 +93,35 @@ export function RouteFreshness() {
     let inFlight = 0;
     let burstStartedAt = 0;
     let anyOk = false;
-    const warm = () => {
+    let lastBumpAt = -Infinity;
+    const warm = (intent: boolean) => {
       warmTimer = undefined;
       if (!anyOk) return;
-      anyOk = false;
       const now = Date.now();
       const here = current.current;
       if (here === HOME_KEY) {
+        anyOk = false;
         // Reached Home while the save was still going: render it again so it shows the save.
         if (homeNeedsRenderAfterSave(state, here, burstStartedAt)) requestLiveRefresh();
         return;
       }
-      const plan = homeWarmPlan(state, here, now);
-      if (plan.bump) router.refresh();
+      let plan: WarmPlan | null = homeWarmPlan(state, here, now);
+      if (intent) plan = warmOnIntent(plan);
+      else if (plan.bump && now < bumpAllowedAt(lastBumpAt)) {
+        // Emptied the cache moments ago: once more when the gap is up (or on the way to Home).
+        warmTimer = window.setTimeout(() => warm(false), bumpAllowedAt(lastBumpAt) - now);
+        return;
+      }
+      anyOk = false;
+      if (!plan) return;
+      if (plan.bump) {
+        router.refresh();
+        lastBumpAt = now;
+      }
       for (const href of plan.prefetch) prefetchFull(router, href);
       applyWarmPlan(state, plan, here, now);
     };
-    runWarm = warm;
+    runWarm = () => warm(true);
     const stop = onHomeWrite((event) => {
       if (event.phase === "start") {
         if (inFlight === 0 && warmTimer === undefined) burstStartedAt = Date.now();
@@ -112,17 +131,21 @@ export function RouteFreshness() {
         return;
       }
       inFlight = Math.max(0, inFlight - 1);
-      if (event.ok) anyOk = true;
-      // A save that refreshed emptied the router's cache (Home's copy included) and rendered this screen.
-      if (event.ok && !event.screenOnly) {
-        state.copies.clear();
-        noteCopy(state, current.current, event.at, ROUTER_CACHE_SECONDS);
+      if (event.ok) {
+        anyOk = true;
+        // Every copy drawn from the router's cache after this is rendered again on arrival. (A save's own
+        // refresh — next/cache refresh() — renders this screen but leaves rendered-ahead copies, Home's
+        // included, in place: they stay in `copies`.)
+        noteWriteWithoutRefresh(state, event.at);
       }
-      if (inFlight === 0) warmTimer = window.setTimeout(warm, HOME_WARM_DELAY_MS);
+      if (inFlight === 0) {
+        const bump = homeWarmPlan(state, current.current, Date.now()).bump;
+        warmTimer = window.setTimeout(() => warm(false), bump ? HOME_WARM_BUMP_DELAY_MS : HOME_WARM_DELAY_MS);
+      }
     });
     return () => {
       stop();
-      if (runWarm === warm) runWarm = null;
+      runWarm = null;
     };
   }, [router]);
   useEffect(() => {

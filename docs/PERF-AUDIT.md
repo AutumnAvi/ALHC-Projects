@@ -270,11 +270,13 @@ The status audit: "ticking a task and then going back to Home still isn't faster
 | --- | ---: | ---: | ---: |
 | 40 s on a project | 328 | **57** (44 on a second run) | 3/3 → **0/3** |
 | 40 s on My tasks | 370 | **95** | 2/2 → **0/2** |
-| 5 s on a project | 39 (Home's pre-tick copy; its counts caught up after a background render) | **40** (a copy rendered after the tick) | 0 → 0 |
+| 5 s on a project | 35 (Home's pre-tick copy; its summary caught up after a background render) | **36** (the held copy, its Today card and summary line showing the tick; rendered again in the background) | 0 → 0 |
+| Click 300 ms after the tick, 40 s on a project | 330 | **46** | 2/2 → **0/2** |
+| Click 300 ms after the tick, 5 s on a project | 39 | **36** | 0 → 0 |
 
 The ticked task never showed as open. With the live channel down (every save refreshes, as before batch 40) Home now draws at once too: 5 s on a project 333 → **36 ms**, 40 s 39 ms, no skeleton (the warm-up runs after the save's refresh).
 
-**The cost.** One background render of Home after a burst of saves that Home shows (completion, name, assignee) made elsewhere; when the router may still hold an older copy of Home (Home seen in the last 30–60 s), also a `router.refresh()` of the screen on view (what every save did before batch 40) and up to two recent screens rendered again.
+**The cost.** One background render of Home after a burst of saves that Home shows (completion, name, assignee) made elsewhere. When the router may still hold an older copy of Home (Home seen in the last 30–60 s), that copy is kept for a quick click (its Today card and summary line show the tick; My projects' and the lead cards' numbers catch up with the background render on arrival); after 2 s of quiet, and at most every 10 s, the cache is emptied (`router.refresh()` of the screen on view, what every save did before batch 40) and Home plus up to two screens the person was on are rendered again.
 
 ## Deferred
 

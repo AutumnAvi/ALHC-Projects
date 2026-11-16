@@ -4,10 +4,11 @@ import { LeadCards } from "@/components/home/lead-cards";
 import { MyProjectsCard } from "@/components/home/my-projects-card";
 import { NEEDS_YOU_INBOX, NeedsYouCard } from "@/components/home/needs-you-card";
 import { TodayCard } from "@/components/home/today-card";
+import { HomeSummary } from "@/components/home/home-summary";
 import { TaskPaneSlot } from "@/components/task/task-pane";
 import { PageHeader } from "@/components/ui";
 import { requireMember } from "@/lib/auth";
-import { checklistGroupOf, summaryLine, todayCardSplit } from "@alhc/core/checklist";
+import { checklistGroupOf, todayCardSplit } from "@alhc/core/checklist";
 import { loadAppShell, loadHomeScreen } from "@/lib/screen-loaders";
 import { firstName, greetingFor, hourIn, longDateIn } from "@alhc/core/home";
 import { permissionsFor } from "@alhc/core/permissions";
@@ -32,13 +33,11 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const { myTasksChecked: checked, workWeek, projects, myRoles: roles, archivedProjects: archived, profiles, unreadCount: unread } = shell;
 
   const groupOf = (dueOn: string | null) => checklistGroupOf(dueOn, today);
-  const counts = {
-    overdue: open.filter((t) => groupOf(t.dueOn) === "overdue").length,
-    today: open.filter((t) => groupOf(t.dueOn) === "today").length,
-    week: open.filter((t) => groupOf(t.dueOn) === "week").length,
-  };
-  const summary = summaryLine(counts);
-  const laterCount = open.length - counts.overdue - counts.today;
+  // Batch 42 (item 1): the summary line counts in the browser too (HomeSummary), so a copy of Home drawn
+  // right after a tick doesn't still count it.
+  const idsIn = (group: string) => open.filter((t) => groupOf(t.dueOn) === group).map((t) => t.id);
+  const summaryIds = { overdue: idsIn("overdue"), today: idsIn("today"), week: idsIn("week") };
+  const laterCount = open.length - summaryIds.overdue.length - summaryIds.today.length;
   const undated = open.filter((t) => t.datePrompt && t.canEdit).length;
   // Batch 39 (item 3): the Today card gets only what it shows (counts above use the whole list).
   const todayCard = todayCardSplit(open, today);
@@ -64,18 +63,7 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
               <h2 className="mt-1 text-3xl font-medium tracking-tight text-zinc-900">
                 {greetingFor(hourIn(timeZone))}, {firstName(member.name, member.email)}
               </h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                {summary ? (
-                  <>
-                    <span className={counts.overdue ? "font-medium text-zinc-900" : ""}>{summary}</span>
-                    {awaiting.length ? ` · ${awaiting.length} waiting on your approval` : ""}
-                  </>
-                ) : awaiting.length ? (
-                  `${awaiting.length} waiting on your approval`
-                ) : (
-                  "Nothing due today. A good day to get ahead."
-                )}
-              </p>
+              <HomeSummary ids={summaryIds} awaiting={awaiting.length} />
             </div>
             <div className="grid gap-4 @4xl:grid-cols-2">
               <TodayCard

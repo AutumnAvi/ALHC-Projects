@@ -79,20 +79,39 @@ export type WarmPlan = {
 
 // After a save Home shows (a completion, a name, an assignee) settles on another screen (`current`): get
 // a copy of Home rendered after it, so going there next draws at once and shows the save. When the router
-// may still hold an older copy of Home, the cache is emptied first; the other screens shown in the last
-// ROUTER_CACHE_SECONDS (which that empties too) are rendered again with it, up to MAX_RECENT_REWARMED.
+// may still hold an older copy of Home, the cache is emptied first; the other screens the person was on in
+// the last ROUTER_CACHE_SECONDS (which that empties too) are rendered again with it, up to
+// MAX_RECENT_REWARMED — chosen by when they were shown, never by when they were last rendered ahead, so
+// rendering a screen again never keeps it "recent".
 // On Home itself there's nothing to warm (Home shows its saves itself, or its save refreshed it).
 export function homeWarmPlan(state: FreshnessState, current: string, now: number): WarmPlan {
   if (current === HOME_KEY) return { bump: false, prefetch: [] };
   const bump = mayHoldCopy(state, HOME_KEY, now);
   const recent = bump
-    ? [...state.copies.entries()]
-        .filter(([key, copy]) => key !== current && key !== HOME_KEY && now - copy.at < ROUTER_CACHE_SECONDS * 1000)
-        .sort((a, b) => b[1].at - a[1].at)
+    ? [...state.shownAt.entries()]
+        .filter(([key, at]) => key !== current && key !== HOME_KEY && now - at < ROUTER_CACHE_SECONDS * 1000)
+        .sort((a, b) => b[1] - a[1])
         .slice(0, MAX_RECENT_REWARMED)
         .map(([key]) => key)
     : [];
   return { bump, prefetch: [HOME_KEY, ...recent] };
+}
+
+// Emptying the router's cache costs a render of the screen on view too: at most once in this long. A save
+// in between waits for the next turn (or for the person to head for Home, see warmOnIntent).
+export const MIN_BUMP_GAP_MS = 10_000;
+
+// When a warm-up that has to empty the cache may run (now, or later at this time).
+export function bumpAllowedAt(lastBumpAt: number): number {
+  return lastBumpAt + MIN_BUMP_GAP_MS;
+}
+
+// The person heads for Home (pointer on the link, focus, click) while a warm-up waits. Emptying the cache
+// then would throw away the copy of Home the click is about to draw, so it doesn't run: Home is drawn from
+// that copy at once (with the person's own edits held on it, task-edits.ts) and rendered again in the
+// background on arrival. Without an older copy to keep, the warm-up runs now.
+export function warmOnIntent(plan: WarmPlan): WarmPlan | null {
+  return plan.bump ? null : plan;
 }
 
 // What the router holds once a plan ran: emptied (bump) except the screen on view (rendered again by the

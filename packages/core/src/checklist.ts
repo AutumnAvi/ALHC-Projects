@@ -184,6 +184,16 @@ export function checklistDueLabel(dueOn: string, today: string): string {
 }
 
 // "3 due today · 1 overdue" (Home's greeting line). Empty when there's nothing open.
+// Nov 16 batch 42 (item 1): Home's summary counts with the person's own changes the server's copy may not
+// show yet (a copy of Home drawn from the router's cache right after a tick): tasks they just completed or
+// gave to someone else leave the counts (undoing that puts them back).
+export type SummaryIds = { overdue: readonly string[]; today: readonly string[]; week: readonly string[] };
+
+export function liveSummaryCounts(ids: SummaryIds, done: ReadonlyMap<string, boolean>, gone: ReadonlySet<string>) {
+  const open = (list: readonly string[]) => list.filter((id) => done.get(id) !== true && !gone.has(id)).length;
+  return { overdue: open(ids.overdue), today: open(ids.today), week: open(ids.week) };
+}
+
 export function summaryLine(counts: { today: number; overdue: number; week: number }): string {
   const parts: string[] = [];
   if (counts.today) parts.push(`${counts.today} due today`);

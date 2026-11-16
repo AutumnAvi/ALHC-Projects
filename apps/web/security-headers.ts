@@ -72,7 +72,8 @@ function supabaseOrigins(url: string | undefined): { https: string; wss: string 
   } catch {
     // Falls through to the wildcard below.
   }
-  // Without the address at build time (a CI build without env): any Supabase project. Report-only either way.
+  // Without the address at build time (a CI build without env): any Supabase project (enforced too, so a
+  // build without the variable still loads Supabase).
   return { https: "https://*.supabase.co", wss: "wss://*.supabase.co" };
 }
 
