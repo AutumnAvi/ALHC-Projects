@@ -18,6 +18,7 @@ const nextConfig: NextConfig = {
     return securityHeaderRules({
       supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
       dev: process.env.NODE_ENV === "development",
+      vercelPreview: process.env.VERCEL_ENV === "preview",
     });
   },
   // Turbopack compiles workspace packages on its own; listed so the intent is plain (and webpack agrees).

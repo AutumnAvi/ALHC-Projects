@@ -7,10 +7,11 @@ import { createRequire } from "node:module";
 import { test } from "node:test";
 import {
   CSP_REPORT_PATH,
+  contentDirectives,
   enforcedPolicy,
-  reportOnlyPolicy,
   securityHeaderRules,
   type HeaderRule,
+  type SecurityHeaderOptions,
 } from "../../security-headers";
 import { createReportLimiter, parseCspReports, sanitizeBlocked, sanitizePath } from "@/lib/csp-report";
 import { POST as cspReport } from "@/app/api/csp-report/route";
@@ -95,15 +96,19 @@ test("attachment previews can be framed by this app only (the approver's review)
   );
 });
 
-test("every path: nosniff, the referrer policy, two-year https, the report-only content policy", () => {
+test("every path: nosniff, the referrer policy, two-year https, the enforced content policy (batch 42)", () => {
   for (const path of [...NOT_FRAMEABLE, "/forms/x", "/forms/x/embed", "/attachments/x"]) {
     const h = headersFor(path, PROD);
     assert.equal(h.get("x-content-type-options"), "nosniff", path);
     assert.equal(h.get("strict-transport-security"), "max-age=63072000; includeSubDomains", path);
-    assert.ok(h.get("content-security-policy-report-only"), path);
     assert.ok(h.get("referrer-policy"), path);
-    // The enforced policy never restricts how a page loads.
-    assert.doesNotMatch(h.get("content-security-policy") ?? "", /script-src|style-src|connect-src|default-src/, path);
+    // Nov 16 batch 42: the whole content policy is enforced on every path, and still reports.
+    const csp = h.get("content-security-policy") ?? "";
+    for (const directive of ["default-src 'self'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "img-src 'self'", "font-src 'self'", "media-src 'self'", "frame-src 'self'", "worker-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", `report-uri ${CSP_REPORT_PATH}`]) {
+      assert.match(csp, new RegExp(`(^|; )${directive.replace(/[.*+?^${}()|[\]\\']/g, "\\$&")}`), `${path}: ${directive}`);
+    }
+    // One policy per page: nothing is left report-only.
+    assert.equal(h.has("content-security-policy-report-only"), false, path);
   }
   // No preload: that is a one-way commitment for the domain.
   assert.doesNotMatch(JSON.stringify(PROD), /preload/);
@@ -118,29 +123,50 @@ test("secret links never send a referrer; everything else sends other sites the 
   }
 });
 
-test("the report-only policy allows what the app loads today", () => {
-  const csp = reportOnlyPolicy({ supabaseUrl: SUPABASE, dev: false });
+test("the content policy allows what the app loads today", () => {
+  const csp = enforcedPolicy("'none'", { supabaseUrl: SUPABASE, dev: false });
   const directive = (name: string) => csp.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
   assert.match(directive("connect-src"), new RegExp(`'self' ${SUPABASE} wss://abcdefghijklmnop\\.supabase\\.co`));
   assert.match(directive("script-src"), /'self' 'unsafe-inline' 'wasm-unsafe-eval'/);
-  assert.doesNotMatch(directive("script-src"), /'unsafe-eval'/, "no eval in production");
-  assert.match(directive("worker-src"), /'self'/);
+  assert.doesNotMatch(directive("script-src"), /'unsafe-eval'|https:|\*/, "no eval and no other site's scripts in production");
+  assert.match(directive("worker-src"), /'self' blob:/);
   assert.match(directive("frame-src"), new RegExp(`'self' ${SUPABASE}`));
   assert.match(directive("media-src"), new RegExp(SUPABASE));
   assert.match(directive("img-src"), /'self' data: blob: https:/);
   assert.equal(directive("object-src"), "object-src 'none'");
+  assert.equal(directive("form-action"), "form-action 'self'");
   assert.equal(directive("report-uri"), `report-uri ${CSP_REPORT_PATH}`);
   // Dev only: React's eval-based stacks and Speed Insights' debug script; no HSTS from `next dev`.
-  assert.match(reportOnlyPolicy({ supabaseUrl: SUPABASE, dev: true }), /'unsafe-eval' https:\/\/va\.vercel-scripts\.com/);
+  assert.match(enforcedPolicy("'none'", { supabaseUrl: SUPABASE, dev: true }), /'unsafe-eval' https:\/\/va\.vercel-scripts\.com/);
   assert.equal(headersFor("/login", DEV).has("strict-transport-security"), false);
   // Without the address at build time: any Supabase project, never nothing.
-  assert.match(reportOnlyPolicy({ supabaseUrl: undefined, dev: false }), /connect-src 'self' https:\/\/\*\.supabase\.co wss:\/\/\*\.supabase\.co/);
-  assert.match(reportOnlyPolicy({ supabaseUrl: "not a url", dev: false }), /https:\/\/\*\.supabase\.co/);
+  assert.match(enforcedPolicy("'none'", { supabaseUrl: undefined, dev: false }), /connect-src 'self' https:\/\/\*\.supabase\.co wss:\/\/\*\.supabase\.co/);
+  assert.match(enforcedPolicy("'none'", { supabaseUrl: "not a url", dev: false }), /https:\/\/\*\.supabase\.co/);
+  // A local stack's http Supabase: its pictures load too (https: alone wouldn't cover them).
+  assert.match(contentDirectives({ supabaseUrl: "http://127.0.0.1:54321", dev: false })["img-src"].join(" "), /http:\/\/127\.0\.0\.1:54321/);
+  assert.match(contentDirectives({ supabaseUrl: "http://127.0.0.1:54321", dev: false })["connect-src"].join(" "), /ws:\/\/127\.0\.0\.1:54321/);
 });
 
-test("the enforced policy is framing, plugins, and <base> only", () => {
-  assert.equal(enforcedPolicy("'none'"), "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
-  assert.equal(enforcedPolicy("*"), "frame-ancestors *; object-src 'none'; base-uri 'self'");
+test("the Vercel toolbar is allowed on preview deployments only", () => {
+  const preview: SecurityHeaderOptions = { supabaseUrl: SUPABASE, dev: false, vercelPreview: true };
+  const p = contentDirectives(preview);
+  assert.ok(p["script-src"].includes("https://vercel.live"));
+  assert.ok(p["frame-src"].includes("https://vercel.live"));
+  assert.ok(p["connect-src"].includes("https://vercel.live"));
+  const production = JSON.stringify(contentDirectives({ supabaseUrl: SUPABASE, dev: false }));
+  assert.doesNotMatch(production, /vercel\.live|pusher/);
+  const config = readFileSync(new URL("../../next.config.ts", import.meta.url), "utf8");
+  assert.match(config, /vercelPreview: process\.env\.VERCEL_ENV === "preview"/);
+});
+
+test("the enforced policy: who may frame, then the content policy", () => {
+  const options = { supabaseUrl: SUPABASE, dev: false };
+  assert.match(enforcedPolicy("'none'", options), /^frame-ancestors 'none'; default-src 'self'; /);
+  assert.match(enforcedPolicy("*", options), /^frame-ancestors \*; default-src 'self'; /);
+  assert.match(enforcedPolicy("'self'", options), /^frame-ancestors 'self'; /);
+  // Same content policy whatever the framing.
+  const strip = (csp: string) => csp.replace(/^frame-ancestors [^;]+; /, "");
+  assert.equal(strip(enforcedPolicy("'none'", options)), strip(enforcedPolicy("*", options)));
 });
 
 test("next.config.ts turns off X-Powered-By and serves these rules", () => {
