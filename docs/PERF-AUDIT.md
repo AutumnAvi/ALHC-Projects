@@ -260,6 +260,22 @@ The 497 ms back to My tasks is the browser drawing 1,700 open tasks, not waiting
 
 **Checks on the same stack (after build, scripted):** pane rename → List row at once; List completion → open pane at once and back; a rename whose write fails (the request is held 1.5 s, then cut) shows at once in the List and the pane, then both go back to the old name; a revisit draws without a blocking render and revalidates once in the background; no page errors. Cache bounds, newest-wins, edit rollback, and route freshness rules: `tests/unit/nov4-batch28.test.ts`.
 
+## Nov 16 batch 42: tick, then Home
+
+The status audit: "ticking a task and then going back to Home still isn't faster". Batch 40 made a completion skip its refresh so the router keeps recently visited screens, and promised Home at once "within 30 seconds". Measured, it only ever helped within 30 seconds **of when Home was fetched**: Next keeps a dynamically fetched screen `staleTimes.dynamic` (30 s) from its fetch, so after half a minute on a project Home was fetched again behind its skeleton, tick or no tick — and a quick return drew Home's pre-tick copy (its counts not yet showing the tick) until the background render.
+
+**How it was measured.** The local stack (Postgres 17, every migration, `scripts/perf/seed.sql` plus a 60-task "Second project 1" assigned to the seed person, PostgREST 12.2 behind the local gateway with a Realtime stand-in that acks channel joins, so the app's live topics read as joined as on Supabase), `next build && next start`, headless Chrome 1440 × 900. `scripts/perf/tick-home-timing.mjs`: open Home, open the project from the sidebar, stay, tick the first open task, wait for the save, click Home; from the click to the first frame with Home drawn and no skeleton, whether a skeleton was drawn, and whether the ticked task still shows as open on Home.
+
+| Tick, then Home (median ms) | Before (main) | After | Skeleton before → after |
+| --- | ---: | ---: | ---: |
+| 40 s on a project | 328 | **57** (44 on a second run) | 3/3 → **0/3** |
+| 40 s on My tasks | 370 | **95** | 2/2 → **0/2** |
+| 5 s on a project | 39 (Home's pre-tick copy; its counts caught up after a background render) | **40** (a copy rendered after the tick) | 0 → 0 |
+
+The ticked task never showed as open. With the live channel down (every save refreshes, as before batch 40) Home now draws at once too: 5 s on a project 333 → **36 ms**, 40 s 39 ms, no skeleton (the warm-up runs after the save's refresh).
+
+**The cost.** One background render of Home after a burst of saves that Home shows (completion, name, assignee) made elsewhere; when the router may still hold an older copy of Home (Home seen in the last 30–60 s), also a `router.refresh()` of the screen on view (what every save did before batch 40) and up to two recent screens rendered again.
+
 ## Deferred
 
 Deferred: none.

@@ -1,17 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import type { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { useEffect, useRef, useState, type ComponentProps, type FocusEvent, type PointerEvent } from "react";
 import { requestLiveRefresh, useLiveRefresher } from "@/lib/live";
-import { onWriteWithoutRefresh } from "@/lib/patched-writes";
+import { onHomeWrite, onWriteWithoutRefresh } from "@/lib/patched-writes";
 import {
+  applyWarmPlan,
   arrivalNeedsRevalidation,
   emptyFreshness,
+  HOME_KEY,
+  HOVER_PREFETCH_SECONDS,
+  homeNeedsRenderAfterSave,
+  homeWarmPlan,
+  noteCopy,
   notePrefetch,
   noteRendered,
   noteShown,
   noteWriteWithoutRefresh,
+  ROUTER_CACHE_SECONDS,
   routeKey,
   routeKeyOfHref,
 } from "@/lib/route-freshness";
@@ -29,6 +38,27 @@ if (typeof window !== "undefined") onWriteWithoutRefresh((at) => noteWriteWithou
 let skeletons = 0;
 let counted = 0;
 
+// Nov 16 batch 42 (item 1): a full prefetch (the screen's data too, kept HOVER_PREFETCH_SECONDS), what
+// <Link prefetch={true}> asks for. router.prefetch's public type takes the router's enum; its value is "full".
+export const FULL_PREFETCH = "full" as PrefetchKind;
+function prefetchFull(router: AppRouterInstance, href: string) {
+  router.prefetch(href, { kind: FULL_PREFETCH });
+}
+
+// After a save Home shows, how long to wait for more (ticking several tasks quickly renders Home once; a
+// save that starts meanwhile puts it off again). Short, so the copy is usually ready before the click.
+export const HOME_WARM_DELAY_MS = 250;
+let warmTimer: number | undefined;
+let runWarm: (() => void) | null = null;
+
+// The sidebar's Home link (pointer on it, focus, click): a warm-up still waiting runs now.
+export function flushHomeWarm() {
+  if (warmTimer === undefined || !runWarm) return;
+  window.clearTimeout(warmTimer);
+  warmTimer = undefined;
+  runWarm();
+}
+
 // Rendered by every loading skeleton (LoadingRegion).
 export function SkeletonShown() {
   useEffect(() => {
@@ -42,7 +72,59 @@ export function RouteFreshness() {
   const search = useSearchParams();
   const key = routeKey(pathname ?? "", search?.toString());
   const previous = useRef<string | null>(null);
+  const router = useRouter();
+  const current = useRef(key);
+  useEffect(() => {
+    current.current = key;
+  }, [key]);
   useLiveRefresher();
+  // Batch 42 (item 1): a save Home shows that settled here — a completion, a name, an assignee — gets a
+  // copy of Home rendered after it (route-freshness.ts, homeWarmPlan), so "tick, then Home" draws Home at
+  // once with the task done. Before, the router's copy of Home was dropped 30 seconds after it was
+  // fetched, so coming back later always waited for a full render behind a skeleton.
+  useEffect(() => {
+    let inFlight = 0;
+    let burstStartedAt = 0;
+    let anyOk = false;
+    const warm = () => {
+      warmTimer = undefined;
+      if (!anyOk) return;
+      anyOk = false;
+      const now = Date.now();
+      const here = current.current;
+      if (here === HOME_KEY) {
+        // Reached Home while the save was still going: render it again so it shows the save.
+        if (homeNeedsRenderAfterSave(state, here, burstStartedAt)) requestLiveRefresh();
+        return;
+      }
+      const plan = homeWarmPlan(state, here, now);
+      if (plan.bump) router.refresh();
+      for (const href of plan.prefetch) prefetchFull(router, href);
+      applyWarmPlan(state, plan, here, now);
+    };
+    runWarm = warm;
+    const stop = onHomeWrite((event) => {
+      if (event.phase === "start") {
+        if (inFlight === 0 && warmTimer === undefined) burstStartedAt = Date.now();
+        inFlight += 1;
+        window.clearTimeout(warmTimer);
+        warmTimer = undefined;
+        return;
+      }
+      inFlight = Math.max(0, inFlight - 1);
+      if (event.ok) anyOk = true;
+      // A save that refreshed emptied the router's cache (Home's copy included) and rendered this screen.
+      if (event.ok && !event.screenOnly) {
+        state.copies.clear();
+        noteCopy(state, current.current, event.at, ROUTER_CACHE_SECONDS);
+      }
+      if (inFlight === 0) warmTimer = window.setTimeout(warm, HOME_WARM_DELAY_MS);
+    });
+    return () => {
+      stop();
+      if (runWarm === warm) runWarm = null;
+    };
+  }, [router]);
   useEffect(() => {
     const now = Date.now();
     const left = previous.current;
@@ -57,7 +139,10 @@ export function RouteFreshness() {
       const fetched = skeletons > counted || document.querySelector(".skeleton") !== null;
       counted = skeletons;
       // The first screen of the visit, a fetch, or a background render: its server copy is fresh now.
-      if (left === null || fetched || revisit) noteRendered(state, key, Date.now());
+      if (left === null || fetched || revisit) {
+        noteRendered(state, key, Date.now());
+        noteCopy(state, key, Date.now(), ROUTER_CACHE_SECONDS);
+      }
       if (revisit && !fetched) requestLiveRefresh();
     }, 50);
     return () => window.clearTimeout(timer);
@@ -81,7 +166,12 @@ export function PrefetchLink({ href, onPointerEnter, onPointerLeave, onFocus, pr
     if (!target) return;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      if (notePrefetch(state, routeKeyOfHref(target), Date.now())) setActive(true);
+      const now = Date.now();
+      const routeKeyOfTarget = routeKeyOfHref(target);
+      if (notePrefetch(state, routeKeyOfTarget, now)) {
+        noteCopy(state, routeKeyOfTarget, now, HOVER_PREFETCH_SECONDS);
+        setActive(true);
+      }
     }, delay);
   };
   return (

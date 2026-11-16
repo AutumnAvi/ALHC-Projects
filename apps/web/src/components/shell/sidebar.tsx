@@ -23,6 +23,7 @@ import { Group, NAV_ICON, NAV_LINK } from "@/components/shell/sidebar-group";
 import { SidebarProjects, type SidebarProject } from "@/components/shell/sidebar-projects";
 import type { SidebarFolderState } from "@alhc/core/sidebar-folders";
 import { SCROLL_AREA } from "@/components/shell/shell-frame";
+import { flushHomeWarm } from "@/components/shell/route-freshness";
 
 export type { SidebarProject };
 
@@ -132,7 +133,15 @@ function NavLink({
   children?: ReactNode;
 }) {
   return (
-    <Link href={href} aria-current={current ? "page" : undefined} className={NAV_LINK}>
+    <Link
+      href={href}
+      aria-current={current ? "page" : undefined}
+      className={NAV_LINK}
+      // Batch 42 (item 1): a copy of Home waiting to be rendered after a save is rendered now.
+      onPointerEnter={href === "/" ? flushHomeWarm : undefined}
+      onFocus={href === "/" ? flushHomeWarm : undefined}
+      onClick={href === "/" ? flushHomeWarm : undefined}
+    >
       <Icon className={NAV_ICON} aria-hidden />
       <span className="truncate">{label}</span>
       {children}

@@ -41,6 +41,15 @@ export function projectViewPatches(config: ViewConfig, options: { paged: boolean
   return kinds;
 }
 
+// Nov 16 batch 42 (item 1): the saves Home shows (its Today list, Needs you, and its counts read task
+// names, completion, and assignees). When one of these settles somewhere else, the browser renders a fresh
+// copy of Home in the background (route-freshness.tsx), so going there next is instant and current.
+export const HOME_WRITE_KINDS: readonly PatchedWriteKind[] = ["complete", "title", "assign"];
+
+export function homeShowsWrite(kind: PatchedWriteKind): boolean {
+  return HOME_WRITE_KINDS.includes(kind);
+}
+
 // My tasks (the checklist and the classic views) groups, sorts, and counts in the browser; a task given
 // to someone else leaves it, a completion moves to the completed list.
 export const MY_TASKS_PATCHES: readonly PatchedWriteKind[] = ["complete", "title", "assign", "comment", "notes"];
