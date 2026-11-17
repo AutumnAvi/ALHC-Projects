@@ -73,6 +73,7 @@ import {
   formProblems,
   insertAfter,
   insertIntoContainer,
+  keepBrokenBranchesInPath,
   mappingConflicts,
   moveInFlow,
   moveOutOfPath,
@@ -427,17 +428,25 @@ export function FormEditor({
   // (the database only accepts a branch on an earlier question), with Undo. The order saves with the form.
   function applyOrder(movedId: string, moved: FormQuestion[]) {
     if (moved === questions) return;
-    const broken = brokenBranches(moved);
+    // Inside a path, a question moved above the question it depends on keeps showing on its path (round 3).
+    const { questions: repaired, kept } = keepBrokenBranchesInPath(moved, questions);
+    const broken = brokenBranches(repaired);
     const previous = questions;
-    const next = normalizeQuestions(moved, fields);
+    const next = normalizeQuestions(repaired, fields);
     questionsRef.current = next;
     setQuestions(next);
     setDirty(true);
     const position = next.findIndex((q) => q.id === movedId);
     const label = next[position]?.label.trim() || "Untitled question";
     announce(`Moved “${label}” to position ${position + 1} of ${next.length}`);
-    if (broken.length) {
-      notify(clearedBranchesMessage(broken), {
+    const keptText = kept.length
+      ? kept.length === 1
+        ? `“${labelOf(next, kept[0])}” now shows on its whole path: the question it depended on is no longer above it.`
+        : `${kept.length} questions now show on their whole path: the questions they depended on are no longer above them.`
+      : null;
+    const text = [broken.length ? clearedBranchesMessage(broken) : null, keptText].filter(Boolean).join(" ");
+    if (text) {
+      notify(text, {
         label: "Undo",
         // Only while nothing else changed since (an Undo never throws away later edits), and the form
         // is unsaved again afterwards, so the restored branch gets saved too.
@@ -708,7 +717,7 @@ export function FormEditor({
     commit(
       next,
       `Deleted the path “${pathLabel(source, path)}”${mode === "keep" ? kept : ""}.${
-        stillSplits ? "" : ` “${source.label.trim() || "The question"}” no longer splits: its last path’s questions show for the same answers.`
+        stillSplits ? "" : ` “${source.label.trim() || "The question"}” no longer splits: its last path’s questions stay, as a plain branch on it.`
       }`,
       mode === "keep" ? blockQuestionIds(base, sourceId, pathId) : [],
     );

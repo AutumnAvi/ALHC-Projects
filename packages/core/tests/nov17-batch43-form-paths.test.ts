@@ -12,6 +12,7 @@ import {
   checkboxToYesNo,
   clearBranch,
   deletePath,
+  keepBrokenBranchesInPath,
   driftedPathQuestions,
   fieldAskInContainer,
   formProblems,
@@ -556,6 +557,29 @@ describe("round 2 review fixes", () => {
     const out = normalizeQuestions(deletePath(q, "s", "pa", "delete"), []);
     assert.deepEqual(byId(out, "o").show_if, { question_id: "s", option_ids: ["a", "b"] });
     assert.deepEqual(formProblems(out), []);
+  });
+});
+
+describe("round 3 review fixes", () => {
+  it("moving a question above the checkbox it depends on, inside a path, keeps it on that path", () => {
+    const rush: FormQuestion = { id: "r", type: "checkbox", label: "Rush", show_if: { question_id: "kind", option_ids: ["web"], path_id: "p-web" } };
+    const details: FormQuestion = { id: "dt", type: "short_text", label: "Details", show_if: { question_id: "r", option_ids: ["true"] } };
+    const q = putPathsTogether(applyPaths([...normalizeQuestions(form(), []), rush, details]));
+    const up = moveInFlow(q, "dt", -1);
+    assert.ok(up && "questions" in up);
+    const { questions, kept } = keepBrokenBranchesInPath(up.questions, q);
+    assert.deepEqual(kept, ["dt"]);
+    const out = normalizeQuestions(questions, []);
+    assert.deepEqual(byId(out, "dt").show_if, { question_id: "kind", option_ids: ["web"], path_id: "p-web" });
+    assert.equal(buildFlow(out).inOrder, true);
+    assert.equal(visibleQuestionIds(out, { kind: "print" }).has("dt"), false, "not on another path");
+  });
+
+  it("on the main flow there's no path rule to keep", () => {
+    const c: FormQuestion = { id: "c", type: "checkbox", label: "C" };
+    const d: FormQuestion = { id: "d", type: "short_text", label: "D", show_if: { question_id: "c", option_ids: ["true"] } };
+    const moved = [d, c];
+    assert.deepEqual(keepBrokenBranchesInPath(moved, [c, d]), { questions: moved, kept: [] });
   });
 });
 
