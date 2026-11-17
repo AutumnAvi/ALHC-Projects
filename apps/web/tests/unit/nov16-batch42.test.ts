@@ -13,6 +13,7 @@ import {
   bumpAllowedAt,
   emptyFreshness,
   MIN_BUMP_GAP_MS,
+  noteSaveRefreshed,
   noteWriteWithoutRefresh,
   warmOnIntent,
   HOME_KEY,
@@ -26,7 +27,6 @@ import {
   HOVER_PREFETCH_SECONDS,
 } from "@/lib/route-freshness";
 import { onHomeWrite, patchedAction, resetPatchedWritesForTests, type HomeWriteEvent } from "@/lib/patched-writes";
-import { editsKeptLongerFor, keepEditsLonger } from "@/lib/optimistic-session";
 import { FULL_PREFETCH, HOME_WARM_BUMP_DELAY_MS, HOME_WARM_DELAY_MS } from "@/components/shell/route-freshness";
 import { listInbox, listInboxPage } from "@alhc/core/api/inbox/queries";
 import { INBOX_LIMIT, inboxLimitNote } from "@alhc/core/inbox";
@@ -134,7 +134,7 @@ test("item 1: Home's summary line counts the Today card's live list (completions
 
 test("item 1: checklist Undo is a save Home shows and records the reopen (Grok r2 F5)", () => {
   const src = readFileSync(new URL("../../src/components/my-tasks/checklist.tsx", import.meta.url), "utf8");
-  assert.match(src, /patchedAction\("complete", \(\) => undoTaskCompleted\(task\.id\), \{ refresh: true \}\)/);
+  assert.match(src, /trackCompletion\(task\.id, false, patchedAction\("complete", \(\) => undoTaskCompleted\(task\.id\), \{ refresh: true \}\)\)/);
   assert.match(src, /recordTaskEdits\(\[\{ type: "complete", taskId: task\.id, completed: false \}\]\)/);
 });
 
@@ -156,15 +156,30 @@ test("item 1: a warmed Home is still rendered again in the background on arrival
   assert.equal(arrivalNeedsRevalidation(state, HOME_KEY, 125_000), true, "older: drawn, then rendered again");
 });
 
-test("item 1: saves Home shows keep their edits as long as saves without a refresh (Opus r2 F8)", () => {
-  const token = 987_654;
-  assert.equal(editsKeptLongerFor(token), false);
-  keepEditsLonger(token);
-  assert.equal(editsKeptLongerFor(token), true);
-  const src = readFileSync(new URL("../../src/lib/patched-writes.ts", import.meta.url), "utf8");
-  assert.match(src, /if \(home\) keepEditsLonger\(token\);/);
+test("item 1: a save that refreshed drops fetched copies, keeps rendered-ahead ones (Grok r1 F1)", () => {
+  const state = emptyFreshness();
+  noteCopy(state, HOME_KEY, 1000, ROUTER_CACHE_SECONDS);
+  noteCopy(state, "/inbox", 1000, HOVER_PREFETCH_SECONDS);
+  noteSaveRefreshed(state, "/projects/p/views/v", 2000);
+  // Home was fetched on arrival: gone, so the warm-up just prefetches (no cache to empty).
+  assert.equal(mayHoldCopy(state, HOME_KEY, 2500), false);
+  assert.deepEqual(homeWarmPlan(state, "/projects/p/views/v", 2500), { bump: false, prefetch: [HOME_KEY] });
+  // A rendered-ahead copy survives the save's refresh, and so does the screen it rendered.
+  assert.equal(mayHoldCopy(state, "/inbox", 2500), true);
+  assert.equal(mayHoldCopy(state, "/projects/p/views/v", 2500), true);
+  // Our own warmed Home (a full prefetch) survives too: the next refreshing save must empty the cache.
+  noteCopy(state, HOME_KEY, 3000, HOVER_PREFETCH_SECONDS);
+  noteSaveRefreshed(state, "/projects/p/views/v", 4000);
+  assert.equal(homeWarmPlan(state, "/projects/p/views/v", 4500).bump, true);
+});
+
+test("item 1: a save that refreshed doesn't wait for the 10 s gap (its edits last EDIT_GRACE_MS only)", () => {
+  const src = readFileSync(new URL("../../src/components/shell/route-freshness.tsx", import.meta.url), "utf8");
+  assert.match(src, /plan\.bump && !refreshedInBurst && now < bumpAllowedAt\(lastBumpAt\)/);
+  assert.match(src, /if \(!event\.screenOnly\) \{\s*refreshedInBurst = true;\s*noteSaveRefreshed\(state, current\.current, event\.at\);/);
+  // The edits' grace is batch 40's, unchanged (Codex r3 F5).
   const edits = readFileSync(new URL("../../src/components/task/task-edits.ts", import.meta.url), "utf8");
-  assert.match(edits, /held: editsKeptLongerFor/);
+  assert.match(edits, /held: writeWithoutRefresh,/);
 });
 
 test("item 1: patchedAction tells Home's warmer when a save Home shows starts and ends (refreshing or not)", async () => {

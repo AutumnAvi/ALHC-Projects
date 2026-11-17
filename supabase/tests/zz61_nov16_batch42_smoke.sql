@@ -147,6 +147,35 @@ begin
           where jsonb_typeof(e -> 'team_message') is distinct from 'object'), 'same order as before';
 end $$;
 
+-- A removed comment's item counts nowhere (inbox_page drops it after its limit; the window before it):
+-- someone with exactly 100 shown notifications plus one about a removed comment has no "more".
+reset role;
+alter table public.inbox_items disable trigger user;
+alter table public.comments disable trigger user;
+do $$
+declare
+  c uuid;
+begin
+  insert into public.comments (task_id, author_id, body, deleted_at)
+  values (current_setting('b42.task')::uuid, 'e4200000-0000-4000-8000-000000000001', 'Gone', now())
+  returning id into c;
+  insert into public.inbox_items (recipient_id, actor_id, task_id, comment_id, kind, data, created_at)
+  values ('e4200000-0000-4000-8000-000000000003', 'e4200000-0000-4000-8000-000000000001',
+          current_setting('b42.task')::uuid, c, 'comment', '{}'::jsonb, timestamptz '2026-11-16');
+end $$;
+alter table public.comments enable trigger user;
+alter table public.inbox_items enable trigger user;
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'e4200000-0000-4000-8000-000000000003', false) is not null as ok \gset
+do $$
+declare
+  win jsonb := public.inbox_page_window('activity', 101);
+begin
+  assert jsonb_array_length(win) = 100, format('still a full page and nothing more: %s', jsonb_array_length(win));
+  assert not exists (select 1 from jsonb_array_elements(win) e where e ->> 'comment_body' = 'Gone'), 'not the removed comment';
+end $$;
+
 -- 2. Dates in automation text --------------------------------------------------------------------------
 -- The renderers are internal (automations run them as the owner), so this runs as the owner too.
 

@@ -66,6 +66,14 @@ export function mayHoldCopy(state: FreshnessState, key: string, now: number): bo
   return copy !== undefined && now - copy.at < copy.keepMs + SLACK_MS;
 }
 
+// A save that refreshed (next/cache refresh()): the router dropped the screens it fetched on arrival (their
+// copies live in its back / forward cache) and rendered this one again; copies rendered ahead (full
+// prefetches) stay.
+export function noteSaveRefreshed(state: FreshnessState, current: string, at: number) {
+  for (const [key, copy] of [...state.copies]) if (copy.keepMs <= ROUTER_CACHE_SECONDS * 1000) state.copies.delete(key);
+  noteCopy(state, current, at, ROUTER_CACHE_SECONDS);
+}
+
 // At most this many other recently shown screens are rendered again after the router's cache is emptied.
 export const MAX_RECENT_REWARMED = 2;
 

@@ -8,8 +8,9 @@
 --    newest 100 items, so the app couldn't tell "exactly 100" from "more than 100". inbox_page_window(tab,
 --    max_items) is the same function with the page size as an argument (1–200): the app asks for 101 and
 --    shows the note only when the 101st exists. It also leaves out items about a team message, which the
---    Inbox never shows (Oct 26 notes, batch 4: teams have no Messages tab), so they don't count toward the
---    page. Copied from inbox_page's definition as it is now (every `limit 100` becomes the argument; each
+--    Inbox never shows (Oct 26 notes, batch 4: teams have no Messages tab), and filters a removed comment's
+--    item and a reply in a removed thread before the limit (inbox_page drops them after it), so only what
+--    the Inbox shows counts toward the page. Copied from inbox_page's definition as it is now (every `limit 100` becomes the argument; each
 --    edit asserted): a later patch of inbox_page must be made to inbox_page_window too. SECURITY DEFINER
 --    like inbox_page (it reads only the caller's own items, by the same rules), authenticated only;
 --    pinned in suite 60.
@@ -55,6 +56,8 @@ declare
   body text := pg_get_functiondef('public.inbox_page(text)'::regprocedure);
   header text := 'CREATE OR REPLACE FUNCTION public.inbox_page(inbox_tab text)';
   limits integer;
+  task_end text;
+  message_end text;
 begin
   if strpos(body, header) <> 1 then
     raise exception 'inbox_page_window: inbox_page''s header changed';
@@ -78,6 +81,19 @@ begin
     raise exception 'inbox_page_window: expected one read of team_kept';
   end if;
   body := replace(body, E'    from team_kept t\n', E'    from team_kept t\n    where false\n');
+  -- Rows the page drops after reading them (a removed comment's item, a reply in a removed thread) are
+  -- left out before the limit instead, so the page and "is there more" count only what the Inbox shows.
+  task_end := E'    order by i.created_at desc, i.id desc\n    limit page_limit\n  ),\n  task_kept as (';
+  message_end := E'    order by i.created_at desc, i.id desc\n    limit page_limit\n  ),\n  message_kept as (';
+  if (length(body) - length(replace(body, task_end, ''))) / length(task_end) <> 1
+     or (length(body) - length(replace(body, message_end, ''))) / length(message_end) <> 1 then
+    raise exception 'inbox_page_window: expected the task and message reads to end once each';
+  end if;
+  body := replace(body, task_end, E'      and c.deleted_at is null\n' || task_end);
+  body := replace(body, message_end,
+    E'      and (m.thread_id is null or exists (\n'
+    || E'        select 1 from public.project_messages th where th.id = m.thread_id and th.deleted_at is null))\n'
+    || message_end);
   execute body;
 end;
 $do$;

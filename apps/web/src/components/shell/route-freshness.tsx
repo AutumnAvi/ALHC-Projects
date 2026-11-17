@@ -18,6 +18,7 @@ import {
   noteCopy,
   notePrefetch,
   noteRendered,
+  noteSaveRefreshed,
   noteShown,
   noteWriteWithoutRefresh,
   ROUTER_CACHE_SECONDS,
@@ -92,6 +93,7 @@ export function RouteFreshness() {
     let burstStartedAt = 0;
     let burstEndedAt = 0;
     let anyOk = false;
+    let refreshedInBurst = false;
     let lastBumpAt = -Infinity;
     const warm = (intent: boolean) => {
       if (!intent) warmTimer = undefined;
@@ -112,12 +114,15 @@ export function RouteFreshness() {
         if (!plan) return;
         window.clearTimeout(warmTimer);
         warmTimer = undefined;
-      } else if (plan.bump && now < bumpAllowedAt(lastBumpAt)) {
+      } else if (plan.bump && !refreshedInBurst && now < bumpAllowedAt(lastBumpAt)) {
+        // (A save that refreshed keeps its edits only EDIT_GRACE_MS, so it doesn't wait for the gap: the held
+        // copy of Home is replaced before its edit lapses. It refreshed this screen already anyway.)
         // Emptied the cache moments ago: once more when the gap is up (or on the way to Home).
         warmTimer = window.setTimeout(() => warm(false), bumpAllowedAt(lastBumpAt) - now);
         return;
       }
       anyOk = false;
+      refreshedInBurst = false;
       if (!plan) return;
       if (plan.bump) {
         router.refresh();
@@ -139,10 +144,14 @@ export function RouteFreshness() {
       burstEndedAt = event.at;
       if (event.ok) {
         anyOk = true;
-        // Every copy drawn from the router's cache after this is rendered again on arrival. (A save's own
-        // refresh — next/cache refresh() — renders this screen but leaves rendered-ahead copies, Home's
-        // included, in place: they stay in `copies`.)
+        // Every copy drawn from the router's cache after this is rendered again on arrival. A save's own
+        // refresh (next/cache refresh()) drops what was fetched on arrival but leaves rendered-ahead copies,
+        // Home's included, in place (noteSaveRefreshed).
         noteWriteWithoutRefresh(state, event.at);
+        if (!event.screenOnly) {
+          refreshedInBurst = true;
+          noteSaveRefreshed(state, current.current, event.at);
+        }
       }
       if (inFlight === 0) {
         const bump = homeWarmPlan(state, current.current, Date.now()).bump;
