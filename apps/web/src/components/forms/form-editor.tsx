@@ -59,6 +59,7 @@ import { MAX_ATTACHMENT_LABEL } from "@alhc/core/attachments";
 import { FORM_LOCKED_FIELD_NOTE, type FieldDef } from "@alhc/core/fields";
 import { FieldLockIcon } from "@/components/project/field-lock";
 import {
+  applyPaths,
   blockQuestionIds,
   buildFlow,
   canPlaceIn,
@@ -66,6 +67,7 @@ import {
   containerKey,
   containerOf,
   deletePath,
+  driftedPathQuestions,
   fieldAskInContainer,
   formProblems,
   insertAfter,
@@ -196,8 +198,14 @@ export function FormEditor({
   const [sendConfirmation, setSendConfirmation] = useState(form.sendConfirmation);
   const [verifiedOnly, setVerifiedOnly] = useState(Boolean(form.verifiedDomainsOnly));
   const [confirmationMessage, setConfirmationMessage] = useState(form.confirmationMessage ?? "");
-  const [questions, setQuestions] = useState<FormQuestion[]>(() => ensureNameQuestion(form.questions));
-  const [dirty, setDirty] = useState(false);
+  // Batch 43: path questions whose stored answers disagree with their paths (written outside this editor)
+  // are drawn, previewed, and saved by their paths; the editor says so.
+  const [drifted] = useState(() => driftedPathQuestions(ensureNameQuestion(form.questions)));
+  const [questions, setQuestions] = useState<FormQuestion[]>(() => {
+    const loaded = ensureNameQuestion(form.questions);
+    return drifted.length ? applyPaths(loaded) : loaded;
+  });
+  const [dirty, setDirty] = useState(drifted.length > 0);
   const [tab, setTab] = useState<"questions" | "settings">("questions");
   const [selectedId, setSelectedId] = useState<string | null>(form.questions[0]?.id ?? null);
   const [answers, setAnswers] = useState<FormAnswers>({});
@@ -325,7 +333,7 @@ export function FormEditor({
 
   function announce(message: string) {
     // The same words twice in a row still get read out (a live region ignores an unchanged text).
-    setAnnouncement((prev) => (prev === message ? `${message}​` : message));
+    setAnnouncement((prev) => (prev === message ? `${message}\u200b` : message));
   }
 
   // A change that says what it did, with Undo while nothing else changed since. It also says when branches
@@ -340,19 +348,24 @@ export function FormEditor({
     questionsRef.current = result;
     setQuestions(result);
     setDirty(true);
-    const quiet = new Set(moved);
+    const hadEmpty = new Set(pathProblems(previous).flatMap((p) => (p.kind === "otherwise_empty" ? [p.pathId] : [])));
+    const emptied = pathProblems(result).find((p) => p.kind === "otherwise_empty" && !hadEmpty.has(p.pathId));
+    if (emptied?.pathId) setPathChoice({ sourceId: emptied.questionId, pathId: emptied.pathId, reason: "otherwise" });
+    // Questions the change moves on purpose, and an emptied Otherwise's (the dialog asks about them), aren't
+    // reported as losing their branch.
+    const quiet = new Set([...moved, ...(emptied?.pathId ? blockQuestionIds(result, emptied.questionId, emptied.pathId) : [])]);
     const lost = lostBranches(previous, result).filter((q) => !quiet.has(q.id));
     const narrowed = narrowedBranches(previous, result);
     const text = [
       message,
       lost.length ? lostBranchesMessage(lost) : null,
-      narrowedBranchesMessage({ narrowed: narrowed.narrowed.filter((q) => !quiet.has(q.id)), emptied: narrowed.emptied }),
+      narrowedBranchesMessage({
+        narrowed: narrowed.narrowed.filter((q) => !quiet.has(q.id)),
+        emptied: narrowed.emptied.filter((q) => !quiet.has(q.id)),
+      }),
     ]
       .filter(Boolean)
       .join(" ");
-    const hadEmpty = new Set(pathProblems(previous).flatMap((p) => (p.kind === "otherwise_empty" ? [p.pathId] : [])));
-    const emptied = pathProblems(result).find((p) => p.kind === "otherwise_empty" && !hadEmpty.has(p.pathId));
-    if (emptied?.pathId) setPathChoice({ sourceId: emptied.questionId, pathId: emptied.pathId, reason: "otherwise" });
     if (!text) return;
     notify(text, {
       label: "Undo",
@@ -500,6 +513,13 @@ export function FormEditor({
     commit(next, into ? `Moved “${label}” into the path “${into}”.` : `Moved “${label}” to the main flow.`, [id]);
     announce(into ? `Moved “${label}” into the path ${into}` : `Moved “${label}” to the main flow`);
     if (target.container) offerMappingBack(id, target.container, next);
+  }
+
+  // The Paths menu on a split question: an existing question joins one of its paths.
+  function placeInPath(id: string, container: NonNullable<FlowContainer>) {
+    const next = placeQuestion(questionsRef.current, id, container, null);
+    commit(next, `Moved “${labelOf(next, id)}” into the path “${pathNameOf(next, container)}”.`, [id]);
+    offerMappingBack(id, container, next);
   }
 
   // Item 5: a Duplicate dropped the copy's field mapping; once it's in a path that can't show with the
@@ -754,6 +774,7 @@ export function FormEditor({
           onCommit={commit}
           onCreateBranch={(optionId) => createBranchQuestion(question.id, optionId)}
           onAddTo={(container, added) => addQuestion(added, { container })}
+          onPlaceIn={(childId, container) => placeInPath(childId, container)}
           onMove={(delta) => void moveQuestion(question.id, delta)}
           onDuplicate={() => duplicateQuestion(question)}
           onRemove={() => removeQuestion(question.id)}
@@ -990,6 +1011,15 @@ export function FormEditor({
                         onAdd={(question) => addQuestion(question, { container: null })}
                       />
                     </div>
+                    {drifted.length ? (
+                      <div role="status" className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-path-drift="">
+                        <CircleAlert className="mt-px size-4 shrink-0" aria-hidden />
+                        <span>
+                          {drifted.length === 1 ? "A question’s saved rule didn’t match its path" : `${drifted.length} questions’ saved rules didn’t match their paths`}{" "}
+                          (changed outside this editor). They follow their paths here; save to put the live form back in step.
+                        </span>
+                      </div>
+                    ) : null}
                     {!flow.inOrder ? (
                       <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                         <CircleAlert className="size-4 shrink-0" aria-hidden />
@@ -1084,6 +1114,7 @@ export function FormEditor({
           }}
           onCancel={() => setPathChoice(null)}
           cancelLabel={pathChoice.reason === "otherwise" ? "Decide later" : "Cancel"}
+          single={choice.count === 1}
         />
       ) : null}
     </div>
@@ -1107,7 +1138,7 @@ function pathNameOf(questions: FormQuestion[], container: FlowContainer): string
   return source && path ? pathLabel(source, path) : null;
 }
 
-function describePathChoice(questions: FormQuestion[], choice: PathChoice): { title: string; message: string } | null {
+function describePathChoice(questions: FormQuestion[], choice: PathChoice): { title: string; message: string; count: number } | null {
   const source = questions.find((q) => q.id === choice.sourceId);
   const path = source?.paths?.find((p) => p.id === choice.pathId);
   if (!source || !path) return null;
@@ -1115,10 +1146,12 @@ function describePathChoice(questions: FormQuestion[], choice: PathChoice): { ti
   const what = count === 1 ? "its question" : `its ${count} questions`;
   return choice.reason === "otherwise"
     ? {
+        count,
         title: "Otherwise has no answers left",
         message: `Every answer of “${source.label.trim() || "the question"}” is on a path now, so Otherwise’s questions would never show. Keep ${what} on the main flow, or delete ${count === 1 ? "it" : "them"}?`,
       }
     : {
+        count,
         title: `Delete the path “${pathLabel(source, path)}”?`,
         message: `What happens to ${what}? Kept ones move to the main flow, after the paths meet, and show whenever “${source.label.trim() || "the question"}” shows.`,
       };
@@ -1439,6 +1472,7 @@ function QuestionCard({
   onCommit,
   onCreateBranch,
   onAddTo,
+  onPlaceIn,
   onMove,
   onDuplicate,
   onRemove,
@@ -1481,6 +1515,8 @@ function QuestionCard({
   onCreateBranch: (optionId: string) => void;
   // A new question at the end of one of this question's paths.
   onAddTo: (container: FlowContainer, question: FormQuestion) => void;
+  // An existing question joins one of this question's paths.
+  onPlaceIn: (questionId: string, container: NonNullable<FlowContainer>) => void;
   onMove: (delta: -1 | 1) => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -1600,7 +1636,14 @@ function QuestionCard({
           ) : null}
         </button>
         {isNameQuestion(question) ? null : (
-          <BranchButton question={question} questions={questions} onCommit={onCommit} onCreateBranch={onCreateBranch} onAddTo={onAddTo} />
+          <BranchButton
+            question={question}
+            questions={questions}
+            onCommit={onCommit}
+            onCreateBranch={onCreateBranch}
+            onAddTo={onAddTo}
+            onPlaceIn={onPlaceIn}
+          />
         )}
       </div>
       {hasProblem ? (
@@ -2009,12 +2052,14 @@ function BranchButton({
   onCommit,
   onCreateBranch,
   onAddTo,
+  onPlaceIn,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
   onCommit: (next: FormQuestion[], message: string | null, moved?: string[]) => void;
   onCreateBranch: (optionId: string) => void;
   onAddTo: (container: FlowContainer, question: FormQuestion) => void;
+  onPlaceIn: (questionId: string, container: NonNullable<FlowContainer>) => void;
 }) {
   const [optionId, setOptionId] = useState<string | null>(null);
   const reason = branchUnavailableReason(question);
@@ -2089,11 +2134,7 @@ function BranchButton({
                 onPick={(childId) => {
                   close();
                   setOptionId(null);
-                  onCommit(
-                    placeQuestion(questions, childId, { sourceId: question.id, pathId: chosen.id }, null),
-                    `Moved “${questions.find((q) => q.id === childId)?.label.trim() || "the question"}” into the path “${pathLabel(question, chosen)}”.`,
-                    [childId],
-                  );
+                  onPlaceIn(childId, { sourceId: question.id, pathId: chosen.id });
                 }}
                 onCreate={() => {
                   close();

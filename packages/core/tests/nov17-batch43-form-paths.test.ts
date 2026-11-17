@@ -11,6 +11,7 @@ import {
   canShowTogether,
   checkboxToYesNo,
   deletePath,
+  driftedPathQuestions,
   fieldAskInContainer,
   formProblems,
   groupIntoPaths,
@@ -237,6 +238,11 @@ describe("Otherwise and empty paths", () => {
   it("names the card for a question with no text", () => {
     const blank: FormQuestion = { id: "b", type: "short_text", label: "  " };
     assert.throws(() => cleanQuestions([blank]), /Question 2: Add the question’s text/);
+  });
+
+  it("finds path questions whose stored answers disagree with their path (the editor flags them on open)", () => {
+    assert.deepEqual(driftedPathQuestions(form()), ["more"], "Otherwise was stored with no answers");
+    assert.deepEqual(driftedPathQuestions(normalizeQuestions(form(), [])), []);
   });
 
   it("cleanQuestions recomputes path answers even when a writer sends stale ones", () => {

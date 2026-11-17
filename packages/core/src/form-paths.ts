@@ -394,6 +394,19 @@ export function applyPaths(questions: FormQuestion[], options: { trimNames?: boo
   });
 }
 
+// Path questions whose stored answers don't match their path (a writer that skipped the save layer, or an
+// older release that dropped the paths): the walk follows the stored rules, the builder draws the paths.
+// The editor says so when the form opens and saves the paths' answers.
+export function driftedPathQuestions(questions: FormQuestion[]): string[] {
+  const fixed = new Map(applyPaths(questions).map((q) => [q.id, q] as const));
+  return questions.flatMap((q) => {
+    const want = fixed.get(q.id)?.show_if;
+    if (!q.show_if?.path_id || !want) return [];
+    const same = want.option_ids.length === q.show_if.option_ids.length && want.option_ids.every((id) => q.show_if!.option_ids.includes(id));
+    return same ? [] : [q.id];
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Problems the builder shows on the card at fault (and cleanQuestions refuses)
 // ---------------------------------------------------------------------------------------------
