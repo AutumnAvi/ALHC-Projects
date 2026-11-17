@@ -326,6 +326,18 @@ function unitPathDepth(questions: readonly FormQuestion[], index: number, owner:
   return deepest;
 }
 
+// The deepest path nesting a question carries with it when it changes container: its own paths and those of
+// the questions that move along (movingGroup), relative to its current container.
+function groupPathDepth(questions: readonly FormQuestion[], id: string, owner: Map<string, string>): number {
+  const base = keyDepth(owner.get(id) ?? MAIN_FLOW, owner);
+  let deepest = 0;
+  for (const gid of movingGroup(questions, id)) {
+    const at = questions.findIndex((q) => q.id === gid);
+    deepest = Math.max(deepest, keyDepth(owner.get(gid) ?? MAIN_FLOW, owner) - base + unitPathDepth(questions, at, owner));
+  }
+  return deepest;
+}
+
 // How deep a split question's paths would be (1 = top-level paths).
 export function splitDepth(questions: readonly FormQuestion[], sourceId: string): number {
   const owner = questionOwners(questions);
@@ -559,8 +571,8 @@ export function groupIntoPaths(questions: readonly FormQuestion[], sourceId: str
     const rule = q.show_if;
     if (i <= at || !rule || rule.question_id !== sourceId || (rule.path_id && findPath(source, rule.path_id))) return;
     if (owner.get(q.id) !== sourceKey || q.role === "name") return;
-    // A split question moving into a path must stay within the nesting limit.
-    if (depth + unitPathDepth(questions, i, owner) > MAX_PATH_DEPTH) return;
+    // A question moving into a path (with what depends on it) must stay within the nesting limit.
+    if (depth + groupPathDepth(questions, q.id, owner) > MAX_PATH_DEPTH) return;
     const set = order.filter((id) => rule.option_ids.includes(id));
     // Shown for every answer: not a path (one path would dissolve at once); it stays a plain branch.
     if (!set.length || set.length === order.length) return;
@@ -737,7 +749,11 @@ export function deletePath(questions: FormQuestion[], sourceId: string, pathId: 
         }
         const rule = q.show_if;
         if (rule?.question_id !== sourceId || !rule.path_id || rule.path_id === pathId) return q;
-        return { ...q, show_if: branchRule(sourceId, answersBefore.get(rule.path_id) ?? rule.option_ids) };
+        const had = answersBefore.get(rule.path_id) ?? rule.option_ids;
+        // An Otherwise that had no answers left takes the ones no path has once this path is gone.
+        const remaining = (source.paths ?? []).find((p) => p.id === rule.path_id);
+        const answers = had.length || !remaining?.otherwise ? had : leftoverOptionIds({ ...source, paths });
+        return { ...q, show_if: branchRule(sourceId, answers) };
       })
     : withPaths(questions, sourceId, paths);
   if (mode === "delete") {
@@ -836,17 +852,10 @@ export function canPlaceIn(questions: readonly FormQuestion[], id: string, conta
   if (!question) return false;
   if (!container) return true;
   if (question.role === "name") return false;
-  const group = movingGroup(questions, id);
-  if (group.includes(container.sourceId)) return false;
+  if (movingGroup(questions, id).includes(container.sourceId)) return false;
   const owner = questionOwners(questions);
-  const depth = keyDepth(blockKey(container.sourceId, container.pathId), owner);
   // Every question that moves along keeps its own paths within the limit.
-  const base = keyDepth(owner.get(id) ?? MAIN_FLOW, owner);
-  return group.every((gid) => {
-    const at = questions.findIndex((q) => q.id === gid);
-    const relative = keyDepth(owner.get(gid) ?? MAIN_FLOW, owner) - base;
-    return depth + relative + unitPathDepth(questions, at, owner) <= MAX_PATH_DEPTH;
-  });
+  return keyDepth(blockKey(container.sourceId, container.pathId), owner) + groupPathDepth(questions, id, owner) <= MAX_PATH_DEPTH;
 }
 
 // The rule a question gets when it moves to another container. Stepping out of a path into the container
@@ -877,13 +886,17 @@ export function placeQuestion(questions: FormQuestion[], id: string, container: 
     : movingGroup(questions, id);
   if (beforeId !== null && groupIds.includes(beforeId)) return questions;
   const group = new Set(groupIds);
-  const rule = sameHome ? null : ruleWhenPlaced(questions, id, container);
-  const moving = questions
-    .filter((q) => group.has(q.id))
-    .map((q) => (q.id === id && !sameHome ? withRule(q, rule) : q));
   const rest = questions.filter((q) => !group.has(q.id));
   const at = insertionIndex(rest, container, beforeId);
   if (at < 0) return questions;
+  let rule = sameHome ? null : ruleWhenPlaced(questions, id, container);
+  // A rule can only name a question above it: landing above the one the split question's rule names, it
+  // takes the container's own rule instead (none on the main flow).
+  const parentAt = rule ? rest.findIndex((q) => q.id === rule!.question_id) : -1;
+  if (rule && (parentAt < 0 || parentAt >= at)) rule = containerRule(questions, container);
+  const moving = questions
+    .filter((q) => group.has(q.id))
+    .map((q) => (q.id === id && !sameHome ? withRule(q, rule) : q));
   const next = [...rest.slice(0, at), ...moving, ...rest.slice(at)];
   return next.every((q, i) => q.id === questions[i].id && q === questions[i]) ? questions : next;
 }
