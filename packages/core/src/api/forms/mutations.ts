@@ -205,13 +205,28 @@ export async function duplicateForm(ctx: ApiContext, formId: string): Promise<st
   check(found);
   const row = found.data;
   if (!row) throw new ApiError("not_found", "This form does not exist");
+  // A question can still name a field that was removed since (the editor drops such mappings on its next
+  // save; validate_form refuses them on insert), so the copy drops them too.
+  const fieldRows = await supabase.from("custom_fields").select("id").eq("project_id", row.project_id).is("deleted_at", null);
+  check(fieldRows);
+  const fieldIds = new Set(((fieldRows.data ?? []) as { id: string }[]).map((f) => f.id));
+  const questions = Array.isArray(row.questions)
+    ? row.questions.map((raw) => {
+        const q = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+        const mapsTo = q?.maps_to && typeof q.maps_to === "object" && !Array.isArray(q.maps_to) ? q.maps_to : null;
+        if (!q || mapsTo?.target !== "field" || (typeof mapsTo.field_id === "string" && fieldIds.has(mapsTo.field_id))) return raw;
+        const copy = { ...q };
+        delete copy.maps_to;
+        return copy;
+      })
+    : row.questions;
   const inserted = await supabase
     .from("forms")
     .insert({
       project_id: row.project_id,
       title: `${row.title.slice(0, 193)} (copy)`,
       description: row.description,
-      questions: row.questions,
+      questions,
       destination_section_id: row.destination_section_id,
       accepting_responses: false,
       send_confirmation: row.send_confirmation,

@@ -16,6 +16,7 @@ import {
   PATH_NAME_NOTE,
   addPath,
   answerChoices,
+  blockKey,
   blockQuestionIds,
   leftoverOptionIds,
   movePath,
@@ -61,22 +62,32 @@ export type PathTag = { label: string; answers: string; sourceLabel: string; col
 
 export function pathTags(nodes: FlowNode[]): Map<string, PathTag> {
   const tags = new Map<string, PathTag>();
+  const byBlock = new Map<string, PathTag>();
+  const misplaced: FlowNode[] = [];
   const visit = (list: FlowNode[], tag: PathTag | null) => {
     for (const node of list) {
-      if (tag) tags.set(node.question.id, tag);
+      if (node.misplaced) misplaced.push(node);
+      else if (tag) tags.set(node.question.id, tag);
       for (const block of node.blocks ?? []) {
-        visit(block.nodes, {
+        const blockTag: PathTag = {
           label: pathLabel(node.question, block.path),
           answers: pathAnswersText(node.question, block.path),
           sourceLabel: node.question.label.trim() || "the question above",
           color: pathColor(block.path, block.position, node.depth),
           pathId: block.path.id,
           sourceId: node.question.id,
-        });
+        };
+        byBlock.set(blockKey(node.question.id, block.path.id), blockTag);
+        visit(block.nodes, blockTag);
       }
     }
   };
   visit(nodes, null);
+  // A question outside its path's block still carries its own path (not the block it sits in).
+  for (const node of misplaced) {
+    const tag = node.misplaced ? byBlock.get(blockKey(node.misplaced.sourceId, node.misplaced.pathId)) : undefined;
+    if (tag) tags.set(node.question.id, tag);
+  }
   return tags;
 }
 
@@ -459,7 +470,8 @@ function AddPathButton({ source }: { source: FormQuestion }) {
   if (paths.length >= MAX_PATHS) {
     return <p className="text-2xs text-zinc-400">{MAX_PATHS} paths is the most a question splits into (counting Otherwise).</p>;
   }
-  const hasOtherwise = Boolean(otherwisePath(source));
+  // "Any other answer" only while some answer is on no path (an Otherwise with none would go away at once).
+  const canAddOtherwise = !otherwisePath(source) && leftoverOptionIds(source).length > 0;
   return (
     <Popover
       label={`Add a path to ${source.label.trim() || "this question"}`}
@@ -480,7 +492,7 @@ function AddPathButton({ source }: { source: FormQuestion }) {
           hint="An answer is on one path at a time: picking one from another path moves it here."
           applyLabel="Add path"
           otherwiseChoice={
-            hasOtherwise
+            !canAddOtherwise
               ? undefined
               : () => {
                   close();

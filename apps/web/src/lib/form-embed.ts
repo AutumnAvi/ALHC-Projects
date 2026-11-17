@@ -29,17 +29,20 @@ export function clampEmbedHeight(height: unknown): number | null {
 }
 
 export function formEmbedSnippet(origin: string, formId: string, title: string): string {
-  const frameId = `alhc-form-${formId}`;
   const src = `${origin}/forms/${formId}/embed`;
+  // Frames are found by form (data-alhc-form), not by id, so the same form can be embedded more than once
+  // on a page: each message resizes only the frame that sent it.
+  const selector = `iframe[data-alhc-form="${formId.replace(/[^A-Za-z0-9-]/g, "")}"]`;
   const script =
-    `(function(){var f=document.getElementById(${scriptValue(frameId)});if(!f)return;` +
-    `window.addEventListener("message",function(e){` +
-    `if(e.origin!==${scriptValue(origin)}||e.source!==f.contentWindow)return;` +
+    `(function(){window.addEventListener("message",function(e){` +
+    `if(e.origin!==${scriptValue(origin)})return;` +
     `var d=e.data;if(!d||d.type!==${scriptValue(EMBED_HEIGHT_MESSAGE)}||d.formId!==${scriptValue(formId)})return;` +
     `var h=Math.round(Number(d.height));if(!isFinite(h)||h<=0)return;` +
-    `f.style.height=Math.min(Math.max(h,${EMBED_MIN_HEIGHT}),${EMBED_MAX_HEIGHT})+"px";});})();`;
+    `var fs=document.querySelectorAll(${scriptValue(selector)});` +
+    `for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){` +
+    `fs[i].style.height=Math.min(Math.max(h,${EMBED_MIN_HEIGHT}),${EMBED_MAX_HEIGHT})+"px";}}});})();`;
   return (
-    `<iframe id="${attribute(frameId)}" src="${attribute(src)}" title="${attribute(title)}" width="100%" height="${EMBED_DEFAULT_HEIGHT}" style="border:0" loading="lazy"></iframe>\n` +
+    `<iframe data-alhc-form="${attribute(formId)}" src="${attribute(src)}" title="${attribute(title)}" width="100%" height="${EMBED_DEFAULT_HEIGHT}" style="border:0" loading="lazy"></iframe>\n` +
     `<script>${script}</script>`
   );
 }

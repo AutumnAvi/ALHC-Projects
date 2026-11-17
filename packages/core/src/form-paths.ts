@@ -290,6 +290,11 @@ export function putPathsTogether(questions: FormQuestion[]): FormQuestion[] {
   return next.every((q, i) => q === questions[i]) ? questions : next;
 }
 
+// The last index of a question's unit (itself and its path blocks), for callers outside this module.
+export function questionUnitEnd(questions: readonly FormQuestion[], index: number): number {
+  return index < 0 ? index : unitEnd(questions, index, questionOwners(questions));
+}
+
 // The last index of a question's unit: the question and its path blocks (nested ones included).
 function unitEnd(questions: readonly FormQuestion[], index: number, owner: Map<string, string>): number {
   const q = questions[index];
@@ -309,13 +314,14 @@ function insideSource(key: string, sourceId: string, owner: Map<string, string>)
   return false;
 }
 
-// The deepest path nesting inside a question's unit (0 for a question that doesn't split).
+// The deepest path nesting inside a question's unit, counted in paths (empty ones too), relative to the
+// question: 0 for a question that doesn't split, 1 for one whose paths hold no further split, and so on.
 function unitPathDepth(questions: readonly FormQuestion[], index: number, owner: Map<string, string>): number {
   const end = unitEnd(questions, index, owner);
   const base = keyDepth(owner.get(questions[index].id) ?? MAIN_FLOW, owner);
   let deepest = 0;
-  for (let j = index + 1; j <= end; j++) {
-    deepest = Math.max(deepest, keyDepth(owner.get(questions[j].id) ?? MAIN_FLOW, owner) - base);
+  for (let j = index; j <= end; j++) {
+    if (isSplit(questions[j])) deepest = Math.max(deepest, keyDepth(owner.get(questions[j].id) ?? MAIN_FLOW, owner) - base + 1);
   }
   return deepest;
 }
@@ -556,7 +562,8 @@ export function groupIntoPaths(questions: readonly FormQuestion[], sourceId: str
     // A split question moving into a path must stay within the nesting limit.
     if (depth + unitPathDepth(questions, i, owner) > MAX_PATH_DEPTH) return;
     const set = order.filter((id) => rule.option_ids.includes(id));
-    if (!set.length) return;
+    // Shown for every answer: not a path (one path would dissolve at once); it stays a plain branch.
+    if (!set.length || set.length === order.length) return;
     const same = groups.find((g) => g.optionIds.length === set.length && g.optionIds.every((id, k) => id === set[k]));
     if (same) {
       same.questionIds.push(q.id);
@@ -717,7 +724,22 @@ export function deletePath(questions: FormQuestion[], sourceId: string, pathId: 
   if (!source || !findPath(source, pathId)) return questions;
   const inBlock = new Set(blockQuestionIds(questions, sourceId, pathId));
   const paths = (source.paths ?? []).filter((p) => p.id !== pathId);
-  let next = withPaths(questions, sourceId, paths);
+  // The answers each remaining path had: if the split dissolves, its questions keep showing for exactly those
+  // (an Otherwise would otherwise take the deleted path's answers too).
+  const answersBefore = new Map((source.paths ?? []).map((p) => [p.id, pathOptionIds(source, p)] as const));
+  const dissolves = pathCountAfter(questions, sourceId, paths) < MIN_PATHS;
+  let next = dissolves
+    ? questions.map((q) => {
+        if (q.id === sourceId) {
+          const copy = { ...q };
+          delete copy.paths;
+          return copy;
+        }
+        const rule = q.show_if;
+        if (rule?.question_id !== sourceId || !rule.path_id || rule.path_id === pathId) return q;
+        return { ...q, show_if: branchRule(sourceId, answersBefore.get(rule.path_id) ?? rule.option_ids) };
+      })
+    : withPaths(questions, sourceId, paths);
   if (mode === "delete") {
     next = next.filter((q) => !inBlock.has(q.id));
   } else {
@@ -814,13 +836,30 @@ export function canPlaceIn(questions: readonly FormQuestion[], id: string, conta
   if (!question) return false;
   if (!container) return true;
   if (question.role === "name") return false;
-  const group = new Set(movingGroup(questions, id));
-  if (group.has(container.sourceId)) return false;
+  const group = movingGroup(questions, id);
+  if (group.includes(container.sourceId)) return false;
   const owner = questionOwners(questions);
-  const target = blockKey(container.sourceId, container.pathId);
-  const depth = keyDepth(target, owner);
-  const start = questions.findIndex((q) => q.id === id);
-  return depth + unitPathDepth(questions, start, owner) <= MAX_PATH_DEPTH;
+  const depth = keyDepth(blockKey(container.sourceId, container.pathId), owner);
+  // Every question that moves along keeps its own paths within the limit.
+  const base = keyDepth(owner.get(id) ?? MAIN_FLOW, owner);
+  return group.every((gid) => {
+    const at = questions.findIndex((q) => q.id === gid);
+    const relative = keyDepth(owner.get(gid) ?? MAIN_FLOW, owner) - base;
+    return depth + relative + unitPathDepth(questions, at, owner) <= MAX_PATH_DEPTH;
+  });
+}
+
+// The rule a question gets when it moves to another container. Stepping out of a path into the container
+// its split question sits in, it takes that question's own rule (it shows whenever the split question
+// shows, like Move out of the path); anywhere else, the container's rule (none on the main flow).
+export function ruleWhenPlaced(questions: readonly FormQuestion[], id: string, container: FlowContainer): BranchRule | null {
+  const owner = questionOwners(questions);
+  const from = containerOf(id, owner);
+  if (from) {
+    const source = questions.find((q) => q.id === from.sourceId);
+    if (source && containerKey(containerOf(source.id, owner)) === containerKey(container)) return source.show_if ?? null;
+  }
+  return containerRule(questions, container);
 }
 
 // Puts a question (with what moves with it) into a container, before `beforeId` (a question of that
@@ -838,7 +877,7 @@ export function placeQuestion(questions: FormQuestion[], id: string, container: 
     : movingGroup(questions, id);
   if (beforeId !== null && groupIds.includes(beforeId)) return questions;
   const group = new Set(groupIds);
-  const rule = sameHome ? null : containerRule(questions, container);
+  const rule = sameHome ? null : ruleWhenPlaced(questions, id, container);
   const moving = questions
     .filter((q) => group.has(q.id))
     .map((q) => (q.id === id && !sameHome ? withRule(q, rule) : q));
@@ -920,6 +959,14 @@ export function moveOutOfPath(questions: FormQuestion[], id: string, where: "sta
   const sourceAt = rest.findIndex((q) => q.id === source.id);
   const at = where === "start" ? sourceAt : unitEnd(rest, sourceAt, restOwner) + 1;
   return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+}
+
+// "Always show" on a plain branch: the question stops depending on that answer but stays where it is, so
+// inside a path it takes the path's rule (it still shows only on that path), on the main flow none.
+export function clearBranch(questions: FormQuestion[], id: string): FormQuestion[] {
+  const owner = questionOwners(questions);
+  const rule = containerRule(questions, containerOf(id, owner));
+  return questions.map((q) => (q.id === id ? withRule(q, rule) : q));
 }
 
 // Where a question that leaves its path would show, in words ("to everyone", "whenever “Size” shows").
