@@ -575,6 +575,22 @@ describe("round 3 review fixes", () => {
     assert.equal(visibleQuestionIds(out, { kind: "print" }).has("dt"), false, "not on another path");
   });
 
+  it("a drop at the end of a path lands at its real end, past a question that depends on the dragged one", () => {
+    const rush: FormQuestion = { id: "r", type: "checkbox", label: "Rush", show_if: { question_id: "kind", option_ids: ["web"], path_id: "p-web" } };
+    const details: FormQuestion = { id: "dt", type: "short_text", label: "Details", show_if: { question_id: "r", option_ids: ["true"] } };
+    const also: FormQuestion = { id: "al", type: "short_text", label: "Also", show_if: { question_id: "kind", option_ids: ["web"], path_id: "p-web" } };
+    const q = putPathsTogether(applyPaths([...normalizeQuestions(form().filter((x) => x.id !== "url"), []), rush, details, also]));
+    const web = { sourceId: "kind", pathId: "p-web" };
+    const out = placeQuestion(q, "r", web, null);
+    assert.notEqual(out, q, "not a no-op");
+    assert.deepEqual(ids(out).slice(ids(out).indexOf("dt"), ids(out).indexOf("more")), ["dt", "al", "r"], "Rush at the end of Web, before Otherwise");
+    // The editor then keeps Details on the path (it's now above Rush).
+    const kept = normalizeQuestions(keepBrokenBranchesInPath(out, q).questions, []);
+    assert.deepEqual(byId(kept, "dt").show_if?.path_id, "p-web");
+    assert.equal(buildFlow(kept).inOrder, true);
+    assert.deepEqual(buildFlow(kept).nodes.find((n) => n.question.id === "kind")!.blocks![1].nodes.map((n) => n.question.id), ["dt", "al", "r"]);
+  });
+
   it("on the main flow there's no path rule to keep", () => {
     const c: FormQuestion = { id: "c", type: "checkbox", label: "C" };
     const d: FormQuestion = { id: "d", type: "short_text", label: "D", show_if: { question_id: "c", option_ids: ["true"] } };
