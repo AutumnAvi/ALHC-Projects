@@ -2,7 +2,7 @@
 
 **Review only. Nothing here is built.** Checked against `main` at **c9cba23**. `feat/ai-builder` (a146782) has the
 same form files (a two-dot diff of `components/forms`, `app/forms`, `core/src/forms.ts`, and `core/src/api/forms`
-is empty). The AI builder's tools create, rename, and turn forms on or off, but they don't edit questions.
+is empty). The AI builder's tools create, rename, delete, and turn forms on or off, but they don't edit questions.
 
 Sources: the code, the migrations under `supabase/migrations`, `docs/design/form-branching.md` (note 143), and
 Asana's public help on forms. One claim comes from the first-pass draft and wasn't re-checked here: it counted
@@ -17,14 +17,17 @@ database reads.
   and nothing on screen shows "path A, path B, then back to the main flow". That gap is note 143.
 - **The design doc's model is right.** Keep the flat question list with `show_if` (the database already checks
   it at submit time), and add path labels on top so the builder can draw blocks.
-- **There's one trap the doc misses: saving strips keys the code doesn't know.** `parseQuestions` copies only
-  the known keys. Every save, load, and public read goes through it, so `paths` and `show_if.path_id` would
-  vanish on the first save until it learns them.
+- **There's one trap the doc misses: the app strips keys it doesn't know.** `parseQuestions`, which every load
+  and save goes through, copies only the known keys. On top of that, `normalizeQuestions` (run on every edit and
+  before Save) and the branch helpers rebuild `show_if` from two keys only. So `paths` and `show_if.path_id`
+  would vanish while editing, and again on save, until every one of them learns the new keys.
 - **Phase 1 doesn't need a migration.** `validate_form` ignores keys it doesn't know, and `submit_form` reads only
-  `show_if.question_id` and `option_ids`. Path rules can be checked in the save layer (`cleanQuestions`). That
-  keeps batch 43 away from the anon-facing definer functions.
-- **Fix the builder's branch bugs first.** Today a branch can disappear silently: the preview hides the question
-  while the live form shows it, with no warning. Paths make that worse.
+  `show_if.question_id` and `option_ids`. Path rules can be checked in the save layer (`cleanQuestions`), as long
+  as it rebuilds every `show_if` from the paths on each save, so the stored rules can't drift from what the
+  builder draws. That keeps batch 43 away from the anon-facing definer functions.
+- **Fix the builder's branch bugs first.** Today a branch can disappear silently. The preview keeps the question
+  dimmed as if it were branched, while the saved form shows it to everyone, with no warning. Paths make that
+  worse.
 - **Recommended batch 43:** path blocks in the builder, plus the fixes paths depend on: no silent branch loss,
   errors shown on the right card, honest draft and Live behavior, mapping warnings, and an embed that sizes
   itself. App only, no migration. Conditions on any answer and "end the form early" come later, and those do
@@ -72,8 +75,9 @@ Email isn't offered, because every form already asks for the submitter's email.
   question, with at least one option. **It doesn't reject unknown keys, at the top level or inside `show_if`.**
 - `ensure_form_requester_name` keeps exactly one required "Your name" short text with no mapping or branch. It
   keeps every other key on every question.
-- `get_public_form` returns each question with only `maps_to` removed. So anything else stored on a question,
-  future path names included, reaches the public page.
+- `get_public_form` (anon) returns each question with only `maps_to` removed, so anyone with a form's link can
+  read every other key through it. The public page then runs `parseQuestions`, so today the browser only
+  receives the known keys.
 
 ### 2.4 From submit to task
 
@@ -109,7 +113,8 @@ and a short form leaves a gap.
 - "From a field" questions take one click, and the mapping only offers targets the question type can fill.
 - Drag, Alt+↑/↓, Duplicate, and Undo after deleting a question or changing its type.
 - Renaming an option never breaks a branch, because branches point at option ids, not labels.
-- The browser and the database check with the same rules, and non-editors get a read-only view.
+- The browser and the database walk the branches the same way and share the 100-question limit. Non-editors get
+  a read-only view.
 
 ### 3.2 Friction compared with Asana
 
@@ -121,8 +126,8 @@ and duplicates. ALHC does the second (forms ride along in project copies). The g
 | Seeing branches | Branches are scattered chips in each source card. The list is flat, and only the preview shows "Shown if". | **Big.** You can't see the flow. Note 143. |
 | "Any other answer" | Every option has to be ticked by hand. A checkbox can only branch on "Checked". | No Otherwise. "Not checked" can't be a branch (it's stored as no answer). |
 | Adding into a branch | **+ New question** goes after the selected card with no branch, even when that card sits inside a branch. | It splits the branch visually, and with paths it splits a path. |
-| Options | Add, rename, remove. "Copy options from" replaces every option and its id. | No reorder, no pasting a list. A field question's options are copied once and never pick up new field options. |
-| Asking a field twice | "From a field" refuses a field that's already asked. | That blocks the most common paths case: the same field asked in different paths. |
+| Options | Add, rename, remove. "Copy options from" replaces the whole list with the source's own options and ids (a section list or a field). | No reorder, no pasting a list. A field question's options are copied once and never pick up new field options. |
+| Asking a field twice | + New question → "From a field" refuses a field that's already asked. The **Fills in** picker still lets a second question fill it. | The menu blocks the most common paths case (the same field asked in different paths), and Fills in allows the risky case with no warning. |
 | Preview | Inline and live. View form opens the **saved** public page. | No "Reset answers". You can't see the draft as a submitter would. |
 | Duplicate form / starters | Neither exists. Every new form starts with the same three questions. | Missing. |
 | Long choice lists | Always shown as radio buttons or checkboxes. | A question with many sections makes a long list. Later. |
@@ -130,31 +135,41 @@ and duplicates. ALHC does the second (forms ride along in project copies). The g
 ### 3.3 Bugs and rough edges (all checked in the code)
 
 1. **A branch can vanish silently when you change options.** Removing an option, or using "Copy options from"
-   (it gives new ids), goes through `updateQuestion` → `changeQuestions`. That path has **no Undo toast**: only a
-   type change or a delete uses `commitWithUndo`. While you edit, `normalizeQuestions` keeps a branch whose
-   options are all gone, so **the preview hides that question forever**. On save,
-   `normalizeQuestions(…, forSave = true)` drops the empty branch, so **the live form always shows it**. The
-   preview and the live form disagree, and nothing says so.
-2. **Save errors don't name the card.** A question made with Branch → Create new question starts with an empty
-   label. Save then fails with "Question can't be empty" (`text()` in `cleanQuestions`) and doesn't say which
-   card. Database refusals come back as a toast too, though some of them do name the question.
+   with a source whose ids don't match the old ones, goes through `updateQuestion` → `changeQuestions`. That path
+   has **no Undo toast**: only a type change or a delete uses `commitWithUndo`. Removing some of a branch's
+   options narrows the branch silently. Removing all of them is worse:
+   - While you edit, `normalizeQuestions` keeps a branch whose options are all gone. That question can never
+     show, so the preview keeps it dimmed for good.
+   - On save, `normalizeQuestions(…, forSave = true)` drops the empty branch (and `cleanQuestions` would too), so
+     the saved form always shows the question.
+
+   Save doesn't write the stripped list back into the editor, so the preview stays dimmed even after saving.
+   Nothing says the preview and the live form now disagree. Routing these edits through `commitWithUndo` wouldn't
+   be enough: `lostBranches` only notices a branch that disappeared, not one that is kept with no answers.
+2. **Save errors don't name the card.** Every new short answer, paragraph, choice, date, or number question
+   starts with an empty label, including one made with Branch → Create new question. Save then fails with
+   "Question can't be empty" (`text()` in `cleanQuestions`) and doesn't say which card. Database refusals come
+   back as a toast too, though some of them do name the question.
 3. **Live and Save don't agree on what's published.**
    - Live / Off saves only `accepting_responses`. Turning a form live with unsaved edits publishes the last saved
      questions, with no warning.
    - View form shows the saved version too.
    - **Save also sends the editor's own copy of Live / Off** (`acceptingResponses: accepting`), so a Save can undo
      a Live / Off change someone else made in another tab.
-4. **Two people saving overwrite each other.** `updateForm` writes the whole question list with no version check,
-   so the last save wins.
+4. **Two people saving overwrite each other.** `updateForm` writes the whole question list with no version
+   check, so the last save wins. It also uses `check()` rather than `checkUpdated`, so a save that changed no row
+   still reports "Form saved". The UI hides Save from people who can't edit, which covers that today.
 5. **Files in questions that become hidden** aren't sent, and they still count toward the 10 files a response can
    take. The message does say "including ones you removed". With paths, someone who switches paths can run out
    of uploads sooner. This is minor.
 6. **Small things:**
-   - The editor opens with the first question (usually "Your name") selected.
+   - The editor opens with the first question (usually "Your name") selected. Because **+ New question** inserts
+     after the selected card, the first new question lands at position 2, not at the end.
    - `BranchEditor`'s empty-state text (`later.length === 0 && options.length === 0`) almost never shows, because
      choice questions always keep at least one option.
-   - Duplicating a branched question keeps its branch, which is fine. Duplicating a source question gives new
-     option ids, so the copy has no branches.
+   - Duplicating a branched question keeps its branch, which is fine. Duplicating a question drops its field
+     mapping ("a copy never fills in the same field twice"). With paths, that's a common move (copy a question
+     into a sibling path), and the mapping would be lost silently.
 
 ---
 
@@ -173,10 +188,17 @@ and duplicates. ALHC does the second (forms ride along in project copies). The g
 
 ### 4.2 What the doc misses or gets wrong
 
-1. **Saving strips unknown keys** (see §1). `parseQuestions` rebuilds `show_if` as `{question_id, option_ids}`,
-   and `cleanQuestions`, `toFormDef`, and `getPublicForm` all use it. `FormQuestion`, `parseQuestions`, and
-   `cleanQuestions` must learn `paths` and `path_id` first, with a test that saves and loads a form and gets the
-   same questions back.
+1. **The app strips unknown keys** (see §1). Everything that rebuilds a question or its `show_if` must learn
+   `paths` and `path_id`:
+   - `FormQuestion` and `parseQuestions` (used by `cleanQuestions`, `toFormDef`, and `getPublicForm`)
+   - `normalizeQuestions` (every edit, and Save with `forSave`)
+   - `ensureNameQuestion`
+   - `showInBranch` and `insertBranchQuestion`
+   - `duplicateQuestion`, which must drop `paths` from a copy (its option ids are new)
+
+   One `show_if` builder that all of them use is safest. The test must go through the editor's real save path:
+   `normalizeQuestions(…, true)` → `cleanQuestions` → `parseQuestions`, getting the same questions back. A test of
+   `cleanQuestions` alone would pass while the editor still strips paths.
 2. **There's no need to patch `validate_form` for Phase 1.** The database already accepts the keys, and the
    walk ignores them. The path rules can be checked in core and again in `cleanQuestions`, which every editor
    save goes through:
@@ -185,39 +207,51 @@ and duplicates. ALHC does the second (forms ride along in project copies). The g
    - each path's questions together in one block
    - Otherwise recomputed
    - at most 3 levels of nesting
+   - "Your name" never inside a path (both `ensureNameQuestion` and the database strip its `show_if`)
 
-   The doc's build plan, step 2, can go.
+   One condition is what makes this safe: **`paths` is the source, and `cleanQuestions` recomputes every path
+   question's `show_if.option_ids` from it on each save.** Otherwise the stored rules and the drawn paths could
+   drift apart (§6). The doc's build plan, step 2, can go.
 3. **Facts in the doc are out of date.**
    - The limit is **100** questions, not 200.
    - `src/lib/forms.ts` is now `packages/core/src/forms.ts`.
    - `tests/unit/workdays.test.ts` moved in the monorepo split.
+   - "Below Admin the flow is read-only" is now "below Editor": since batch 36, Editors build forms (`canBuild`).
 4. **An Otherwise path can be left with no answers.** If every option is already on another path, Otherwise has
-   no options. `validate_form` refuses a `show_if` with an empty option list, so the form won't save. The
-   builder must treat an empty Otherwise as an error on that path (say "no answers left", and say how to fix it).
-   It must never store an empty rule.
+   no options. The database would refuse that empty rule, but it never sees it: `normalizeQuestions(…, true)`
+   and `cleanQuestions` both delete an empty `show_if` before saving. So the save succeeds and the Otherwise
+   questions show to everyone, the same silent loss as bug 1. Both drop sites have to become a blocking error on
+   the path ("no answers left").
 5. **An optional split question left blank shows no path**, Otherwise included, because the walk needs a picked
-   answer. That's correct, but the builder should say "Otherwise: any other answer".
+   answer. That's correct. The builder should say "Otherwise: any other answer (skipped if left blank)", and
+   suggest making a split question required.
 6. **Checkbox sources.** "Otherwise" can't mean "not checked", because unchecked is stored as no answer. The doc
    allows paths on checkboxes. Instead, don't offer Split into paths on a checkbox: suggest a Yes / No single
    choice. The existing single "Checked" branch keeps working.
 7. **Mapping inside paths needs builder rules.** At runtime nothing changes, but:
-   - The same field asked once in each path of one split is fine, and needed. "From a field" should allow it,
-     labeled "Asked in Print".
-   - If two questions that can both show fill the same field, due date, or section, the last one wins. If they
-     both fill the task name, the answers are glued together. Warn.
+   - In a **single-choice** split, the same field asked once in each path is fine, and needed: only one path
+     shows. "From a field" should allow it, labeled "Asked in Print".
+   - In a **multiple-choice** split, sibling paths can show together. So do any two questions that both show.
+     Then the last answer wins for a field, the due date, or the section, and two task-name answers are joined.
+     Warn in both cases.
    - Mapping the split question to a field (say "Request type") gives rules and reports the path taken, with no
      new "path" concept. That answers doc §7 Q6.
-8. **Path names are public.** `get_public_form` sends everything but `maps_to`, so a path name reaches the
-   submitter's browser. That's fine, because names default to option labels. The builder should still say paths
-   are visible on the form, so nobody writes internal notes there.
+8. **Path names will be public data.** The anon `get_public_form` already returns any extra key. Once
+   `parseQuestions` keeps `paths`, the public page will send them to the browser too, unless `getPublicForm`
+   leaves them out (it should). The form never draws path names, but anyone can read them through the function.
+   The builder should say path names aren't private, so nobody writes internal notes there.
 9. **Edits that break paths and aren't in the doc:**
    - removing or replacing options (bug 1)
    - + New question landing inside a block
-   - duplicating a split question (its copy has no paths)
+   - duplicating a split question (the copy keeps `paths` pointing at the old option ids unless it's dropped)
+   - duplicating a question into a sibling path (it loses its field mapping)
    - changing a split question's type (it already warns, with Undo)
-10. **Moving forms over is cheap.** Per the draft's database count, no form branches today. Keep
-    `groupIntoPaths` for any branched form made before release, and make "Put this path together" one button,
-    not a feature.
+10. **Existing branches don't all fit paths.** `showInBranch` lets one question show on A or B and another on B
+    or C, and nesting isn't limited today. Overlapping answer sets can't become separate paths without changing
+    who sees what. So the builder groups only branches that fit (identical answer sets, nesting within the
+    limit). Everything else keeps working as a plain "Shown if" rule on the main list, unchanged until someone
+    edits it. Nothing is converted automatically. (Per the draft's unverified database count, no form branches
+    today, so this is about safety, not volume.)
 11. **The doc's preview path picker** ("Preview as: Print / Web") is optional. Answering the split question in
     the inline preview already walks that path. A "Reset answers" button is the cheaper win.
 
@@ -229,8 +263,12 @@ last block comes a "↳ Paths meet here" line. The preview uses the same path co
 
 The rules for the model:
 
-- Each path question stores `show_if = {question_id, option_ids, path_id}`, with `option_ids` always equal to the
-  path's options.
+- Each path question stores `show_if = {question_id, option_ids, path_id}`, with `option_ids` always recomputed
+  from its path on save.
+- **Split into paths never starts in an error state.** It makes one path per answer, up to 6. With more answers,
+  the person picks which 6 get their own path, and the rest go to Otherwise. Otherwise exists only while some
+  answer isn't on another path. If the last such answer is given its own path, Otherwise is removed, and it asks
+  where Otherwise's questions go.
 - The Branch button stays as the quick way in. It joins a path, or makes one.
 - A required question inside a path is captioned "Required when this path shows". A path that can never show is a
   blocking error on its card, never something Save drops quietly.
@@ -248,12 +286,12 @@ Sizes: **S** is a few hours, **M** about a day, **L** 2–3 days. **No migration
 
 | # | Item | Size |
 | --- | --- | --- |
-| 1 | **Path model in core.** `paths` and `show_if.path_id` in `FormQuestion`, `parseQuestions`, and `cleanQuestions`. `form-paths.ts` holds `groupIntoPaths`, contiguity checks, Otherwise recompute (an empty Otherwise is an error), limits, and block-aware moves. Unit tests, including a save-and-load round trip. | M |
-| 2 | **Path blocks in the builder** (`form-flow.tsx`). Split into paths (one per option, plus Otherwise). Add path. A path ⋯ menu: Rename, Change answers, Move up / down, Delete (asks whether its questions move to the main flow or are deleted). "+ Add question to this path". "Paths meet here". Drag and Alt+↑/↓ that ask "Move to the main flow?" instead of clearing the branch. + New question never lands inside a block by accident. Checkboxes suggest a Yes / No choice instead of paths. | L |
-| 3 | **No silent branch loss.** Removing or replacing options gets the Undo toast. A branch or path with no answers left is a blocking error on its card, and the preview and Save agree. Save errors open and focus the card at fault. A new branch question opens with its label focused. | M |
+| 1 | **Path model in core.** `paths` and `show_if.path_id` kept everywhere a question is rebuilt (§4.2 #1). `form-paths.ts` holds `groupIntoPaths` (only branches that fit), contiguity checks, recomputing `show_if` from `paths`, Otherwise (an empty one is an error), the limits, "Your name" kept on the main flow, and block-aware moves. Unit tests, including a round trip through the editor's real save path. | M |
+| 2 | **Path blocks in the builder** (`form-flow.tsx`). Split into paths (one per answer, up to 6; Otherwise only when answers are left over). Add path. A path ⋯ menu: Rename, Change answers, Move up / down, Delete (asks whether its questions move to the main flow or are deleted). "+ Add question to this path". "Paths meet here". Drag and Alt+↑/↓ that ask "Move to the main flow?" instead of clearing the branch. + New question never lands inside a block by accident. Duplicating keeps a copy's field mapping when it goes into a sibling path. Checkboxes suggest a Yes / No choice instead of paths. | L |
+| 3 | **No silent branch loss.** Changing options in a way that narrows or empties a branch gets the Undo toast, with a new check (`lostBranches` doesn't catch it). A branch or path with no answers left is a blocking error on its card, not dropped by `normalizeQuestions` or `cleanQuestions`, so the preview and the saved form agree. Save errors open and focus the card at fault. A new question opens with its label focused. | M |
 | 4 | **Honest draft and Live.** Live with unsaved edits asks "Save and go live?". View form says it shows the saved version while there are unsaved edits. Save stops sending Live / Off. The preview gets Reset answers. | S |
-| 5 | **Mapping guards.** The same field may be asked once per path of one split ("Asked in Print"). Warn when questions that can both show fill the same field, due date, section, or task name. A hint to map the split question to a field for rules. | S |
-| 6 | **Embed sizes itself.** The embed page posts its height to the parent page (`postMessage` from a `ResizeObserver`; only a number is sent). The Share snippet adds a short listener that checks the message comes from the app's origin. Old snippets keep working at 900 px. | S |
+| 5 | **Mapping guards.** In a single-choice split, the same field may be asked once per path ("Asked in Print"). Warn when two questions that can both show fill the same field, due date, section, or task name, including sibling paths of a multiple-choice split. A hint to map the split question to a field for rules. | S |
+| 6 | **Embed sizes itself.** The embed page measures its content (not the full-height page wrapper, so it can shrink as well as grow) and posts `{ type, formId, height }` to the parent. The Share snippet's short listener accepts a message only from the app's origin **and** from its own iframe (`event.source`), and clamps the height. Old snippets keep working at 900 px. | S |
 
 That's about **6–8 days** of author time in one PR. Land the core work and its tests as the first commits so
 reviewers see clear pieces.
@@ -263,7 +301,7 @@ reviewers see clear pieces.
 | # | Item | Size |
 | --- | --- | --- |
 | 7 | **Options editor:** reorder (drag, Alt+↑/↓) and paste a list (one option per line). | S |
-| 8 | **Edit-conflict check:** Save sends the `updated_at` it loaded, and refuses with "Someone else changed this form. Reload." | S |
+| 8 | **Edit-conflict check.** `FormDef` gains `updatedAt`. Save writes only when `updated_at` still matches (`checkUpdated`, since `check()` treats zero rows as success) and refuses with "Someone else changed this form. Reload." The editor takes the new `updated_at` from its own saves and Live toggles, so those never look like a conflict. | S–M |
 | 9 | **Duplicate form.** The copy starts off, with " (copy)" added to its name. It's an RLS insert, with no migration. | S |
 
 ### Later
@@ -279,16 +317,25 @@ reviewers see clear pieces.
 
 ## 6. Risks
 
-- **The key-stripping trap.** If item 1 slips, paths disappear on save without an error. Its round-trip test
-  must land first.
-- **The checks live only in the app layer.** With no database patch, a future writer that skips `cleanQuestions`
-  (for example an AI-builder tool that edits questions) could save paths that aren't contiguous. Submissions stay
-  correct, because `show_if` is still checked by the database. Only the builder's drawing suffers, and "Put this
-  path together" fixes it. Add the database check with Phase 2.
+- **The key-stripping trap.** If item 1 misses one rebuild site, paths disappear while editing or on save, with
+  no error. Its round-trip test through the real save path must land first.
+- **Old code drops path data.** A Vercel rollback, or an editor tab still running the old JavaScript, reads
+  questions through the old `parseQuestions`. Its next save drops `paths`, the custom path names, and the
+  Otherwise marker. `show_if` survives, so submissions stay correct, but Otherwise is no longer kept up to date.
+  Recovery: the new builder regroups identical branches with `groupIntoPaths`, and path names fall back to the
+  answer labels.
+- **The checks live only in the app layer.** With no database patch, a writer that skips `cleanQuestions` (for
+  example a future AI-builder tool that edits questions) could store `show_if` rules that no longer match the
+  drawn paths. Then submissions follow the stored rules, not the paths people see, and could skip a required
+  question someone expects. "Put this path together" can't fix that. Mitigations:
+  - Every writer goes through `cleanQuestions`, which recomputes `show_if` from `paths`.
+  - The builder flags a path whose stored rules disagree with it when the form opens.
+  - The database check comes with Phase 2.
 - **Review size.** This is a large UI batch. Keeping it in new files and landing core first keeps the diff easy to
   review.
-- **The embed.** Sizing itself needs the new snippet pasted into the Marketing Request Forms hub. Until then
-  nothing changes there.
+- **The embed.** Sizing itself needs the new snippet pasted into the Marketing Request Forms hub. If the hub is a
+  tool that strips scripts (Notion and some site builders do), the snippet can't run there, and forms stay at a
+  fixed 900 px as today.
 - **The AI-builder port.** The form files are the same on both branches today, so it should apply cleanly.
 
 ---
@@ -300,10 +347,11 @@ reviewers see clear pieces.
 2. **Does any real form need Phase 2?** That means a question that depends on a number, a date, or two answers
    together, or a path that ends the form early. If none comes to mind, Phase 2 stays parked.
 
-Settled by this review, not decisions:
+**Defaults this review picks.** These were the open questions in `form-branching.md` §7. Each stands unless Avi
+says otherwise:
 
-- Multiple choice shows every matching path.
-- Otherwise is added automatically when splitting.
+- Multiple choice shows every matching path. That's what the walk does today.
+- Otherwise is added when splitting, as long as some answers are left over.
 - There's no "jump to question N".
 - Limits are 6 paths and 3 levels.
 - Checkboxes don't split into paths.
