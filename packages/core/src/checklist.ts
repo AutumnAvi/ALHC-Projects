@@ -183,6 +183,30 @@ export function checklistDueLabel(dueOn: string, today: string): string {
   return dayLabel(dueOn, Number(today.slice(0, 4)));
 }
 
+// Nov 16 batch 42 (item 1): Home's summary counts from the same live list its Today card draws (the person's
+// own completions, reopenings, date changes, and reassignments on it at once), plus the ids of this week's
+// tasks the card doesn't hold (minus the ones the person just completed or gave away).
+export function liveSummaryCounts(
+  open: readonly { id: string; dueOn: string | null }[],
+  hiddenWeekIds: readonly string[],
+  done: ReadonlyMap<string, boolean>,
+  gone: ReadonlySet<string>,
+  today: string,
+) {
+  let overdue = 0;
+  let due = 0;
+  const week = new Set<string>();
+  for (const task of open) {
+    const group = checklistGroupOf(task.dueOn, today);
+    if (group === "overdue") overdue += 1;
+    else if (group === "today") due += 1;
+    else if (group === "week") week.add(task.id);
+  }
+  const shown = new Set(open.map((t) => t.id));
+  for (const id of hiddenWeekIds) if (!shown.has(id) && done.get(id) !== true && !gone.has(id)) week.add(id);
+  return { overdue, today: due, week: week.size };
+}
+
 // "3 due today · 1 overdue" (Home's greeting line). Empty when there's nothing open.
 export function summaryLine(counts: { today: number; overdue: number; week: number }): string {
   const parts: string[] = [];

@@ -5,7 +5,7 @@
 // action's refresh (patchedAction → the action's `screenOnly`), so the router keeps recently visited
 // pages. Everything else refreshes as before.
 import { useEffect } from "react";
-import { screensPatch, type PatchedWriteKind } from "@alhc/core/patched-writes";
+import { homeShowsWrite, screensPatch, type PatchedWriteKind } from "@alhc/core/patched-writes";
 import { topicIsLive } from "@/lib/live";
 import { currentMutationToken, markWriteWithoutRefresh } from "@/lib/optimistic-session";
 
@@ -13,6 +13,15 @@ type Declaration = { kinds: readonly PatchedWriteKind[]; topic: string | null };
 
 const declarations = new Set<Declaration>();
 const writeListeners = new Set<(at: number) => void>();
+
+// Nov 16 batch 42 (item 1): saves of a kind Home shows, as they start and end (refreshing or not).
+export type HomeWriteEvent = { phase: "start" } | { phase: "end"; ok: boolean; at: number; screenOnly: boolean };
+const homeWriteListeners = new Set<(event: HomeWriteEvent) => void>();
+
+export function onHomeWrite(listener: (event: HomeWriteEvent) => void): () => void {
+  homeWriteListeners.add(listener);
+  return () => homeWriteListeners.delete(listener);
+}
 
 // Mounted by a screen (a project view, My tasks): `kinds` it shows correctly without the server's render,
 // while `topic` (its live channel) is connected. null: it patches nothing (the page refreshes).
@@ -53,16 +62,28 @@ export function patchedAction<R extends { error?: string } | void>(
     const screenOnly = !options.refresh && screenPatches(kind);
     const token = currentMutationToken();
     if (screenOnly) markWriteWithoutRefresh(token);
-    const result = await call(screenOnly);
-    if (screenOnly && !(result && result.error)) {
-      const at = Date.now();
-      for (const listener of writeListeners) listener(at);
+    const home = homeShowsWrite(kind);
+    if (home) for (const listener of homeWriteListeners) listener({ phase: "start" });
+    let ok = false;
+    try {
+      const result = await call(screenOnly);
+      ok = !(result && result.error);
+      if (screenOnly && ok) {
+        const at = Date.now();
+        for (const listener of writeListeners) listener(at);
+      }
+      return result;
+    } finally {
+      if (home) {
+        const at = Date.now();
+        for (const listener of homeWriteListeners) listener({ phase: "end", ok, at, screenOnly });
+      }
     }
-    return result;
   };
 }
 
 export function resetPatchedWritesForTests() {
   declarations.clear();
   writeListeners.clear();
+  homeWriteListeners.clear();
 }

@@ -151,7 +151,8 @@ export function samplePlaceholderValues(input: {
       f.options?.[0]?.name ??
       // A number reads as the rule will write it (task_field_text: grouped, with the field's symbol).
       (f.fieldType === "number" ? formatNumberValue(1500, f.numberPrefix) : undefined) ??
-      { date: "2026-10-24", boolean: "Yes", people: "Dana Diaz" }[f.fieldType] ??
+      // A date reads as the automation writes it (task_field_text: "Oct 24, 2026"; batch 42).
+      { date: "Oct 24, 2026", boolean: "Yes", people: "Dana Diaz" }[f.fieldType] ??
       `Sample ${f.name}`;
   }
   for (const q of input.questions ?? []) values[`form.field.${q.label.trim().toLowerCase()}`] = `Sample answer to “${q.label}”`;

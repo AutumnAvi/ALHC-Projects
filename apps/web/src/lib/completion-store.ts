@@ -58,17 +58,32 @@ export function openBlockerCount(task: { blockedBy: number; blockerIds?: readonl
   return Math.max(0, task.blockedBy - done);
 }
 
-// Wraps a completion action: notes it at once, and takes the note back when the server refuses.
+// Wraps a completion action: notes it at once, and takes the note back when the server refuses (or the
+// call throws) — putting back the note it replaced, e.g. an Undo's failed reopen keeps the tick's note
+// (Nov 16 batch 42).
 export function trackCompletion<R extends { error?: string } | void>(
   taskId: string,
   completed: boolean,
   action: () => Promise<R>,
 ): () => Promise<R> {
   return async () => {
+    const before = entries.get(taskId);
     noteCompletion(taskId, completed);
-    const result = await action();
-    if (result && result.error) forgetCompletion(taskId, completed);
-    return result;
+    const restore = () => {
+      const entry = entries.get(taskId);
+      if (!entry || entry.completed !== completed) return;
+      if (before) entries.set(taskId, before);
+      else entries.delete(taskId);
+      changed();
+    };
+    try {
+      const result = await action();
+      if (result && result.error) restore();
+      return result;
+    } catch (error) {
+      restore();
+      throw error;
+    }
   };
 }
 

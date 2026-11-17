@@ -68,3 +68,16 @@ COOKIE=/tmp/alhc-api/cookie ALHC_DB_TRACE=/tmp/alhc-db-trace.jsonl node scripts/
 PLAYWRIGHT_CORE=/path/to/playwright-core COOKIE=/tmp/alhc-api/cookie LIST_VIEW=<seed List view id> BOARD_VIEW=<seed Board view id> \
   node scripts/perf/nav-timing.mjs http://localhost:3000 after 6 > nav-after.json
 ```
+
+## Tick, then Home and the content policy (Nov 16 batch 42)
+
+On the same stack with `REALTIME=1 node scripts/perf/local-api.mjs serve <dir> 3011` (live topics read as joined, as on Supabase) and a production build:
+
+```bash
+PLAYWRIGHT_CORE=/path/to/playwright-core COOKIE=/tmp/alhc-api/cookie STAY_MS=40000 FROM=project \
+  node scripts/perf/tick-home-timing.mjs http://localhost:3122 after 3
+PLAYWRIGHT_CORE=… COOKIE=… FORM=<a live form id> PROJECT=<project id> VIEW=<its List view id> TASK=<task id> \
+  WORKER=<file in apps/web/public/pdfjs> node scripts/perf/csp-check.mjs http://localhost:3122
+```
+
+`tick-home-timing.mjs` prints the click → Home times, whether a skeleton was drawn, and whether the ticked task still shows as open. `csp-check.mjs` prints each page's content-policy violations (events, console lines, reports), whether the form embed loads inside another origin's frame (it serves one on :3999), and whether pdf.js's worker starts.

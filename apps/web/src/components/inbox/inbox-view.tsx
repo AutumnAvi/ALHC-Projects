@@ -17,8 +17,8 @@ import { type ActionResult } from "@alhc/core/api/core/result";
 import type { InboxItem } from "@alhc/core/api/inbox/model";
 import type { Profile } from "@alhc/core/api/people/model";
 import {
-  INBOX_LIMIT,
   INBOX_TABS,
+  inboxLimitNote,
   NO_INBOX_FILTER,
   groupByDay,
   inboxCategory,
@@ -42,6 +42,7 @@ type Override = Partial<CardState>;
 export function InboxView({
   tab,
   items: serverItems,
+  hasMore = false,
   profiles,
   memberId,
   bookmarks,
@@ -50,6 +51,8 @@ export function InboxView({
 }: {
   tab: InboxTab;
   items: InboxItem[];
+  // Older notifications exist past the ones shown (Nov 16 batch 42: the read asked for one more).
+  hasMore?: boolean;
   profiles: Profile[];
   memberId: string;
   // Bookmarks work (always, since every migration is applied).
@@ -59,6 +62,7 @@ export function InboxView({
   today: string;
 }) {
   const items = useLiveInboxItems(serverItems, memberId);
+  const limitNote = inboxLimitNote(tab, hasMore);
   const taskHref = useTaskHref();
   // The task whose pane is open (instant: no server render on open / close; Oct 19 notes).
   const openTaskId = useOpenTaskId();
@@ -284,12 +288,7 @@ export function InboxView({
                 </div>
               ))
             )}
-            {items.length >= INBOX_LIMIT ? (
-              <p className="mt-8 text-center text-xs text-zinc-400">
-                Showing the latest {INBOX_LIMIT} notifications
-                {tab === "activity" ? ". Archive some to see older ones." : "."}
-              </p>
-            ) : null}
+            {limitNote ? <p className="mt-8 text-center text-xs text-zinc-400">{limitNote}</p> : null}
           </div>
         </div>
       </div>

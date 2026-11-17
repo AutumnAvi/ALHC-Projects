@@ -60,12 +60,19 @@ function expired(item: TaggedEdit, status: EditStatus, now?: number): boolean {
   return now - item.at > EDIT_TTL_MS;
 }
 
+// A newer edit of the same task and kind retires the older ones for good, unless its write failed (or
+// skipped the task): an older edit never comes back when a newer one's grace runs out first (Nov 16
+// batch 42: a held tick outlasting its Undo's reopen).
+function current(items: readonly TaggedEdit[], status: EditStatus): TaggedEdit[] {
+  const standing = items.filter((item) => !expired(item, status));
+  const latest = new Map<string, number>();
+  standing.forEach((item, index) => latest.set(editKey(item.edit), index));
+  return standing.filter((item, index) => latest.get(editKey(item.edit)) === index);
+}
+
 // The edits still in force, the latest per task and kind of edit, in the order they were made.
 export function liveEdits(items: readonly TaggedEdit[], status: EditStatus, now?: number): TaggedEdit[] {
-  const kept = items.filter((item) => !expired(item, status, now));
-  const latest = new Map<string, number>();
-  kept.forEach((item, index) => latest.set(editKey(item.edit), index));
-  return kept.filter((item, index) => latest.get(editKey(item.edit)) === index);
+  return current(items, status).filter((item) => !expired(item, status, now));
 }
 
 export function readEdits(client: QueryClient): TaggedEdit[] {
@@ -82,7 +89,16 @@ export function addTaskEdits(client: QueryClient, token: number, edits: readonly
 export function pruneTaskEdits(client: QueryClient, status: EditStatus, now = Date.now()): number | null {
   const items = readEdits(client);
   if (items.length === 0) return null;
-  const kept = items.filter((item) => !expired(item, status, now));
+  // An older edit goes for good once a newer one of its task and kind has finished saving; while the newer
+  // one is still on its way, the older stays (a failure rolls back to it).
+  const settled = new Map<string, number>();
+  items.forEach((item, index) => {
+    const ended = item.token === 0 || status.endedAt(item.token) !== undefined;
+    if (ended && !expired(item, status)) settled.set(editKey(item.edit), index);
+  });
+  const kept = items.filter(
+    (item, index) => !expired(item, status, now) && (settled.get(editKey(item.edit)) ?? -1) <= index,
+  );
   if (kept.length !== items.length) client.setQueryData<TaggedEdit[]>(queryKeys.taskEdits(), kept);
   let next: number | null = null;
   for (const item of kept) {

@@ -14,7 +14,7 @@ import {
 import { visibleTaskNumbers } from "../numbers/queries";
 import type { TaskApproval } from "../task-pane/model";
 import { taskTitles } from "../tasks/queries";
-import { INBOX_LIMIT, type InboxTab, withoutTeamMessages } from "../../inbox";
+import { INBOX_LIMIT, inboxPageOf, type InboxTab, withoutTeamMessages } from "../../inbox";
 
 // One Inbox tab, newest first, INBOX_LIMIT items. inbox_page does the four reads in one call.
 // A database without that function uses the row queries. Team message items are left out: teams have
@@ -24,9 +24,32 @@ export const listInbox = read(async (ctx: ApiContext, tab: InboxTab = "activity"
   const page = await supabase.rpc("inbox_page", { inbox_tab: tab });
   if (page.error) {
     if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
-    return labelInbox(ctx, withoutTeamMessages(await listInboxFromRows(ctx, tab)));
+    return labelInbox(ctx, withoutTeamMessages((await listInboxFromRows(ctx, tab)).items));
   }
   return labelInbox(ctx, withoutTeamMessages(inboxItemsFromPage(page.data)));
+});
+
+export type InboxPage = { items: InboxItem[]; hasMore: boolean };
+
+// The Inbox page (Nov 16 batch 42, audit C97): the same items as listInbox, plus whether there are older
+// ones than the INBOX_LIMIT shown. inbox_page_window reads one more than it shows; a database without it
+// (before 20261116010000_nov16_batch42_a.sql) answers as before: "maybe more" at a full page.
+export const listInboxPage = read(async (ctx: ApiContext, tab: InboxTab = "activity"): Promise<InboxPage> => {
+  const supabase = ctx.db;
+  const windowed = await supabase.rpc("inbox_page_window", { inbox_tab: tab, max_items: INBOX_LIMIT + 1 });
+  if (!windowed.error) {
+    const { items, hasMore } = inboxPageOf(inboxItemsFromPage(windowed.data));
+    return { items: await labelInbox(ctx, withoutTeamMessages(items)), hasMore };
+  }
+  if (!rpcMissing(windowed.error)) throw new Error(`Failed to load inbox: ${windowed.error.message}`);
+  const page = await supabase.rpc("inbox_page", { inbox_tab: tab });
+  if (page.error) {
+    if (!rpcMissing(page.error)) throw new Error(`Failed to load inbox: ${page.error.message}`);
+    const { items, hasMore } = await listInboxFromRows(ctx, tab);
+    return { items: await labelInbox(ctx, withoutTeamMessages(items)), hasMore };
+  }
+  const items = inboxItemsFromPage(page.data);
+  return { items: await labelInbox(ctx, withoutTeamMessages(items)), hasMore: items.length >= INBOX_LIMIT };
 });
 
 async function labelInbox(ctx: ApiContext, items: InboxItem[]): Promise<InboxItem[]> {
@@ -36,7 +59,7 @@ async function labelInbox(ctx: ApiContext, items: InboxItem[]): Promise<InboxIte
 
 //   activity = not archived, archive = archived, bookmarks = bookmarked (archived or not),
 //   mentioned = @mentions (archived or not).
-async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): Promise<InboxItem[]> {
+async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): Promise<{ items: InboxItem[]; hasMore: boolean }> {
   const supabase = ctx.db;
 
   // The tab as a PostgREST filter: [column, operator, value].
@@ -59,7 +82,7 @@ async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): P
       .is("task.deleted_at", null)
       .filter(column, operator, value)
       .order("created_at", { ascending: false })
-      .limit(INBOX_LIMIT)
+      .limit(INBOX_LIMIT + 1)
       .overrideTypes<InboxTaskRow[], { merge: false }>(),
     supabase
       .from("inbox_items")
@@ -69,7 +92,7 @@ async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): P
       .is("message.project.deleted_at", null)
       .filter(column, operator, value)
       .order("created_at", { ascending: false })
-      .limit(INBOX_LIMIT)
+      .limit(INBOX_LIMIT + 1)
       .overrideTypes<InboxMessageRow[], { merge: false }>(),
     // Real features 2: team messages and status updates.
     supabase
@@ -82,7 +105,7 @@ async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): P
       .is("team_message.team.deleted_at", null)
       .filter(column, operator, value)
       .order("created_at", { ascending: false })
-      .limit(INBOX_LIMIT)
+      .limit(INBOX_LIMIT + 1)
       .overrideTypes<InboxTeamMessageRow[], { merge: false }>(),
     supabase
       .from("inbox_items")
@@ -93,7 +116,7 @@ async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): P
       .is("status_update.project.deleted_at", null)
       .filter(column, operator, value)
       .order("created_at", { ascending: false })
-      .limit(INBOX_LIMIT)
+      .limit(INBOX_LIMIT + 1)
       .overrideTypes<InboxStatusRow[], { merge: false }>(),
   ]);
   const items = rows(taskResult, "inbox");
@@ -265,9 +288,11 @@ async function listInboxFromRows(ctx: ApiContext, tab: InboxTab = "activity"): P
     };
   });
   // Newest first; items made in the same transaction keep a stable order.
-  return [...taskItems, ...messages, ...teamMessages, ...statusUpdates]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
-    .slice(0, INBOX_LIMIT);
+  return inboxPageOf(
+    [...taskItems, ...messages, ...teamMessages, ...statusUpdates].sort(
+      (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+    ),
+  );
 }
 
 export const countUnreadInbox = read(async (ctx: ApiContext) => {

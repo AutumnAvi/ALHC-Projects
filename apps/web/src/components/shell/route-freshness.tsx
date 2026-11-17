@@ -1,19 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import type { PrefetchKind } from "next/dist/client/components/router-reducer/router-reducer-types";
 import { useEffect, useRef, useState, type ComponentProps, type FocusEvent, type PointerEvent } from "react";
 import { requestLiveRefresh, useLiveRefresher } from "@/lib/live";
-import { onWriteWithoutRefresh } from "@/lib/patched-writes";
+import { onHomeWrite, onWriteWithoutRefresh } from "@/lib/patched-writes";
 import {
+  applyWarmPlan,
   arrivalNeedsRevalidation,
   emptyFreshness,
+  HOME_KEY,
+  HOVER_PREFETCH_SECONDS,
+  homeNeedsRenderAfterSave,
+  homeWarmPlan,
+  noteCopy,
   notePrefetch,
   noteRendered,
+  noteSaveRefreshed,
   noteShown,
   noteWriteWithoutRefresh,
+  ROUTER_CACHE_SECONDS,
   routeKey,
   routeKeyOfHref,
+  bumpAllowedAt,
+  warmOnIntent,
+  type WarmPlan,
 } from "@/lib/route-freshness";
 
 // Nov 4 notes, batch 28 (M4): stale-while-revalidate for whole screens (src/lib/route-freshness.ts). Going
@@ -29,6 +42,37 @@ if (typeof window !== "undefined") onWriteWithoutRefresh((at) => noteWriteWithou
 let skeletons = 0;
 let counted = 0;
 
+// Nov 16 batch 42 (item 1): a full prefetch (the screen's data too, kept HOVER_PREFETCH_SECONDS), what
+// <Link prefetch={true}> asks for. router.prefetch's public type takes the router's enum; its value is "full".
+export const FULL_PREFETCH = "full" as PrefetchKind;
+function prefetchFull(router: AppRouterInstance, href: string) {
+  router.prefetch(href, { kind: FULL_PREFETCH });
+}
+
+// After a save Home shows, how long to wait for more (ticking several tasks quickly renders Home once; a
+// save that starts meanwhile puts it off again). Short, so the copy is usually ready before the click.
+export const HOME_WARM_DELAY_MS = 250;
+// A warm-up that must empty the router's cache throws away the copy of Home a quick click would draw at
+// once, so it waits for the person to settle (and runs at most every MIN_BUMP_GAP_MS, route-freshness.ts).
+export const HOME_WARM_BUMP_DELAY_MS = 2000;
+// After a save that refreshed (its edits last EDIT_GRACE_MS, 4 s), the warm-up runs within this, however many
+// saves follow (Codex r4 F8): the held copy of Home is replaced while that save's edit still shows on it.
+export const REFRESHED_WARM_WITHIN_MS = 2500;
+
+export function warmDelay(bump: boolean, refreshDeadline: number | undefined, now: number): number {
+  const delay = bump ? HOME_WARM_BUMP_DELAY_MS : HOME_WARM_DELAY_MS;
+  return refreshDeadline === undefined ? delay : Math.max(0, Math.min(delay, refreshDeadline - now));
+}
+let warmTimer: number | undefined;
+let runWarm: (() => void) | null = null;
+
+// The sidebar's Home link (pointer on it, focus, click): a warm-up still waiting runs now, unless it would
+// throw away the copy of Home the click is about to draw (warmOnIntent).
+export function flushHomeWarm() {
+  if (warmTimer === undefined || !runWarm) return;
+  runWarm();
+}
+
 // Rendered by every loading skeleton (LoadingRegion).
 export function SkeletonShown() {
   useEffect(() => {
@@ -42,7 +86,98 @@ export function RouteFreshness() {
   const search = useSearchParams();
   const key = routeKey(pathname ?? "", search?.toString());
   const previous = useRef<string | null>(null);
+  const router = useRouter();
+  const current = useRef(key);
+  useEffect(() => {
+    current.current = key;
+  }, [key]);
   useLiveRefresher();
+  // Batch 42 (item 1): a save Home shows that settled here — a completion, a name, an assignee — gets a
+  // copy of Home rendered after it (route-freshness.ts, homeWarmPlan), so "tick, then Home" draws Home at
+  // once with the task done. Before, the router's copy of Home was dropped 30 seconds after it was
+  // fetched, so coming back later always waited for a full render behind a skeleton.
+  useEffect(() => {
+    let inFlight = 0;
+    let burstStartedAt = 0;
+    let burstEndedAt = 0;
+    let anyOk = false;
+    let refreshedInBurst = false;
+    // A save that refreshed keeps its edits only EDIT_GRACE_MS: the warm-up runs by then whatever follows.
+    let refreshDeadline: number | undefined;
+    let lastBumpAt = -Infinity;
+    const warm = (intent: boolean) => {
+      if (!intent) warmTimer = undefined;
+      if (!anyOk) return;
+      const now = Date.now();
+      const here = current.current;
+      if (here === HOME_KEY) {
+        anyOk = false;
+        refreshedInBurst = false;
+        refreshDeadline = undefined;
+        // Reached Home while the save was still going: render it again so it shows the save.
+        if (homeNeedsRenderAfterSave(state, here, burstStartedAt, burstEndedAt)) requestLiveRefresh();
+        return;
+      }
+      let plan: WarmPlan | null = homeWarmPlan(state, here, now);
+      if (intent) {
+        plan = warmOnIntent(plan);
+        // Not now (it would throw away the copy the click draws), but not cancelled either: the timer stays,
+        // so a pointer passing over the link changes nothing (Opus r2 F7).
+        if (!plan) return;
+        window.clearTimeout(warmTimer);
+        warmTimer = undefined;
+      } else if (plan.bump && !refreshedInBurst && now < bumpAllowedAt(lastBumpAt)) {
+        // (A save that refreshed keeps its edits only EDIT_GRACE_MS, so it doesn't wait for the gap: the held
+        // copy of Home is replaced before its edit lapses. It refreshed this screen already anyway.)
+        // Emptied the cache moments ago: once more when the gap is up (or on the way to Home).
+        warmTimer = window.setTimeout(() => warm(false), bumpAllowedAt(lastBumpAt) - now);
+        return;
+      }
+      anyOk = false;
+      refreshedInBurst = false;
+      refreshDeadline = undefined;
+      if (!plan) return;
+      if (plan.bump) {
+        router.refresh();
+        lastBumpAt = now;
+      }
+      for (const href of plan.prefetch) prefetchFull(router, href);
+      applyWarmPlan(state, plan, here, now);
+    };
+    runWarm = () => warm(true);
+    const stop = onHomeWrite((event) => {
+      if (event.phase === "start") {
+        if (inFlight === 0 && warmTimer === undefined) burstStartedAt = Date.now();
+        inFlight += 1;
+        window.clearTimeout(warmTimer);
+        warmTimer = undefined;
+        return;
+      }
+      inFlight = Math.max(0, inFlight - 1);
+      burstEndedAt = event.at;
+      if (event.ok) {
+        anyOk = true;
+        // Every copy drawn from the router's cache after this is rendered again on arrival. A save's own
+        // refresh (next/cache refresh()) drops what was fetched on arrival but leaves rendered-ahead copies,
+        // Home's included, in place (noteSaveRefreshed).
+        noteWriteWithoutRefresh(state, event.at);
+        if (!event.screenOnly) {
+          refreshedInBurst = true;
+          refreshDeadline ??= event.at + REFRESHED_WARM_WITHIN_MS;
+          noteSaveRefreshed(state, current.current, event.at);
+        }
+      }
+      if (inFlight === 0) {
+        const now = Date.now();
+        const bump = homeWarmPlan(state, current.current, now).bump;
+        warmTimer = window.setTimeout(() => warm(false), warmDelay(bump, refreshDeadline, now));
+      }
+    });
+    return () => {
+      stop();
+      runWarm = null;
+    };
+  }, [router]);
   useEffect(() => {
     const now = Date.now();
     const left = previous.current;
@@ -57,7 +192,10 @@ export function RouteFreshness() {
       const fetched = skeletons > counted || document.querySelector(".skeleton") !== null;
       counted = skeletons;
       // The first screen of the visit, a fetch, or a background render: its server copy is fresh now.
-      if (left === null || fetched || revisit) noteRendered(state, key, Date.now());
+      if (left === null || fetched || revisit) {
+        noteRendered(state, key, Date.now());
+        noteCopy(state, key, Date.now(), ROUTER_CACHE_SECONDS);
+      }
       if (revisit && !fetched) requestLiveRefresh();
     }, 50);
     return () => window.clearTimeout(timer);
@@ -81,7 +219,12 @@ export function PrefetchLink({ href, onPointerEnter, onPointerLeave, onFocus, pr
     if (!target) return;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      if (notePrefetch(state, routeKeyOfHref(target), Date.now())) setActive(true);
+      const now = Date.now();
+      const routeKeyOfTarget = routeKeyOfHref(target);
+      if (notePrefetch(state, routeKeyOfTarget, now)) {
+        noteCopy(state, routeKeyOfTarget, now, HOVER_PREFETCH_SECONDS);
+        setActive(true);
+      }
     }, delay);
   };
   return (

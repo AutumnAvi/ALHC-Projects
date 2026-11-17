@@ -23,6 +23,18 @@ export const inboxTabHref = (tab: InboxTab) => (tab === "activity" ? "/inbox" : 
 // The newest this many items per tab (task items and message items each), newest first.
 export const INBOX_LIMIT = 100;
 
+// Nov 16 batch 42 (audit C97): the Inbox reads one item more than it shows, so it knows whether the list
+// was cut (exactly INBOX_LIMIT notifications is the whole list, not a cut one).
+export function inboxPageOf<T>(read: readonly T[], limit = INBOX_LIMIT): { items: T[]; hasMore: boolean } {
+  return { items: read.slice(0, limit), hasMore: read.length > limit };
+}
+
+// The note under the list: only when there really are older notifications than the ones shown.
+export function inboxLimitNote(tab: InboxTab, hasMore: boolean): string | null {
+  if (!hasMore) return null;
+  return `Showing the latest ${INBOX_LIMIT} notifications${tab === "activity" ? ". Archive some to see older ones." : "."}`;
+}
+
 // Oct 26 notes (batch 4): teams have no Messages tab any more, so the Inbox leaves out items about a team
 // message (they'd link nowhere; the threads stay in the database). Project messages stay.
 export function withoutTeamMessages<T extends { teamMessage: unknown }>(items: T[]): T[] {

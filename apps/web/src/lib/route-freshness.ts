@@ -38,10 +38,111 @@ export type FreshnessState = {
   lastWriteAt: number;
   // When each screen's server copy was last rendered here (a fetch, or a background render on arrival).
   renderedAt: Map<string, number>;
+  // Nov 16 batch 42 (item 1): the copies the router may still hold, with how long it keeps each: a screen
+  // fetched on arrival or rendered again in the background (ROUTER_CACHE_SECONDS), or rendered ahead
+  // (HOVER_PREFETCH_SECONDS). Used to tell whether a fresh prefetch would be taken or skipped by the router.
+  copies: Map<string, { at: number; keepMs: number }>;
 };
 
 export function emptyFreshness(): FreshnessState {
-  return { shownAt: new Map(), prefetchedAt: new Map(), lastWriteAt: 0, renderedAt: new Map() };
+  return { shownAt: new Map(), prefetchedAt: new Map(), lastWriteAt: 0, renderedAt: new Map(), copies: new Map() };
+}
+
+// Home: the screen kept ready after a save (batch 42, item 1).
+export const HOME_KEY = "/";
+
+export function noteCopy(state: FreshnessState, key: string, now: number, keepSeconds: number) {
+  state.copies.delete(key);
+  state.copies.set(key, { at: now, keepMs: keepSeconds * 1000 });
+  if (state.copies.size > MAX_KEYS) {
+    const oldest = state.copies.keys().next().value;
+    if (oldest !== undefined) state.copies.delete(oldest);
+  }
+}
+
+// Whether the router may still hold a copy of `key` (so a prefetch of it would be skipped). Errs on "yes".
+export function mayHoldCopy(state: FreshnessState, key: string, now: number): boolean {
+  const copy = state.copies.get(key);
+  return copy !== undefined && now - copy.at < copy.keepMs + SLACK_MS;
+}
+
+// A save that refreshed (next/cache refresh()): the router dropped the screens it fetched on arrival (their
+// copies live in its back / forward cache) and rendered this one again; copies rendered ahead (full
+// prefetches) stay.
+export function noteSaveRefreshed(state: FreshnessState, current: string, at: number) {
+  for (const [key, copy] of [...state.copies]) if (copy.keepMs <= ROUTER_CACHE_SECONDS * 1000) state.copies.delete(key);
+  noteCopy(state, current, at, ROUTER_CACHE_SECONDS);
+}
+
+// At most this many other recently shown screens are rendered again after the router's cache is emptied.
+export const MAX_RECENT_REWARMED = 2;
+
+export type WarmPlan = {
+  // Empty the router's cache first (router.refresh): it may hold a copy of Home from before the save, and
+  // the router would draw that one instead of taking a new prefetch.
+  bump: boolean;
+  // Render these ahead (full prefetch), Home first.
+  prefetch: string[];
+};
+
+// After a save Home shows (a completion, a name, an assignee) settles on another screen (`current`): get
+// a copy of Home rendered after it, so going there next draws at once and shows the save. When the router
+// may still hold an older copy of Home, the cache is emptied first; the other screens the person was on in
+// the last ROUTER_CACHE_SECONDS (which that empties too) are rendered again with it, up to
+// MAX_RECENT_REWARMED — chosen by when they were shown, never by when they were last rendered ahead, so
+// rendering a screen again never keeps it "recent".
+// On Home itself there's nothing to warm (Home shows its saves itself, or its save refreshed it).
+export function homeWarmPlan(state: FreshnessState, current: string, now: number): WarmPlan {
+  if (current === HOME_KEY) return { bump: false, prefetch: [] };
+  const bump = mayHoldCopy(state, HOME_KEY, now);
+  const recent = bump
+    ? [...state.shownAt.entries()]
+        .filter(([key, at]) => key !== current && key !== HOME_KEY && now - at < ROUTER_CACHE_SECONDS * 1000)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MAX_RECENT_REWARMED)
+        .map(([key]) => key)
+    : [];
+  return { bump, prefetch: [HOME_KEY, ...recent] };
+}
+
+// Emptying the router's cache costs a render of the screen on view too: at most once in this long. A save
+// in between waits for the next turn (or for the person to head for Home, see warmOnIntent).
+export const MIN_BUMP_GAP_MS = 10_000;
+
+// When a warm-up that has to empty the cache may run (now, or later at this time).
+export function bumpAllowedAt(lastBumpAt: number): number {
+  return lastBumpAt + MIN_BUMP_GAP_MS;
+}
+
+// The person heads for Home (pointer on the link, focus, click) while a warm-up waits. Emptying the cache
+// then would throw away the copy of Home the click is about to draw, so it doesn't run: Home is drawn from
+// that copy at once (with the person's own edits held on it, task-edits.ts) and rendered again in the
+// background on arrival. Without an older copy to keep, the warm-up runs now.
+export function warmOnIntent(plan: WarmPlan): WarmPlan | null {
+  return plan.bump ? null : plan;
+}
+
+// What the router holds once a plan ran: emptied (bump) except the screen on view (rendered again by the
+// refresh), plus the new prefetches.
+export function applyWarmPlan(state: FreshnessState, plan: WarmPlan, current: string, now: number) {
+  if (plan.bump) {
+    state.copies.clear();
+    noteCopy(state, current, now, ROUTER_CACHE_SECONDS);
+    noteRendered(state, current, now);
+  }
+  for (const key of plan.prefetch) {
+    noteCopy(state, key, now, HOVER_PREFETCH_SECONDS);
+    remember(state.prefetchedAt, key, now);
+  }
+}
+
+// A save that started before the person reached Home and ended after: the copy of Home they're looking at
+// may not show it (the save skipped its refresh), so Home is rendered again. (Arriving after it ended is
+// handled on arrival: arrivalNeedsRevalidation.)
+export function homeNeedsRenderAfterSave(state: FreshnessState, current: string, saveStartedAt: number, saveEndedAt: number): boolean {
+  if (current !== HOME_KEY) return false;
+  const arrived = state.shownAt.get(HOME_KEY);
+  return arrived !== undefined && arrived >= saveStartedAt && arrived < saveEndedAt;
 }
 
 export function noteRendered(state: FreshnessState, key: string, now: number) {

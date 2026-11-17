@@ -610,12 +610,14 @@ begin
   -- other policy: the caller's projects / portfolios at a role, once per statement).
   -- Nov 12 batch 39 added open_blocker_count_set (open_blocker_count for a whole list in one pass: a
   -- number per task the caller may ask about, nothing more).
+  -- Nov 16 batch 42 added inbox_page_window (inbox_page with the page size as an argument, 1–200: the
+  -- caller's own Inbox items by inbox_page's own rules, generated from its definition).
   assert exposed =
     'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
     'complete_approval_as_approver,convert_commenter_members,create_project_from_template,create_project_from_template_custom,create_review_check,custom_field_has_role,decide_approval,decide_project_access_request,decide_team_join_request,'
     'delete_project_template,duplicate_project,finish_import_run,get_project_integrations,get_public_form,goal_hidden_project_count,hand_off_approval,has_portfolio_role,'
-    'has_project_role,has_task_role,home_dashboard,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_unread_count,invite_to_workspace,is_allowlisted,'
+    'has_project_role,has_task_role,home_dashboard,import_attachment_file,import_attachment_targets,import_batch,inbox_page,inbox_page_window,inbox_unread_count,invite_to_workspace,is_allowlisted,'
     'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
     'list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,locked_field_value_writable,manage_slack_workspace,move_portfolio_project,my_task_cards,my_tasks_layout,open_blocker_count,open_blocker_count_set,'
     'portfolio_hidden_project_count,portfolio_ids_with_role,portfolio_role,profile_can_read_task,project_access_status,project_field_sharing,project_ids_with_role,project_role,project_schedule_cards,project_section_task_counts,'
