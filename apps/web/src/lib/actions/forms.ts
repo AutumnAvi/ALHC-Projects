@@ -7,7 +7,7 @@ import { id } from "@alhc/core/api/core/validate";
 import type { FormPatch, SubmitFormResult } from "@alhc/core/api/forms/model";
 import * as formsApi from "@alhc/core/api/forms/mutations";
 import type { FormAnswers } from "@alhc/core/forms";
-import { deliverQueuedEmail, run } from "@/lib/server/action";
+import { deliverQueuedEmail, run, runWith } from "@/lib/server/action";
 import { actionContext } from "@/lib/server/context";
 
 export async function createForm(projectId: string, title: string): Promise<ActionResult> {
@@ -19,13 +19,28 @@ export async function createForm(projectId: string, title: string): Promise<Acti
   return result;
 }
 
-export async function updateForm(formId: string, patch: FormPatch): Promise<ActionResult> {
-  return run((ctx) => formsApi.updateForm(ctx, formId, patch));
+// Answers the form's new updated_at (batch 43: the editor's next write expects it).
+export async function updateForm(formId: string, patch: FormPatch): Promise<ActionResult & { updatedAt?: string }> {
+  return runWith((ctx) => formsApi.updateForm(ctx, formId, patch));
 }
 
 // Oct 26 notes (batch 3): the form editor's Live / Off switch saves at once.
-export async function setFormLive(formId: string, live: boolean): Promise<ActionResult> {
-  return run((ctx) => formsApi.setFormLive(ctx, formId, live));
+export async function setFormLive(
+  formId: string,
+  live: boolean,
+  expectedUpdatedAt?: string,
+): Promise<ActionResult & { updatedAt?: string }> {
+  return runWith((ctx) => formsApi.setFormLive(ctx, formId, live, expectedUpdatedAt));
+}
+
+// Batch 43: Duplicate form (the copy starts off); opens the copy.
+export async function duplicateForm(formId: string, projectId: string): Promise<ActionResult> {
+  let copyId: string | null = null;
+  const result = await run(async (ctx) => {
+    copyId = await formsApi.duplicateForm(ctx, formId);
+  });
+  if (copyId && !result.error) redirect(`/projects/${id(projectId)}/forms/${copyId}`);
+  return result;
 }
 
 export async function deleteForm(formId: string, projectId: string): Promise<ActionResult> {

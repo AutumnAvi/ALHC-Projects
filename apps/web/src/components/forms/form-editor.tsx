@@ -9,6 +9,7 @@ import {
   ArrowUp,
   AtSign,
   Calendar,
+  CircleAlert,
   CircleChevronDown,
   Copy,
   CopyPlus,
@@ -16,6 +17,7 @@ import {
   Eye,
   FileInput,
   GitBranch,
+  GitFork,
   Globe,
   GripVertical,
   Hash,
@@ -24,6 +26,7 @@ import {
   ListChecks,
   Paperclip,
   Plus,
+  RotateCcw,
   Share2,
   SquareCheck,
   Trash2,
@@ -33,15 +36,61 @@ import {
 } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { FormQuestionField } from "@/components/forms/public-form";
+import {
+  PathChoiceDialog,
+  PathsPanel,
+  QuestionFlow,
+  SplitIntoPathsButton,
+  pathQuestionCount,
+  pathTags,
+  type FlowContext,
+  type PathTag,
+} from "@/components/forms/form-flow";
+import { OptionsEditor } from "@/components/forms/form-options";
 import { FieldTypeIcon } from "@/components/project/field-editor";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
 import { FormLiveSwitch, FormStatusBadge } from "@/components/forms/form-status";
-import { deleteForm, setFormLive, updateForm } from "@/lib/actions/forms";
+import { deleteForm, duplicateForm, setFormLive, updateForm } from "@/lib/actions/forms";
+import { EMBED_NOTE, formEmbedSnippet } from "@/lib/form-embed";
+import type { ActionResult } from "@alhc/core/api/core/result";
 import { MAX_ATTACHMENT_LABEL } from "@alhc/core/attachments";
 import { FORM_LOCKED_FIELD_NOTE, type FieldDef } from "@alhc/core/fields";
 import { FieldLockIcon } from "@/components/project/field-lock";
+import {
+  applyPaths,
+  blockQuestionIds,
+  buildFlow,
+  canPlaceIn,
+  checkboxToYesNo,
+  clearBranch,
+  containerKey,
+  containerOf,
+  deletePath,
+  driftedPathQuestions,
+  fieldAskInContainer,
+  formProblems,
+  insertAfter,
+  insertIntoContainer,
+  keepBrokenBranchesInPath,
+  mappingConflicts,
+  moveInFlow,
+  moveOutOfPath,
+  moveOutWords,
+  movingGroup,
+  pathAnswersText,
+  pathLabel,
+  pathProblems,
+  placeQuestion,
+  problemSummary,
+  putPathsTogether,
+  questionOwners,
+  stopSplitting,
+  type FlowContainer,
+  type FlowNode,
+  type FormProblem,
+} from "@alhc/core/form-paths";
 import {
   BATCH4_QUESTION_TYPES,
   MAX_FILES_PER_QUESTION,
@@ -52,12 +101,13 @@ import {
   clearedBranchesMessage,
   lostBranches,
   lostBranchesMessage,
+  narrowedBranches,
+  narrowedBranchesMessage,
   fieldAccepts,
   isAnswerable,
   isBranchSource,
   isChoice,
   mapTargetLabel,
-  moveQuestionBefore,
   moveQuestionBy,
   normalizeQuestions,
   isNameQuestion,
@@ -66,8 +116,9 @@ import {
   visibleQuestionIds,
   type FormAnswers,
   type FormDef,
+  type FormPath,
   type FormQuestion,
-  type QuestionOption,
+  type MapTarget,
   type QuestionType,
   EMAIL_QUESTION_NOTE,
   branchUnavailableReason,
@@ -113,6 +164,9 @@ function newId() {
 // question type), and per-question branching ("If the answer is X, show …"). The header says who can
 // submit and has View form, Share form, and Copy link. Saving goes through updateForm, which the
 // database validates again (validate_form), so submissions keep working exactly as before.
+// Batch 43 (note 143): the questions are a flow (form-flow.tsx): a choice question can split into paths
+// that meet again; problems sit on the card at fault; Save never sends Live / Off and both are checked
+// against the form's last-read version.
 export function FormEditor({
   form,
   sections,
@@ -147,36 +201,94 @@ export function FormEditor({
   const [sendConfirmation, setSendConfirmation] = useState(form.sendConfirmation);
   const [verifiedOnly, setVerifiedOnly] = useState(Boolean(form.verifiedDomainsOnly));
   const [confirmationMessage, setConfirmationMessage] = useState(form.confirmationMessage ?? "");
-  const [questions, setQuestions] = useState<FormQuestion[]>(() => ensureNameQuestion(form.questions));
-  const [dirty, setDirty] = useState(false);
+  // Batch 43: path questions whose stored answers disagree with their paths (written outside this editor)
+  // are drawn, previewed, and saved by their paths; the editor says so (to people who can save it).
+  const [drifted, setDrifted] = useState(() => (canEdit ? driftedPathQuestions(ensureNameQuestion(form.questions)) : []));
+  const [questions, setQuestions] = useState<FormQuestion[]>(() => {
+    const loaded = ensureNameQuestion(form.questions);
+    return drifted.length ? applyPaths(loaded) : loaded;
+  });
+  const [dirty, setDirty] = useState(drifted.length > 0);
   const [tab, setTab] = useState<"questions" | "settings">("questions");
   const [selectedId, setSelectedId] = useState<string | null>(form.questions[0]?.id ?? null);
   const [answers, setAnswers] = useState<FormAnswers>({});
-  // Dragging a question card by its handle: the card being dragged, and where it would land (the
-  // question it would sit before; null = the end; undefined = nowhere yet).
+  // Dragging a question card by its handle: the card being dragged, and where it would land (a container
+  // and the question it would sit before; null = the container's end).
   const [dragging, setDragging] = useState<string | null>(null);
-  const [dropBefore, setDropBefore] = useState<string | null | undefined>(undefined);
+  // The dragged unit fades a frame after the drag starts (the browser takes its drag image first).
+  const [faded, setFaded] = useState<string | null>(null);
+  const [drop, setDrop] = useState<DropTarget | null>(null);
   // C107 (Nov 10): below 1024 px the preview and the editing side take turns (the header's Preview button).
   const [narrowPreview, setNarrowPreview] = useState(false);
+  // Batch 43: problems on the cards. Ones that make a question never show are on from the start; empty
+  // labels and answers only once a save was tried (a new card isn't an error while you type into it).
+  const [showAllProblems, setShowAllProblems] = useState(false);
+  // "Delete path" (and an Otherwise left with no answers) asks where the path's questions go.
+  const [pathChoice, setPathChoice] = useState<PathChoice | null>(null);
   // Read by the Escape handler: set as soon as a drag starts (the faded card waits a frame).
   const dragRef = useRef<string | null>(null);
+  // The last drop target worked out during a drag (dragover fires many times a second on one spot).
+  const lastTarget = useRef<string | null>(null);
   // Screen readers hear where a moved question went.
   const [announcement, setAnnouncement] = useState("");
   const dirtyRef = useRef(dirty);
-  // The latest questions, for the branch Undo toast (it runs after later renders).
+  // The latest questions, for the Undo toasts and the steps that ask first (they run after later renders).
   const questionsRef = useRef(questions);
   useEffect(() => {
     questionsRef.current = questions;
   }, [questions]);
+  // Batch 43 (item 8): the form's updated_at this editor last read or wrote. Save and Live / Off write only
+  // while it still matches; only this editor's own successful writes move it on.
+  const versionRef = useRef(form.updatedAt);
+  // A new question's label takes the focus once its card is open.
+  const focusLabelRef = useRef<string | null>(null);
+  // An element to focus after the next render: a card that moved into another list is a new element, so
+  // the control that moved it gets the focus back this way.
+  const focusAfterRef = useRef<string | null>(null);
+  // Field mappings a Duplicate dropped (a copy never fills in a field twice), offered back if the copy moves
+  // to a path that can't show with its original.
+  const droppedMappings = useRef(new Map<string, NonNullable<FormQuestion["maps_to"]>>());
   const panelRef = useRef<HTMLDivElement>(null);
 
   const publicUrl = `${origin}/forms/${form.id}`;
-  const embedSnippet = `<iframe src="${origin}/forms/${form.id}/embed" title="${title.replace(/"/g, "&quot;")}" width="100%" height="900" style="border:0" loading="lazy"></iframe>`;
+  const embedSnippet = formEmbedSnippet(origin, form.id, title);
   const visible = useMemo(() => visibleQuestionIds(questions, answers), [questions, answers]);
+  const flow = useMemo(() => buildFlow(questions), [questions]);
+  const tags = useMemo(() => pathTags(flow.nodes), [flow]);
+  const problems = useMemo(() => formProblems(questions), [questions]);
+  const shownProblems = useMemo(
+    () => problems.filter((p) => showAllProblems || !LATE_PROBLEMS.has(p.kind)),
+    [problems, showAllProblems],
+  );
+  const problemsByPath = useMemo(
+    () => new Map(shownProblems.flatMap((p) => (p.pathId ? [[p.pathId, p] as const] : []))),
+    [shownProblems],
+  );
+  const sectionFieldIds = useMemo(() => new Set(fields.filter((f) => f.boundToSections).map((f) => f.id)), [fields]);
+  const conflicts = useMemo(() => mappingConflicts(questions, sectionFieldIds), [questions, sectionFieldIds]);
+  const movingIds = useMemo(() => new Set(faded ? movingGroup(questions, faded) : []), [questions, faded]);
 
   useEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
+
+  // A new question opens with its label focused.
+  useEffect(() => {
+    const id = focusLabelRef.current;
+    if (!id || selectedId !== id) return;
+    const input = document.getElementById(`fq-${id}-label`);
+    if (input instanceof HTMLInputElement) {
+      focusLabelRef.current = null;
+      input.focus();
+    }
+  }, [selectedId, questions]);
+
+  useEffect(() => {
+    const id = focusAfterRef.current;
+    if (!id) return;
+    focusAfterRef.current = null;
+    document.getElementById(id)?.focus();
+  }, [questions]);
 
   async function close() {
     if (dirtyRef.current && !(await confirm({ title: "Discard your unsaved changes to this form?", confirmLabel: "Discard", tone: "danger" }))) {
@@ -216,26 +328,66 @@ export function FormEditor({
     };
   }
 
+  // A quiet change (typing a label, ticking Required).
   function changeQuestions(next: (current: FormQuestion[]) => FormQuestion[]) {
     setQuestions((current) => normalizeQuestions(next(current), fields));
     setDirty(true);
   }
 
-  // C36: a change that clears branch questions (a delete, a choice question changed to another type)
-  // says so, with Undo while nothing else changed since.
-  function commitWithUndo(next: FormQuestion[], message: string | null) {
-    const previous = questions;
+  function announce(message: string) {
+    // The same words twice in a row still get read out (a live region ignores an unchanged text).
+    setAnnouncement((prev) => (prev === message ? `${message}\u200b` : message));
+  }
+
+  // A change that says what it did, with Undo while nothing else changed since. It also says when branches
+  // lost answers or disappeared (C36, batch 43: a removed answer, a replaced answer list, a path given fewer
+  // answers), and asks where an Otherwise's questions go when a change leaves it no answers.
+  // `moved` = questions the change moves on purpose (their new place is the message; they aren't reported
+  // as having lost a branch).
+  function commit(next: FormQuestion[], message: string | null, moved: string[] = []) {
+    const previous = questionsRef.current;
+    if (next === previous) return;
     const result = normalizeQuestions(next, fields);
+    questionsRef.current = result;
     setQuestions(result);
     setDirty(true);
-    const lost = lostBranches(previous, result);
-    const text = lost.length ? (message ? `${message} ${lostBranchesMessage(lost)}` : lostBranchesMessage(lost)) : message;
+    const before = new Set(pathProblems(previous).map((p) => `${p.kind}:${p.pathId}`));
+    const fresh = pathProblems(result).filter(
+      (p) => (p.kind === "otherwise_empty" || p.kind === "path_empty") && !before.has(`${p.kind}:${p.pathId}`),
+    );
+    const emptied = fresh.find((p) => p.kind === "otherwise_empty");
+    if (emptied?.pathId) setPathChoice({ sourceId: emptied.questionId, pathId: emptied.pathId, reason: "otherwise" });
+    // Questions the change moves on purpose, and an emptied Otherwise's (the dialog asks about them), aren't
+    // reported as losing their branch.
+    const quiet = new Set([...moved, ...(emptied?.pathId ? blockQuestionIds(result, emptied.questionId, emptied.pathId) : [])]);
+    const lost = lostBranches(previous, result).filter((q) => !quiet.has(q.id));
+    const narrowed = narrowedBranches(previous, result);
+    const hadPaths = new Set(previous.filter((q) => q.paths?.length).map((q) => q.id));
+    const unsplit = message ? [] : result.filter((q) => hadPaths.has(q.id) && !q.paths?.length);
+    const text = [
+      message,
+      ...unsplit.map((q) => `“${q.label.trim() || "The question"}” no longer splits into paths.`),
+      ...fresh.map((p) => {
+        const source = result.find((q) => q.id === p.questionId);
+        const path = source?.paths?.find((x) => x.id === p.pathId);
+        return source && path ? `The path “${pathLabel(source, path)}” has no answers left.` : null;
+      }),
+      lost.length ? lostBranchesMessage(lost) : null,
+      narrowedBranchesMessage({
+        narrowed: narrowed.narrowed.filter((q) => !quiet.has(q.id)),
+        emptied: narrowed.emptied.filter((q) => !quiet.has(q.id)),
+      }),
+    ]
+      .filter(Boolean)
+      .join(" ");
     if (!text) return;
     notify(text, {
       label: "Undo",
       onClick: () => {
         if (questionsRef.current !== result) return;
+        questionsRef.current = previous;
         setQuestions(previous);
+        setPathChoice(null);
         setDirty(true);
       },
     });
@@ -243,8 +395,10 @@ export function FormEditor({
 
   function updateQuestion(id: string, next: FormQuestion) {
     const before = questions.find((q) => q.id === id);
-    if (before && before.type !== next.type) {
-      commitWithUndo(
+    // A type change, or answers that change what a branch or path shows, says so with Undo (commit only
+    // speaks when something did change).
+    if (before && (before.type !== next.type || before.options !== next.options)) {
+      commit(
         questions.map((q) => (q.id === id ? next : q)),
         null,
       );
@@ -253,38 +407,52 @@ export function FormEditor({
     changeQuestions((current) => current.map((q) => (q.id === id ? next : q)));
   }
 
-  function insertQuestion(question: FormQuestion) {
-    changeQuestions((current) => {
-      const at = selectedId ? current.findIndex((q) => q.id === selectedId) : -1;
-      return at < 0 ? [...current, question] : [...current.slice(0, at + 1), question, ...current.slice(at + 1)];
-    });
+  function opened(question: FormQuestion) {
     setSelectedId(question.id);
     setTab("questions");
+    focusLabelRef.current = question.id;
   }
 
-  // The one reorder path (buttons, Alt+↑ / Alt+↓, and drops). Worked out from this render's questions in
-  // the event handler, not in a state updater (StrictMode runs updaters twice, which would toast twice).
-  // A move that puts a branch question below the questions it shows clears those branches (the database
-  // only accepts a branch on an earlier question), with Undo. The order saves with the form.
+  // Batch 43: "+ New question" adds to the end of the main flow (never into a path by accident);
+  // "+ Add question to this path" to that path's end; a card's "Add a question below" right after it, in
+  // the same path.
+  function addQuestion(question: FormQuestion, where: { container: FlowContainer } | { after: string }) {
+    const next = "after" in where ? insertAfter(questions, where.after, question) : insertIntoContainer(questions, where.container, question);
+    commit(next, null);
+    opened(question);
+  }
+
+  // The one reorder path within a flow (buttons, Alt+↑ / Alt+↓, and drops). Worked out from this render's
+  // questions in the event handler, not in a state updater (StrictMode runs updaters twice, which would
+  // toast twice). A move that puts a branch question below the questions it shows clears those branches
+  // (the database only accepts a branch on an earlier question), with Undo. The order saves with the form.
   function applyOrder(movedId: string, moved: FormQuestion[]) {
     if (moved === questions) return;
-    const broken = brokenBranches(moved);
+    // Inside a path, a question moved above the question it depends on keeps showing on its path.
+    const { questions: repaired, kept } = keepBrokenBranchesInPath(moved, questions);
+    const broken = brokenBranches(repaired);
     const previous = questions;
-    const next = normalizeQuestions(moved, fields);
+    const next = normalizeQuestions(repaired, fields);
+    questionsRef.current = next;
     setQuestions(next);
     setDirty(true);
     const position = next.findIndex((q) => q.id === movedId);
     const label = next[position]?.label.trim() || "Untitled question";
-    const message = `Moved “${label}” to position ${position + 1} of ${next.length}`;
-    // The same words twice in a row still get read out (a live region ignores an unchanged text).
-    setAnnouncement((prev) => (prev === message ? `${message}\u200b` : message));
-    if (broken.length) {
-      notify(clearedBranchesMessage(broken), {
+    announce(`Moved “${label}” to position ${position + 1} of ${next.length}`);
+    const keptText = kept.length
+      ? kept.length === 1
+        ? `“${labelOf(next, kept[0])}” now shows on its whole path: the question it depended on is no longer above it.`
+        : `${kept.length} questions now show on their whole path: the questions they depended on are no longer above them.`
+      : null;
+    const text = [broken.length ? clearedBranchesMessage(broken) : null, keptText].filter(Boolean).join(" ");
+    if (text) {
+      notify(text, {
         label: "Undo",
         // Only while nothing else changed since (an Undo never throws away later edits), and the form
         // is unsaved again afterwards, so the restored branch gets saved too.
         onClick: () => {
           if (questionsRef.current !== next) return;
+          questionsRef.current = previous;
           setQuestions(previous);
           setDirty(true);
         },
@@ -292,61 +460,123 @@ export function FormEditor({
     }
   }
 
-  function reorder(id: string, beforeId: string | null) {
-    applyOrder(id, moveQuestionBefore(questions, id, beforeId));
-  }
-
-  function moveQuestion(id: string, delta: -1 | 1) {
-    applyOrder(id, moveQuestionBy(questions, id, delta));
+  // Move up / down and Alt+↑ / Alt+↓: past the question next to it in the same flow, carrying its paths. At
+  // a path's first or last place it asks "Move it to the main flow?" instead of clearing its branch.
+  async function moveQuestion(id: string, delta: -1 | 1) {
+    const result = moveInFlow(questions, id, delta);
+    if (result === null) {
+      if (!flow.inOrder) applyOrder(id, moveQuestionBy(questions, id, delta));
+      return;
+    }
+    if ("questions" in result) {
+      applyOrder(id, result.questions);
+      return;
+    }
+    const words = moveOutWords(questions, id);
+    if (!(await confirm({ title: words.title, message: words.message, confirmLabel: "Move it out" }))) return;
+    const label = labelOf(questionsRef.current, id);
+    focusAfterRef.current = `fq-${id}-toggle`;
+    commit(moveOutOfPath(questionsRef.current, id, result.edge), `Moved “${label}” out of its path.`, [id]);
+    announce(`Moved “${label}” out of its path`);
   }
 
   function startDrag(id: string) {
     dragRef.current = id;
+    lastTarget.current = null;
+    setDragging(id);
     // Fade the card a frame later: the browser takes its drag image from the card as the drag starts.
     requestAnimationFrame(() => {
-      if (dragRef.current === id) setDragging(id);
+      if (dragRef.current === id) setFaded(id);
     });
   }
 
   function endDrag() {
     dragRef.current = null;
     setDragging(null);
-    setDropBefore(undefined);
+    setFaded(null);
+    setDrop(null);
   }
 
-  // Drops on a card bubble here; the card already set where it lands.
-  function dropQuestion(e: DragEvent<HTMLElement>) {
+  // Where a drop would land, kept only when it would move something (no line where nothing would change,
+  // inside the question's own paths, or in a path the requester's name can't join).
+  function dragOver(target: DropTarget) {
+    const id = dragRef.current;
+    if (!id) return;
+    const key = `${containerKey(target.container)}|${target.beforeId ?? ""}`;
+    if (key === lastTarget.current) return;
+    lastTarget.current = key;
+    const valid = canPlaceIn(questions, id, target.container) && placeQuestion(questions, id, target.container, target.beforeId) !== questions;
+    setDrop(valid ? target : null);
+  }
+
+  async function dropQuestion(e: DragEvent<HTMLElement>) {
     e.preventDefault();
-    const id = e.dataTransfer.getData(QUESTION_DRAG);
-    const beforeId = dropBefore ?? null;
+    const id = e.dataTransfer.getData(QUESTION_DRAG) || dragRef.current;
+    const target = drop;
+    lastTarget.current = null;
     endDrag();
-    if (id) reorder(id, beforeId);
+    if (!id || !target) return;
+    const from = containerOf(id, flow.owner);
+    if (containerKey(from) === containerKey(target.container)) {
+      applyOrder(id, placeQuestion(questions, id, target.container, target.beforeId));
+      return;
+    }
+    const label = labelOf(questions, id);
+    if (from && !target.container) {
+      // Out of a path onto the main flow: one level out (below the question it names) it keeps the split
+      // question's own rule, like Move out of the path; otherwise it shows to everyone. The confirm says
+      // which, from the rule the move actually leaves it.
+      const kept = placeQuestion(questions, id, null, target.beforeId).find((q) => q.id === id)?.show_if;
+      const words = kept ? moveOutWords(questions, id) : null;
+      const ok = await confirm({
+        title: words?.title ?? `Move “${label}” to the main flow?`,
+        message: words?.message ?? "It leaves its path and shows to everyone, whatever the answer.",
+        confirmLabel: "Move it",
+      });
+      if (!ok) return;
+    }
+    const next = placeQuestion(questionsRef.current, id, target.container, target.beforeId);
+    const into = target.container ? pathNameOf(next, target.container) : null;
+    commit(next, into ? `Moved “${label}” into the path “${into}”.` : `Moved “${label}” to the main flow.`, [id]);
+    announce(into ? `Moved “${label}” into the path ${into}` : `Moved “${label}” to the main flow`);
+    if (target.container) offerMappingBack(id, target.container, next);
   }
 
-  // The drop line: before the card a drop would land in front of, or after the last card for the end.
-  // Targets that wouldn't move anything (right before the dragged card or the card after it) get none.
-  function dropLineFor(index: number): "before" | "after" | null {
-    if (!dragging || dropBefore === undefined) return null;
-    const from = questions.findIndex((q) => q.id === dragging);
-    if (from < 0 || dropBefore === dragging || dropBefore === (questions[from + 1]?.id ?? null)) return null;
-    if (dropBefore === questions[index].id) return "before";
-    return dropBefore === null && index === questions.length - 1 ? "after" : null;
+  // The Paths menu on a split question: an existing question joins one of its paths.
+  function placeInPath(id: string, container: NonNullable<FlowContainer>) {
+    const next = placeQuestion(questionsRef.current, id, container, null);
+    commit(next, `Moved “${labelOf(next, id)}” into the path “${pathNameOf(next, container)}”.`, [id]);
+    offerMappingBack(id, container, next);
   }
 
-  // Item 68: "Create new question" from a branch: a short answer right after the source's branch, shown
-  // only for that answer, opened for editing.
+  // Item 5: a Duplicate dropped the copy's field mapping; once it's in a path that can't show with the
+  // field's other questions, offer it back.
+  function offerMappingBack(id: string, container: FlowContainer, next: FormQuestion[]) {
+    const mapping = droppedMappings.current.get(id);
+    const fieldId = mapping?.target === "field" ? mapping.field_id : undefined;
+    if (!mapping || !fieldId || !fieldAskInContainer(next.filter((q) => q.id !== id), fieldId, container).allowed) return;
+    const field = fields.find((f) => f.id === fieldId);
+    notify(`“${labelOf(next, id)}” can’t show with the other questions that fill in ${field?.name ?? "that field"}. Fill it in from here too?`, {
+      label: `Fill in ${field?.name ?? "the field"}`,
+      onClick: () => {
+        droppedMappings.current.delete(id);
+        changeQuestions((current) => current.map((q) => (q.id === id && !q.maps_to ? { ...q, maps_to: mapping } : q)));
+      },
+    });
+  }
+
+  // Item 68: "Create new question" from a branch: a short answer right after the source's branch (in the
+  // answer's path when the question splits), shown only for that answer, opened with its label focused.
   function createBranchQuestion(sourceId: string, optionId: string) {
     const question: FormQuestion = { id: newId(), type: "short_text", label: "" };
-    changeQuestions((current) => insertBranchQuestion(current, sourceId, optionId, question));
-    setSelectedId(question.id);
-    setTab("questions");
+    commit(insertBranchQuestion(questions, sourceId, optionId, question), null);
+    opened(question);
   }
 
   function removeQuestion(id: string) {
-    const removed = questions.find((q) => q.id === id);
-    commitWithUndo(
+    commit(
       questions.filter((q) => q.id !== id),
-      `Deleted “${removed?.label.trim() || "Untitled question"}”.`,
+      `Deleted “${labelOf(questions, id)}”.`,
     );
     if (selectedId === id) setSelectedId(null);
   }
@@ -358,46 +588,139 @@ export function FormEditor({
       label: `${question.label} (copy)`.slice(0, 500),
       ...(question.options ? { options: question.options.map((o) => ({ ...o, id: newId() })) } : {}),
     };
-    // A copy never fills in the same field twice.
-    if (copy.maps_to?.target === "field") delete copy.maps_to;
-    changeQuestions((current) => {
-      const at = current.findIndex((q) => q.id === question.id);
-      return [...current.slice(0, at + 1), copy, ...current.slice(at + 1)];
-    });
+    // A copy has new answer ids, so it doesn't split (its original's paths stay with the original).
+    delete copy.paths;
+    // A copy never fills in the same field twice (offered back if it moves to a sibling path).
+    if (copy.maps_to?.target === "field") {
+      droppedMappings.current.set(copy.id, copy.maps_to);
+      delete copy.maps_to;
+    }
+    commit(insertAfter(questions, question.id, copy, true), null);
     setSelectedId(copy.id);
   }
 
-  function save() {
+  // Opens the card at fault (its label focused when that's what's missing) and says what to fix.
+  function revealProblem(problem: FormProblem) {
+    setShowAllProblems(true);
+    setTab("questions");
+    setNarrowPreview(false);
+    setSelectedId(problem.questionId);
+    if (problem.kind === "label") focusLabelRef.current = problem.questionId;
+    requestAnimationFrame(() => {
+      const target = problem.pathId
+        ? document.querySelector<HTMLElement>(`[data-path="${problem.pathId}"]`)
+        : document.getElementById(`fq-${problem.questionId}-toggle`);
+      target?.scrollIntoView({ block: "center" });
+      if (!problem.pathId && problem.kind !== "label") target?.focus();
+    });
+  }
+
+  function reportProblems() {
+    const first = problems[0];
+    if (!first) return false;
+    revealProblem(first);
+    notify(problems.length === 1 ? `Fix this before saving. ${problemSummary(first, questions)}` : `Fix ${problems.length} things before saving. First: ${problemSummary(first, questions)}`);
+    return true;
+  }
+
+  async function reload() {
+    if (
+      dirtyRef.current &&
+      !(await confirm({ title: "Load the latest version?", message: "Your unsaved changes in this editor will be lost.", confirmLabel: "Reload", tone: "danger" }))
+    ) {
+      return;
+    }
+    dirtyRef.current = false;
+    window.location.reload();
+  }
+
+  // A refused write that says someone else changed the form gets a Reload button instead of a plain toast.
+  function conflictAware(result: ActionResult & { updatedAt?: string }) {
+    if (result.code !== "conflict") return result;
+    notify(result.error ?? "Someone else changed this form.", { label: "Reload", onClick: () => void reload() });
+    return {};
+  }
+
+  // Item 4: Save sends the questions and settings, never Live / Off (that switch saves itself), so a Save
+  // can't undo a Live / Off change made in another tab.
+  function save(after?: () => void) {
+    if (reportProblems()) return;
     run(async () => {
       const result = await updateForm(form.id, {
         title,
         description: description || null,
         questions: normalizeQuestions(questions, fields, true),
         destinationSectionId: destination || null,
-        acceptingResponses: accepting,
         sendConfirmation,
         confirmationMessage: confirmationMessage || null,
         ...(verifiedOnly !== Boolean(form.verifiedDomainsOnly) ? { verifiedDomainsOnly: verifiedOnly } : {}),
+        expectedUpdatedAt: versionRef.current,
       });
+      if (result.updatedAt) versionRef.current = result.updatedAt;
       if (!result.error) {
         setDirty(false);
+        setDrifted([]);
         notify("Form saved");
+        after?.();
       }
-      return result;
+      return conflictAware(result);
     });
   }
 
   // The header's Live / Off switch (and the Settings tab's) saves at once, apart from the editor's Save.
+  // Item 4: going live with unsaved edits asks "Save and go live?" (the live form shows the saved version).
   const [livePending, runLive] = useServerAction();
-  function changeLive(next: boolean) {
+  function writeLive(next: boolean) {
     const previous = accepting;
     setAccepting(next);
     runLive(async () => {
-      const result = await setFormLive(form.id, next);
+      const result = await setFormLive(form.id, next, versionRef.current);
+      if (result.updatedAt) versionRef.current = result.updatedAt;
       if (result.error) setAccepting(previous);
       else notify(next ? "Form is live: it takes responses" : "Form is off: it no longer takes responses");
-      return result;
+      return conflictAware(result);
     });
+  }
+  async function changeLive(next: boolean) {
+    // One write at a time: each carries the version the one before it returned.
+    if (pending || livePending) return;
+    if (next && dirtyRef.current) {
+      const ok = await confirm({
+        title: "Save your changes and go live?",
+        message: "The live form shows what’s saved. Save now so people get the version you’re looking at.",
+        confirmLabel: "Save and go live",
+      });
+      if (ok) save(() => writeLive(true));
+      return;
+    }
+    writeLive(next);
+  }
+
+  function askDeletePath(source: FormQuestion, path: FormPath) {
+    if (!pathQuestionCount(questions, source.id, path.id)) {
+      finishDeletePath(source.id, path.id, "delete");
+      return;
+    }
+    setPathChoice({ sourceId: source.id, pathId: path.id, reason: "delete" });
+  }
+
+  function finishDeletePath(sourceId: string, pathId: string, mode: "keep" | "delete") {
+    const base = questionsRef.current;
+    const source = base.find((q) => q.id === sourceId);
+    const path = source?.paths?.find((p) => p.id === pathId);
+    if (!source || !path) return;
+    const next = deletePath(base, sourceId, pathId, mode);
+    const stillSplits = Boolean(next.find((q) => q.id === sourceId)?.paths?.length);
+    const kept = source.show_if
+      ? `; its questions now show whenever “${source.label.trim() || "the question"}” shows`
+      : "; its questions are on the main flow";
+    commit(
+      next,
+      `Deleted the path “${pathLabel(source, path)}”${mode === "keep" ? kept : ""}.${
+        stillSplits ? "" : ` “${source.label.trim() || "The question"}” no longer splits: its last path’s questions stay, as a plain branch on it.`
+      }`,
+      mode === "keep" ? blockQuestionIds(base, sourceId, pathId) : [],
+    );
   }
 
   async function copy(text: string, what: string) {
@@ -410,6 +733,105 @@ export function FormEditor({
   }
 
   useClosesPopovers();
+
+  // Where each card sits among its siblings (Move up / down: in a path, the edges ask to move it out).
+  const siblingInfo = useMemo(() => {
+    const info = new Map<string, { first: boolean; last: boolean; inPath: boolean }>();
+    const visit = (nodes: FlowNode[], inPath: boolean) =>
+      nodes.forEach((node, i) => {
+        info.set(node.question.id, { first: i === 0, last: i === nodes.length - 1, inPath });
+        for (const block of node.blocks ?? []) visit(block.nodes, true);
+      });
+    visit(flow.nodes, false);
+    return info;
+  }, [flow]);
+
+  const flowCtx: FlowContext = {
+    questions,
+    problemsByPath,
+    dragActive: Boolean(dragging),
+    dropAtEnd: (container) => Boolean(drop && drop.beforeId === null && containerKey(drop.container) === containerKey(container)),
+    onDragOverEnd: (container) => dragOver({ container, beforeId: null }),
+    commit,
+    askDeletePath,
+    isMoving: (id) => movingIds.has(id),
+    renderAdd: (container, label) => (
+      <NewQuestionMenu
+        variant="path"
+        label={label}
+        container={container}
+        fields={fields}
+        sections={sections}
+        questions={questions}
+        batch4={batch4}
+        real1={real1}
+        onAdd={(question) => addQuestion(question, { container })}
+      />
+    ),
+    renderCard: (node, place) => {
+      const question = node.question;
+      const where = siblingInfo.get(question.id);
+      const conflict = conflicts.find((c) => c.questionId === question.id);
+      return (
+        <QuestionCard
+          index={node.index}
+          question={question}
+          questions={questions}
+          sections={sections}
+          fields={fields}
+          batch4={batch4}
+          real1={real1}
+          tag={tags.get(question.id) ?? null}
+          misplaced={Boolean(node.misplaced)}
+          problems={shownProblems.filter((p) => p.questionId === question.id && !p.pathId)}
+          conflict={conflict ? { label: labelOf(questions, conflict.otherId), target: conflict.target } : null}
+          open={selectedId === question.id}
+          draggable={canEdit && questions.length > 1}
+          dropLine={Boolean(drop && drop.beforeId === question.id && containerKey(drop.container) === containerKey(place.container))}
+          canMoveUp={flow.inOrder ? Boolean(where && (!where.first || where.inPath)) : node.index > 0}
+          canMoveDown={flow.inOrder ? Boolean(where && (!where.last || where.inPath)) : node.index < questions.length - 1}
+          onDragStart={() => startDrag(question.id)}
+          onDragEnd={endDrag}
+          onDragOverCard={
+            dragging
+              ? (after) =>
+                  dragOver({
+                    container: place.container,
+                    // A card's lower half: after it. A split question's whole card means "before it": its
+                    // paths follow it, so "after" is the "+ Add question" row or the card after "Paths meet here".
+                    beforeId: after && !question.paths?.length ? place.nextSiblingId : question.id,
+                  })
+              : undefined
+          }
+          onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
+          onChange={(next) => updateQuestion(question.id, next)}
+          onCommit={commit}
+          onCreateBranch={(optionId) => createBranchQuestion(question.id, optionId)}
+          onAddTo={(container, added) => addQuestion(added, { container })}
+          onPlaceIn={(childId, container) => placeInPath(childId, container)}
+          onMove={(delta) => void moveQuestion(question.id, delta)}
+          onDuplicate={() => duplicateQuestion(question)}
+          onRemove={() => removeQuestion(question.id)}
+          onAnnounce={announce}
+          addBelow={
+            <NewQuestionMenu
+              variant="icon"
+              label={tags.get(question.id) ? `Add a question below, in the path “${tags.get(question.id)?.label}”` : "Add a question below"}
+              container={containerOf(question.id, flow.owner)}
+              fields={fields}
+              sections={sections}
+              questions={questions}
+              batch4={batch4}
+              real1={real1}
+              onAdd={(added) => addQuestion(added, { after: question.id })}
+            />
+          }
+        />
+      );
+    },
+  };
+
+  const choice = pathChoice ? describePathChoice(questions, pathChoice) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex bg-zinc-900/40 p-2 sm:p-4" onMouseDown={close}>
@@ -436,10 +858,25 @@ export function FormEditor({
                 Who can submit: {verifiedOnly ? "Verified-domain emails with the link" : "Anyone with the link"}
               </span>
               <span>{accepting ? "Taking responses" : "Not taking responses: visitors see a closed notice"}</span>
-              {dirty ? <span className="text-amber-700">Unsaved changes</span> : null}
+              {dirty ? (
+                <span className="text-amber-700" data-tooltip={accepting ? "The live form shows the saved version until you save." : undefined}>
+                  {accepting ? "Unsaved changes: not live yet" : "Unsaved changes"}
+                </span>
+              ) : null}
             </p>
           </div>
-          {canEdit ? <FormLiveSwitch live={accepting} disabled={livePending} onChange={changeLive} /> : null}
+          {canEdit && shownProblems.length ? (
+            <button
+              type="button"
+              onClick={() => revealProblem(shownProblems[0])}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-red-50 px-2.5 text-xs font-medium text-red-800 hover:bg-red-100"
+              data-form-problems={shownProblems.length}
+            >
+              <CircleAlert className="size-3.5" aria-hidden />
+              {shownProblems.length === 1 ? "1 thing to fix" : `${shownProblems.length} things to fix`}
+            </button>
+          ) : null}
+          {canEdit ? <FormLiveSwitch live={accepting} disabled={livePending || pending} onChange={(next) => void changeLive(next)} /> : null}
           {canEdit ? (
             <button
               type="button"
@@ -451,9 +888,15 @@ export function FormEditor({
               {narrowPreview ? "Edit" : "Preview"}
             </button>
           ) : null}
-          <a href={publicUrl} target="_blank" rel="noreferrer" className="btn-ghost h-8">
+          <a
+            href={publicUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-ghost h-8"
+            data-tooltip={dirty ? "Opens the saved version: your unsaved changes aren’t in it" : undefined}
+          >
             <ExternalLink className="size-4" aria-hidden />
-            View form
+            {dirty ? "View saved form" : "View form"}
           </a>
           <Popover
             label="Share form"
@@ -477,6 +920,7 @@ export function FormEditor({
                 </p>
                 <CopyRow label="Form link" value={publicUrl} onCopy={() => copy(publicUrl, "Form link")} />
                 <CopyRow label="Embed code" value={embedSnippet} multiline onCopy={() => copy(embedSnippet, "Embed code")} />
+                <p className="text-2xs text-zinc-500">{EMBED_NOTE}</p>
                 {!accepting ? (
                   <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
                     {canEdit
@@ -497,7 +941,7 @@ export function FormEditor({
             <Link2 className="size-4" />
           </button>
           {canEdit ? (
-            <button type="button" onClick={save} disabled={pending || !dirty || !title.trim()} className="btn-primary h-8 px-3">
+            <button type="button" onClick={() => save()} disabled={pending || livePending || !dirty || !title.trim()} className="btn-primary h-8 px-3">
               {pending ? "Saving…" : dirty ? "Save" : "Saved"}
             </button>
           ) : null}
@@ -509,10 +953,10 @@ export function FormEditor({
         <p aria-live="polite" className="sr-only">
           {announcement}
         </p>
-        <div className={`grid min-h-0 flex-1 ${canEdit ? "lg:grid-cols-[minmax(0,1fr)_28rem]" : ""}`}>
+        <div className={`grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] ${canEdit ? "lg:grid-cols-[minmax(0,1fr)_30rem]" : ""}`}>
           <section
             aria-label="Preview"
-            className={`min-h-0 overflow-y-auto bg-zinc-100 px-6 py-8 ${canEdit ? (narrowPreview ? "block" : "hidden lg:block") : "block"}`}
+            className={`min-h-0 overflow-y-auto bg-zinc-100 px-4 py-6 sm:px-6 sm:py-8 ${canEdit ? (narrowPreview ? "block" : "hidden lg:block") : "block"}`}
           >
             <Preview
               projectId={form.projectId}
@@ -523,8 +967,10 @@ export function FormEditor({
               questions={questions}
               visible={visible}
               answers={answers}
+              tags={tags}
               selectedId={selectedId}
               onAnswer={(id, value) => setAnswers((current) => ({ ...current, [id]: value }))}
+              onReset={() => setAnswers({})}
               // Nov 2 notes (batch 15, 108): below Admin there's nothing to edit, so the preview has no
               // per-question Edit button or selection.
               onSelect={
@@ -541,7 +987,7 @@ export function FormEditor({
           {canEdit ? (
             <section
               aria-label="Edit the form"
-              className={`min-h-0 flex-col border-l border-zinc-200 ${narrowPreview ? "hidden lg:flex" : "flex"}`}
+              className={`min-h-0 min-w-0 flex-col border-l border-zinc-200 ${narrowPreview ? "hidden lg:flex" : "flex"}`}
             >
               <div role="tablist" aria-label="Form editor" className="tab-strip shrink-0 gap-1 px-4">
                 {(
@@ -563,75 +1009,98 @@ export function FormEditor({
                   </button>
                 ))}
               </div>
-              <fieldset role="tabpanel" className="m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-4 py-4">
+              <fieldset role="tabpanel" className="m-0 min-h-0 min-w-0 flex-1 overflow-y-auto border-0 px-3 py-4 sm:px-4">
                 {tab === "questions" ? (
-                  // The whole Questions tab takes drops (a release below the last card, or on a drop line
-                  // drawn just outside the list, lands at the end), and the line goes away when a drag
-                  // leaves it.
+                  // The whole Questions tab takes drops (on the line the pointer last drew), and the line
+                  // goes away when a drag leaves it.
                   <div
                     className="flex flex-col gap-2"
                     onDragOver={(e) => {
                       if (!dragging) return;
                       e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                      if (dropBefore === undefined) setDropBefore(null);
+                      e.dataTransfer.dropEffect = drop ? "move" : "none";
                     }}
                     onDragLeave={(e) => {
-                      if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropBefore(undefined);
+                      if (dragging && !e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                        lastTarget.current = null;
+                        setDrop(null);
+                      }
                     }}
-                    onDrop={dragging ? dropQuestion : undefined}
+                    onDrop={dragging ? (e) => void dropQuestion(e) : undefined}
                   >
-                    <p className="text-xs text-zinc-500">
-                      Every submission also asks for the submitter’s email. Answers that don’t fill in a task detail are
-                      listed in the task description.
-                    </p>
-                    <NewQuestionMenu
-                      fields={fields}
-                      sections={sections}
-                      questions={questions}
-                      batch4={batch4}
-                      real1={real1}
-                      onAdd={insertQuestion}
-                    />
+                    <div className="flex items-start gap-2">
+                      <p className="min-w-0 flex-1 text-xs text-zinc-500">
+                        Every submission also asks for the submitter’s email. Answers that don’t fill in a task detail are
+                        listed in the task description.
+                      </p>
+                      <NewQuestionMenu
+                        variant="bar"
+                        label="New question"
+                        container={null}
+                        fields={fields}
+                        sections={sections}
+                        questions={questions}
+                        batch4={batch4}
+                        real1={real1}
+                        onAdd={(question) => addQuestion(question, { container: null })}
+                      />
+                    </div>
+                    {drifted.length ? (
+                      <div role="status" className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-path-drift="">
+                        <CircleAlert className="mt-px size-4 shrink-0" aria-hidden />
+                        <span>
+                          {drifted.length === 1 ? "A question’s saved rule didn’t match its path" : `${drifted.length} questions’ saved rules didn’t match their paths`}{" "}
+                          (changed outside this editor). They follow their paths here; save to put the live form back in step.
+                        </span>
+                      </div>
+                    ) : null}
+                    {!flow.inOrder ? (
+                      <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        <CircleAlert className="size-4 shrink-0" aria-hidden />
+                        <span className="min-w-0 flex-1">Some questions sit outside their path, so it isn’t clear where the paths meet.</span>
+                        <button
+                          type="button"
+                          onClick={() => commit(putPathsTogether(questions), "Put the paths together.")}
+                          className="btn-secondary h-7 px-2 text-xs"
+                        >
+                          Put paths together
+                        </button>
+                      </div>
+                    ) : null}
                     {questions.length === 0 ? (
                       <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-6 text-center text-xs text-zinc-500">
                         No questions yet. Add one, or ask about one of this project’s fields.
                       </p>
                     ) : (
-                      <ol className="flex flex-col gap-2" aria-label="Questions">
-                        {questions.map((question, index) => (
-                          <QuestionCard
-                            key={question.id}
-                            index={index}
-                            count={questions.length}
-                            question={question}
-                            questions={questions}
-                            sections={sections}
-                            fields={fields}
-                            batch4={batch4}
-                            real1={real1}
-                            open={selectedId === question.id}
-                            draggable={canEdit && questions.length > 1}
-                            dragging={dragging === question.id}
-                            dropLine={dropLineFor(index)}
-                            onDragStart={() => startDrag(question.id)}
-                            onDragEnd={endDrag}
-                            onDragOverCard={
-                              dragging
-                                ? (after) => setDropBefore(after ? (questions[index + 1]?.id ?? null) : question.id)
-                                : undefined
-                            }
-                            onToggle={() => setSelectedId(selectedId === question.id ? null : question.id)}
-                            onChange={(next) => updateQuestion(question.id, next)}
-                            onChangeAll={changeQuestions}
-                            onCreateBranch={(optionId) => createBranchQuestion(question.id, optionId)}
-                            onMove={(delta) => moveQuestion(question.id, delta)}
-                            onDuplicate={() => duplicateQuestion(question)}
-                            onRemove={() => removeQuestion(question.id)}
-                          />
-                        ))}
-                      </ol>
+                      <QuestionFlow nodes={flow.nodes} ctx={flowCtx} />
                     )}
+                    <div
+                      className="relative mt-1"
+                      onDragOver={
+                        dragging
+                          ? (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              dragOver({ container: null, beforeId: null });
+                            }
+                          : undefined
+                      }
+                    >
+                      {drop && drop.container === null && drop.beforeId === null ? (
+                        <span aria-hidden className="pointer-events-none absolute inset-x-1 -top-[5px] h-0.5 rounded-full bg-accent-500" />
+                      ) : null}
+                      <NewQuestionMenu
+                        variant="end"
+                        label="New question"
+                        container={null}
+                        fields={fields}
+                        sections={sections}
+                        questions={questions}
+                        batch4={batch4}
+                        real1={real1}
+                        onAdd={(question) => addQuestion(question, { container: null })}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <SettingsTab
@@ -644,8 +1113,8 @@ export function FormEditor({
                     destination={destination}
                     setDestination={touch(setDestination)}
                     accepting={accepting}
-                    setAccepting={changeLive}
-                    livePending={livePending}
+                    setAccepting={(next) => void changeLive(next)}
+                    livePending={livePending || pending}
                     sendConfirmation={sendConfirmation}
                     setSendConfirmation={touch(setSendConfirmation)}
                     verifiedOnly={verifiedOnly}
@@ -655,8 +1124,9 @@ export function FormEditor({
                     sections={sections}
                     publicUrl={publicUrl}
                     embedSnippet={embedSnippet}
+                    dirty={dirty}
                     onCopy={copy}
-                    onDeleted={() => setDirty(false)}
+                    onLeave={() => setDirty(false)}
                   />
                 )}
               </fieldset>
@@ -664,8 +1134,69 @@ export function FormEditor({
           ) : null}
         </div>
       </div>
+      {choice && pathChoice ? (
+        <PathChoiceDialog
+          title={choice.title}
+          message={choice.message}
+          onKeep={() => {
+            setPathChoice(null);
+            finishDeletePath(pathChoice.sourceId, pathChoice.pathId, "keep");
+          }}
+          onDelete={() => {
+            setPathChoice(null);
+            finishDeletePath(pathChoice.sourceId, pathChoice.pathId, "delete");
+          }}
+          onCancel={() => setPathChoice(null)}
+          cancelLabel={pathChoice.reason === "otherwise" ? "Decide later" : "Cancel"}
+          single={choice.count === 1}
+          keepLabel={choice.keepLabel}
+        />
+      ) : null}
     </div>
   );
+}
+
+type DropTarget = { container: FlowContainer; beforeId: string | null };
+type PathChoice = { sourceId: string; pathId: string; reason: "delete" | "otherwise" };
+
+// Problems that only show once a save was tried (the rest show at once).
+const LATE_PROBLEMS = new Set<FormProblem["kind"]>(["label", "options", "option_label"]);
+
+function labelOf(questions: FormQuestion[], id: string): string {
+  return questions.find((q) => q.id === id)?.label.trim() || "Untitled question";
+}
+
+function pathNameOf(questions: FormQuestion[], container: FlowContainer): string | null {
+  if (!container) return null;
+  const source = questions.find((q) => q.id === container.sourceId);
+  const path = source?.paths?.find((p) => p.id === container.pathId);
+  return source && path ? pathLabel(source, path) : null;
+}
+
+function describePathChoice(
+  questions: FormQuestion[],
+  choice: PathChoice,
+): { title: string; message: string; count: number; keepLabel: string } | null {
+  const source = questions.find((q) => q.id === choice.sourceId);
+  const path = source?.paths?.find((p) => p.id === choice.pathId);
+  if (!source || !path) return null;
+  const count = pathQuestionCount(questions, source.id, path.id);
+  const what = count === 1 ? "its question" : `its ${count} questions`;
+  // A split inside a path keeps them in that path (they take the split question's own rule).
+  const keepLabel = source.show_if ? (count === 1 ? "Keep it" : "Keep them") : "Keep on the main flow";
+  return choice.reason === "otherwise"
+    ? {
+        count,
+        keepLabel,
+        title: "Otherwise has no answers left",
+        message: `Every answer of “${source.label.trim() || "the question"}” is on a path now, so Otherwise’s questions would never show. Keep ${what} (after the paths meet), or delete ${count === 1 ? "it" : "them"}?`,
+      }
+    : {
+        count,
+        keepLabel,
+        title: `Delete the path “${pathLabel(source, path)}”?`,
+        message: `What happens to ${what}? Kept ones move to after the paths meet and show whenever “${source.label.trim() || "the question"}” shows.`,
+      };
 }
 
 function CopyRow({ label, value, multiline, onCopy }: { label: string; value: string; multiline?: boolean; onCopy: () => void }) {
@@ -689,7 +1220,8 @@ function CopyRow({ label, value, multiline, onCopy }: { label: string; value: st
   );
 }
 
-// The live preview: what people see on the form's page. Answers here are only for trying branches.
+// The live preview: what people see on the form's page. Answers here are only for trying branches and
+// paths (Reset answers clears them); a path's questions carry its color on their left edge.
 function Preview({
   projectId,
   title,
@@ -699,8 +1231,10 @@ function Preview({
   questions,
   visible,
   answers,
+  tags,
   selectedId,
   onAnswer,
+  onReset,
   onSelect,
 }: {
   projectId: string;
@@ -711,88 +1245,119 @@ function Preview({
   questions: FormQuestion[];
   visible: Set<string>;
   answers: FormAnswers;
+  tags: Map<string, PathTag>;
   selectedId: string | null;
   onAnswer: (id: string, value: FormAnswers[string]) => void;
+  onReset: () => void;
   // null: read-only (no selecting, no Edit buttons).
   onSelect: ((id: string) => void) | null;
 }) {
   const labels = new Map(questions.map((q) => [q.id, q] as const));
+  const answered = Object.values(answers).some((v) => v !== undefined && v !== null && v !== "" && v !== false && !(Array.isArray(v) && !v.length));
   return (
-    <div className="mx-auto w-full max-w-xl overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-      <div aria-hidden className={`h-24 ${projectColorClass(projectId)}`} />
-      <div className="px-6 pb-6 pt-5">
-        <h3 className="text-xl font-semibold tracking-tight text-zinc-900">{title.trim() || "Untitled form"}</h3>
-        {description.trim() ? <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{description}</p> : null}
-        {accepting ? null : (
-          <p className="mt-4 rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-700">This form isn’t accepting responses right now.</p>
-        )}
-        <div className="mt-6 flex flex-col gap-1.5">
-          <label htmlFor="preview-email" className="text-sm font-medium text-zinc-900">
-            Your email <span className="text-red-600">*</span>
-          </label>
-          <input id="preview-email" type="email" disabled placeholder="name@example.com" className="field h-auto w-full py-2" />
-          <p className="text-xs text-zinc-500">
-            {sendConfirmation ? "Asked on every form; the confirmation email goes here." : "Asked on every form, so your team can follow up."}
-          </p>
-        </div>
-        <div className="mt-5 flex flex-col gap-2">
-          {questions.map((question) => {
-            const shown = visible.has(question.id);
-            const parent = question.show_if ? labels.get(question.show_if.question_id) : null;
-            const selected = selectedId === question.id;
-            return (
-              <div
-                key={question.id}
-                onClick={onSelect ? () => onSelect(question.id) : undefined}
-                className={`group relative rounded-lg border px-3 py-3 transition-colors ${
-                  selected ? "border-accent-400 bg-accent-50/30 ring-1 ring-accent-300" : onSelect ? "border-transparent hover:border-zinc-200" : "border-transparent"
-                } ${shown ? "" : "opacity-60"}`}
-              >
-                {parent ? (
-                  <p className="mb-1.5 flex items-center gap-1 text-2xs font-medium text-zinc-500">
-                    <GitBranch className="size-3" aria-hidden />
-                    Shown if “{parent.label || "an earlier question"}” is{" "}
-                    {branchOptions(parent)
-                      .filter((o) => question.show_if?.option_ids.includes(o.id))
-                      .map((o) => o.label)
-                      .join(" or ") || "…"}
-                  </p>
-                ) : null}
-                <FormQuestionField
-                  question={question.label.trim() ? question : { ...question, label: "Untitled question" }}
-                  value={answers[question.id]}
-                  onChange={(value) => onAnswer(question.id, value)}
-                  idPrefix="preview"
-                />
-                {onSelect ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelect(question.id);
-                    }}
-                    className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-2xs font-medium text-accent-700 opacity-0 hover:bg-accent-50 focus-visible:opacity-100 group-hover:opacity-100"
-                  >
-                    Edit
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-6 flex items-center gap-3">
-          <button type="button" disabled className="btn-primary h-9 px-4">
-            Submit
+    <div className="mx-auto w-full max-w-xl">
+      <div className="mb-2 flex h-7 items-center justify-between gap-2 text-xs text-zinc-500">
+        <span>Preview: answer the choice questions to walk their paths.</span>
+        {answered ? (
+          <button type="button" onClick={onReset} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 font-medium text-zinc-600 hover:bg-white hover:text-zinc-900">
+            <RotateCcw className="size-3.5" aria-hidden />
+            Reset answers
           </button>
-          <span className="text-xs text-zinc-400">Preview: people submit from the form’s link.</span>
+        ) : null}
+      </div>
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+        <div aria-hidden className={`h-24 ${projectColorClass(projectId)}`} />
+        <div className="px-6 pb-6 pt-5">
+          <h3 className="text-xl font-semibold tracking-tight text-zinc-900">{title.trim() || "Untitled form"}</h3>
+          {description.trim() ? <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{description}</p> : null}
+          {accepting ? null : (
+            <p className="mt-4 rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-700">This form isn’t accepting responses right now.</p>
+          )}
+          <div className="mt-6 flex flex-col gap-1.5">
+            <label htmlFor="preview-email" className="text-sm font-medium text-zinc-900">
+              Your email <span className="text-red-600">*</span>
+            </label>
+            <input id="preview-email" type="email" disabled placeholder="name@example.com" className="field h-auto w-full py-2" />
+            <p className="text-xs text-zinc-500">
+              {sendConfirmation ? "Asked on every form; the confirmation email goes here." : "Asked on every form, so your team can follow up."}
+            </p>
+          </div>
+          <div className="mt-5 flex flex-col gap-2">
+            {questions.map((question) => {
+              const shown = visible.has(question.id);
+              const tag = tags.get(question.id);
+              const parent = question.show_if ? labels.get(question.show_if.question_id) : null;
+              const selected = selectedId === question.id;
+              const answersText =
+                parent &&
+                (branchOptions(parent)
+                  .filter((o) => question.show_if?.option_ids.includes(o.id))
+                  .map((o) => o.label)
+                  .join(" or ") ||
+                  "…");
+              return (
+                <div
+                  key={question.id}
+                  onClick={onSelect ? () => onSelect(question.id) : undefined}
+                  data-preview-question={question.id}
+                  className={`group relative rounded-lg border px-3 py-3 transition-[opacity,border-color,background-color] duration-150 ${
+                    selected ? "border-accent-400 bg-accent-50/30 ring-1 ring-accent-300" : onSelect ? "border-transparent hover:border-zinc-200" : "border-transparent"
+                  } ${tag ? `border-l-4 ${tag.color.edge}` : ""} ${shown ? "" : "opacity-50"}`}
+                >
+                  {parent ? (
+                    <p className="mb-1.5 flex flex-wrap items-center gap-1 text-2xs font-medium text-zinc-500">
+                      {tag ? (
+                        <span className={`inline-flex items-center gap-1 rounded px-1.5 py-px ${tag.color.chip}`}>
+                          <span aria-hidden className={`size-1.5 rounded-full ${tag.color.dot}`} />
+                          {tag.label}
+                        </span>
+                      ) : (
+                        <GitBranch className="size-3" aria-hidden />
+                      )}
+                      Shown if “{parent.label || "an earlier question"}” is {answersText}
+                    </p>
+                  ) : null}
+                  <FormQuestionField
+                    question={question.label.trim() ? question : { ...question, label: "Untitled question" }}
+                    value={answers[question.id]}
+                    onChange={(value) => onAnswer(question.id, value)}
+                    idPrefix="preview"
+                  />
+                  {onSelect ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelect(question.id);
+                      }}
+                      className="absolute right-2 top-2 rounded px-1.5 py-0.5 text-2xs font-medium text-accent-700 opacity-0 hover:bg-accent-50 focus-visible:opacity-100 group-hover:opacity-100"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-6 flex items-center gap-3">
+            <button type="button" disabled className="btn-primary h-9 px-4">
+              Submit
+            </button>
+            <span className="text-xs text-zinc-400">Preview: people submit from the form’s link.</span>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// "+ New question": a project field (the question fills it in) or a question type.
+// "+ New question": a project field (the question fills it in) or a question type. Batch 43: it adds to one
+// place (`container`): the main flow, or a path. A field already asked is offered again only where it can
+// never show with the question that asks it (another path of a single choice: "Asked in Print").
 function NewQuestionMenu({
+  variant,
+  label,
+  container,
   fields,
   sections,
   questions,
@@ -800,6 +1365,11 @@ function NewQuestionMenu({
   real1,
   onAdd,
 }: {
+  // bar: the compact button at the top; end: the dashed row after the last question; path: a path's
+  // "+ Add question to this path"; icon: a card's "Add a question below".
+  variant: "bar" | "end" | "path" | "icon";
+  label: string;
+  container: FlowContainer;
   fields: FieldDef[];
   sections: SectionRef[];
   questions: FormQuestion[];
@@ -807,50 +1377,63 @@ function NewQuestionMenu({
   real1: boolean;
   onAdd: (question: FormQuestion) => void;
 }) {
-  const asked = new Set(questions.flatMap((q) => (q.maps_to?.target === "field" && q.maps_to.field_id ? [q.maps_to.field_id] : [])));
   const sectionOptions = sections.map((s) => ({ id: s.id, label: s.name }));
   const fieldQuestions = fields.flatMap((field) => {
     const question = questionForField(field, sectionOptions, newId);
-    return question ? [{ field, question }] : [];
+    return question ? [{ field, question, ask: fieldAskInContainer(questions, field.id, container) }] : [];
   });
   const types = QUESTION_TYPES.filter((t) => typeAvailable(t.value, batch4, real1));
+  const button =
+    variant === "icon" ? (
+      <Plus className="size-4" aria-hidden />
+    ) : (
+      <>
+        <Plus className={variant === "path" ? "size-3.5" : "size-4"} aria-hidden />
+        {label}
+      </>
+    );
+  const buttonClassName = {
+    bar: "btn-secondary h-7 shrink-0 px-2 text-xs",
+    end: "btn-secondary h-9 w-full justify-center border-dashed text-zinc-600",
+    path: "inline-flex h-7 w-full items-center gap-1 rounded-md border border-dashed border-zinc-300 bg-white/60 px-2 text-xs font-medium text-zinc-600 hover:border-zinc-400 hover:bg-white hover:text-zinc-900",
+    icon: "btn-icon",
+  }[variant];
   return (
     <Popover
-      label="New question"
+      label={label}
+      align={variant === "bar" || variant === "icon" ? "end" : "start"}
       panelClassName="w-72 p-1.5"
-      buttonClassName="btn-secondary h-8 w-full justify-center border-dashed"
-      button={
-        <>
-          <Plus className="size-4" aria-hidden />
-          New question
-        </>
-      }
+      buttonClassName={buttonClassName}
+      tooltip={variant === "icon" ? label : undefined}
+      button={button}
     >
       {(close) => (
-        <div className="flex flex-col">
+        <div className="flex max-h-[min(28rem,70vh)] flex-col overflow-y-auto">
           {fieldQuestions.length ? (
             <>
               <p className="px-2 pb-1 pt-1.5 text-2xs font-semibold uppercase tracking-wide text-zinc-400">From a field</p>
-              {fieldQuestions.map(({ field, question }) => {
-                const already = asked.has(field.id);
-                return (
-                  <button
-                    key={field.id}
-                    type="button"
-                    disabled={already}
-                    onClick={() => {
-                      close();
-                      onAdd(question);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-40"
-                  >
-                    <FieldTypeIcon field={field} />
-                    <span className="min-w-0 flex-1 truncate">{field.name}</span>
-                    {field.locked ? <FieldLockIcon label={FORM_LOCKED_FIELD_NOTE} /> : null}
-                    {already ? <span className="text-2xs text-zinc-400">Asked</span> : null}
-                  </button>
-                );
-              })}
+              {fieldQuestions.map(({ field, question, ask }) => (
+                <button
+                  key={field.id}
+                  type="button"
+                  disabled={!ask.allowed}
+                  title={!ask.allowed ? "Already asked where it could show with this question" : undefined}
+                  onClick={() => {
+                    close();
+                    onAdd({ ...question, id: newId() });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-40"
+                >
+                  <FieldTypeIcon field={field} />
+                  <span className="min-w-0 flex-1 truncate">{field.name}</span>
+                  {field.locked ? <FieldLockIcon label={FORM_LOCKED_FIELD_NOTE} /> : null}
+                  {!ask.allowed ? (
+                    <span className="text-2xs text-zinc-400">Asked</span>
+                  ) : ask.askedIn ? (
+                    <span className="max-w-28 truncate text-2xs text-zinc-500">Asked in {ask.askedIn}</span>
+                  ) : null}
+                </button>
+              ))}
               <div role="separator" className="my-1 border-t border-zinc-100" />
             </>
           ) : null}
@@ -907,61 +1490,86 @@ function NewQuestionMenu({
 
 function QuestionCard({
   index,
-  count,
   question,
   questions,
   sections,
   fields,
   batch4,
   real1,
+  tag,
+  misplaced,
+  problems,
+  conflict,
   open,
   draggable,
-  dragging,
   dropLine,
+  canMoveUp,
+  canMoveDown,
+  addBelow,
   onDragStart,
   onDragEnd,
   onDragOverCard,
   onToggle,
   onChange,
-  onChangeAll,
+  onCommit,
   onCreateBranch,
+  onAddTo,
+  onPlaceIn,
   onMove,
   onDuplicate,
   onRemove,
+  onAnnounce,
 }: {
   index: number;
-  count: number;
   question: FormQuestion;
   questions: FormQuestion[];
   sections: SectionRef[];
   fields: FieldDef[];
   batch4: boolean;
   real1: boolean;
+  // The path it's in (batch 43), if any.
+  tag: PathTag | null;
+  // In a path, but outside that path's block ("Put paths together" fixes it).
+  misplaced: boolean;
+  // What's wrong with it, said on the card (batch 43).
+  problems: FormProblem[];
+  // Another question that can show with it fills in the same detail.
+  conflict: { label: string; target: MapTarget } | null;
   open: boolean;
   // Editors with two or more questions get the drag handle and Alt+↑ / Alt+↓ (the disabled fieldset
   // doesn't stop a draggable element, so the handle is only drawn when allowed).
   draggable: boolean;
-  // This card is the one being dragged.
-  dragging: boolean;
-  // Where the drop line shows on this card, if anywhere.
-  dropLine: "before" | "after" | null;
+  // A drop would land right before this card.
+  dropLine: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  // The "Add a question below" menu (right after this question, in its path).
+  addBelow: ReactNode;
   onDragStart: () => void;
   onDragEnd: () => void;
   // Set while a drag is on: the pointer is over this card's upper (false) or lower (true) half.
   onDragOverCard?: (after: boolean) => void;
   onToggle: () => void;
   onChange: (next: FormQuestion) => void;
-  onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
+  // A change to the whole list that says what it did (with Undo); `moved` = questions it moves on purpose.
+  onCommit: (next: FormQuestion[], message: string | null, moved?: string[]) => void;
   // Item 68: a new question shown when this one's answer is `optionId` (opens it).
   onCreateBranch: (optionId: string) => void;
+  // A new question at the end of one of this question's paths.
+  onAddTo: (container: FlowContainer, question: FormQuestion) => void;
+  // An existing question joins one of this question's paths.
+  onPlaceIn: (questionId: string, container: NonNullable<FlowContainer>) => void;
   onMove: (delta: -1 | 1) => void;
   onDuplicate: () => void;
   onRemove: () => void;
+  onAnnounce: (message: string) => void;
 }) {
   const Icon = TYPE_ICONS[question.type];
   const prefix = `fq-${question.id}`;
   const mappedField = question.maps_to?.target === "field" ? fields.find((f) => f.id === question.maps_to?.field_id) : undefined;
-  const cardRef = useRef<HTMLLIElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const split = Boolean(question.paths?.length);
+  const hasProblem = problems.length > 0;
 
   useEffect(() => {
     if (open) cardRef.current?.scrollIntoView({ block: "nearest" });
@@ -983,32 +1591,25 @@ function QuestionCard({
   }
 
   return (
-    <li
+    <div
       ref={cardRef}
+      data-question-card={question.id}
       onDragOver={
         onDragOverCard
           ? (e) => {
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = "move";
-              // Over the dragged card itself a drop changes nothing (it lands right before itself).
               const rect = e.currentTarget.getBoundingClientRect();
-              onDragOverCard(!dragging && e.clientY > rect.top + rect.height / 2);
+              onDragOverCard(e.clientY > rect.top + rect.height / 2);
             }
           : undefined
       }
-      className={`group relative rounded-lg border bg-white ${open ? "border-accent-300 shadow-sm" : "border-zinc-200"} ${
-        dragging ? "opacity-40" : ""
+      className={`group relative rounded-lg border bg-white transition-shadow ${
+        hasProblem ? "border-red-300" : open ? "border-accent-300 shadow-sm" : "border-zinc-200 hover:border-zinc-300"
       }`}
     >
-      {dropLine ? (
-        <span
-          aria-hidden
-          className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent-500 ${
-            dropLine === "before" ? "-top-[5px]" : "-bottom-[5px]"
-          }`}
-        />
-      ) : null}
+      {dropLine ? <span aria-hidden className="pointer-events-none absolute inset-x-1 -top-[5px] h-0.5 rounded-full bg-accent-500" /> : null}
       <div className="flex items-center">
         {draggable ? (
           <span
@@ -1021,7 +1622,7 @@ function QuestionCard({
             }}
             onDragEnd={onDragEnd}
             aria-hidden
-            data-tooltip="Drag to reorder (or Alt+↑ / Alt+↓)"
+            data-tooltip={split ? "Drag to move it with its paths (or Alt+↑ / Alt+↓)" : "Drag to move (or Alt+↑ / Alt+↓)"}
             className="flex w-6 shrink-0 cursor-grab items-center justify-center self-stretch pl-1 text-zinc-300 opacity-0 hover:text-zinc-500 active:cursor-grabbing group-hover:opacity-100 [@media(hover:none)]:opacity-100"
           >
             <GripVertical className="size-4" />
@@ -1034,40 +1635,76 @@ function QuestionCard({
           onKeyDown={(e) => {
             if (!draggable || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
             e.preventDefault();
+            if (e.key === "ArrowUp" ? !canMoveUp : !canMoveDown) return;
             move(e.key === "ArrowUp" ? -1 : 1, [`${prefix}-toggle`]);
           }}
           aria-expanded={open}
           aria-controls={`${prefix}-body`}
           aria-keyshortcuts={draggable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
-          className={`flex min-w-0 flex-1 items-center gap-2 py-2 pr-3 text-left ${draggable ? "pl-1" : "pl-3"}`}
+          aria-describedby={hasProblem ? `${prefix}-problems` : undefined}
+          className={`flex min-w-0 flex-1 items-center gap-2 py-2 pr-2 text-left ${draggable ? "pl-1" : "pl-3"}`}
         >
-          <span className="w-4 shrink-0 text-right text-2xs tabular-nums text-zinc-400">{index + 1}</span>
+          <span className="w-5 shrink-0 text-right text-2xs tabular-nums text-zinc-400">{index + 1}</span>
           <Icon className="size-4 shrink-0 text-zinc-500" aria-hidden />
           <span className={`min-w-0 flex-1 truncate ${question.label.trim() ? "text-zinc-900" : "text-zinc-400"}`}>
             {question.label.trim() || "Untitled question"}
             {question.required ? <span className="text-red-600"> *</span> : null}
           </span>
+          {hasProblem ? (
+            <CircleAlert className="size-3.5 shrink-0 text-red-600" aria-label="Needs a fix" />
+          ) : conflict ? (
+            <span role="img" aria-label={`Fills in the same detail as “${conflict.label}”`} data-tooltip={`Fills in the same detail as “${conflict.label}”, and both can show`}>
+              <CircleAlert className="size-3.5 shrink-0 text-amber-600" aria-hidden />
+            </span>
+          ) : null}
           {isNameQuestion(question) ? (
             <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600">Requester’s name</span>
           ) : null}
-          {question.show_if ? <GitBranch className="size-3.5 shrink-0 text-zinc-400" aria-label="Shown by a branch" /> : null}
+          {split ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-zinc-100 px-1.5 py-px text-2xs font-medium text-zinc-700">
+              <GitFork className="size-3" aria-hidden />
+              {question.paths?.length} paths
+            </span>
+          ) : null}
+          {misplaced && tag ? (
+            <span className={`shrink-0 rounded px-1.5 py-px text-2xs ${tag.color.chip}`}>Belongs to {tag.label}</span>
+          ) : question.show_if && !tag ? (
+            <GitBranch className="size-3.5 shrink-0 text-zinc-400" aria-label="Shown by a branch" />
+          ) : null}
           {question.maps_to ? (
-            <span className="max-w-28 shrink-0 truncate rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600">
+            <span className="hidden max-w-28 shrink-0 truncate rounded bg-zinc-100 px-1.5 py-px text-2xs text-zinc-600 sm:inline">
               {mapTargetLabel(question.maps_to.target, mappedField?.name)}
             </span>
           ) : null}
         </button>
         {isNameQuestion(question) ? null : (
-          <BranchButton question={question} questions={questions} onChangeAll={onChangeAll} onCreateBranch={onCreateBranch} />
+          <BranchButton
+            question={question}
+            questions={questions}
+            onCommit={onCommit}
+            onCreateBranch={onCreateBranch}
+            onAddTo={onAddTo}
+            onPlaceIn={onPlaceIn}
+          />
         )}
       </div>
+      {hasProblem ? (
+        <ul id={`${prefix}-problems`} role="alert" className="mx-2 mb-2 flex flex-col gap-1 rounded-md bg-red-50 px-2.5 py-2 text-xs text-red-800" data-card-problems="">
+          {problems.map((problem) => (
+            <li key={problem.kind} className="flex items-start gap-1.5">
+              <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">{problem.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {open ? (
         <div id={`${prefix}-body`} className="flex flex-col gap-3 border-t border-zinc-100 px-3 pb-3 pt-3">
           {isNameQuestion(question) ? (
             <p className="rounded-md bg-zinc-50 px-2.5 py-2 text-xs text-zinc-600">
-              Every form asks for the requester’s name: a required short answer, always shown. You can rename the
-              question, but not remove it or make it optional. The name is used in emails to the requester and in
-              review checks.
+              Every form asks for the requester’s name: a required short answer, always shown and never in a path. You
+              can rename the question, but not remove it or make it optional. The name is used in emails to the
+              requester and in review checks.
             </p>
           ) : (
           // Item 67: the type and Required come first on the card.
@@ -1096,20 +1733,25 @@ function QuestionCard({
               />
             </div>
             {isAnswerable(question) ? (
-              <label className="mt-5 flex items-center gap-2 text-sm text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={Boolean(question.required)}
-                  onChange={(e) => {
-                    const next = { ...question };
-                    if (e.currentTarget.checked) next.required = true;
-                    else delete next.required;
-                    onChange(next);
-                  }}
-                  className="size-4 accent-accent-600"
-                />
-                Required
-              </label>
+              <div className="mt-5">
+                <label className="flex items-center gap-2 text-sm text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(question.required)}
+                    onChange={(e) => {
+                      const next = { ...question };
+                      if (e.currentTarget.checked) next.required = true;
+                      else delete next.required;
+                      onChange(next);
+                    }}
+                    className="size-4 accent-accent-600"
+                  />
+                  Required
+                </label>
+                {question.required && question.show_if ? (
+                  <p className="ml-6 text-2xs text-zinc-500">{tag ? "Required when this path shows" : "Required when it shows"}</p>
+                ) : null}
+              </div>
             ) : null}
           </div>
           )}
@@ -1123,6 +1765,7 @@ function QuestionCard({
               value={question.label}
               maxLength={500}
               placeholder={question.type === "heading" ? "e.g. About the request" : "Ask something"}
+              aria-invalid={problems.some((p) => p.kind === "label") || undefined}
               onChange={(e) => onChange({ ...question, label: e.currentTarget.value })}
               className={`${INPUT} mt-1`}
             />
@@ -1141,7 +1784,9 @@ function QuestionCard({
               className="field mt-1 h-auto w-full py-1.5"
             />
           </div>
-          {isChoice(question.type) ? <OptionsEditor question={question} sections={sections} fields={fields} onChange={onChange} /> : null}
+          {isChoice(question.type) ? (
+            <OptionsEditor question={question} sections={sections} fields={fields} newId={newId} onChange={onChange} onAnnounce={onAnnounce} />
+          ) : null}
 
           {question.type === "attachment" ? (
             <p className="text-xs text-zinc-500">
@@ -1150,16 +1795,25 @@ function QuestionCard({
               new task, where everyone who can open the task can open them (the submitter can’t see them afterwards).
             </p>
           ) : isAnswerable(question) && !isNameQuestion(question) ? (
-            <MappingSelect question={question} fields={fields} onChange={onChange} prefix={prefix} />
+            <MappingSelect question={question} fields={fields} onChange={onChange} prefix={prefix} conflict={conflict} />
           ) : null}
 
-          {isBranchSource(question) ? (
-            <BranchEditor question={question} questions={questions} onChangeAll={onChangeAll} onCreateBranch={onCreateBranch} />
+          {split ? (
+            <PathsPanel
+              question={question}
+              onMakeRequired={() => onChange({ ...question, required: true })}
+              onStopSplitting={() =>
+                onCommit(
+                  stopSplitting(questions, question.id),
+                  `“${question.label.trim() || "The question"}” no longer splits into paths. Its questions still show for the same answers.`,
+                )
+              }
+            />
+          ) : isBranchSource(question) ? (
+            <BranchEditor question={question} questions={questions} fields={fields} onCommit={onCommit} onCreateBranch={onCreateBranch} />
           ) : null}
 
-          {question.show_if ? (
-            <ShownIf question={question} questions={questions} onChange={onChange} />
-          ) : null}
+          {question.show_if ? <ShownIf question={question} questions={questions} tag={tag} onCommit={onCommit} /> : null}
 
           <div className="flex items-center gap-1 border-t border-zinc-100 pt-2">
             <button
@@ -1167,7 +1821,7 @@ function QuestionCard({
               type="button"
               aria-label="Move question up"
               data-tooltip="Move up"
-              disabled={index === 0}
+              disabled={!canMoveUp}
               onClick={() => move(-1, [`${prefix}-move-up`, `${prefix}-move-down`])}
               className="btn-icon"
             >
@@ -1178,7 +1832,7 @@ function QuestionCard({
               type="button"
               aria-label="Move question down"
               data-tooltip="Move down"
-              disabled={index === count - 1}
+              disabled={!canMoveDown}
               onClick={() => move(1, [`${prefix}-move-down`, `${prefix}-move-up`])}
               className="btn-icon"
             >
@@ -1189,6 +1843,7 @@ function QuestionCard({
               <CopyPlus className="size-4" />
             </button>
             )}
+            {addBelow}
             <span className="flex-1" />
             {isNameQuestion(question) ? null : (
             <button type="button" onClick={onRemove} className="btn-ghost h-7 text-red-700 hover:bg-red-50 hover:text-red-800">
@@ -1199,86 +1854,7 @@ function QuestionCard({
           </div>
         </div>
       ) : null}
-    </li>
-  );
-}
-
-function OptionsEditor({
-  question,
-  sections,
-  fields,
-  onChange,
-}: {
-  question: FormQuestion;
-  sections: SectionRef[];
-  fields: FieldDef[];
-  onChange: (next: FormQuestion) => void;
-}) {
-  const options = question.options ?? [];
-  const sources = useMemo(() => {
-    const list: { key: string; label: string; options: QuestionOption[] }[] = [];
-    if (sections.length) list.push({ key: "sections", label: "Sections", options: sections.map((s) => ({ id: s.id, label: s.name })) });
-    for (const field of fields) {
-      if (field.boundToSections || !field.options.length) continue;
-      list.push({ key: field.id, label: field.name, options: field.options.map((o) => ({ id: o.id, label: o.name })) });
-    }
-    return list;
-  }, [sections, fields]);
-  const set = (next: QuestionOption[]) => onChange({ ...question, options: next });
-  return (
-    <fieldset>
-      <legend className={LABEL}>Options</legend>
-      <ul className="mt-1 flex flex-col gap-1">
-        {options.map((option, i) => (
-          <li key={option.id} className="flex items-center gap-1.5">
-            <span aria-hidden className={`size-3 shrink-0 border border-zinc-300 ${question.type === "multi_select" ? "rounded-sm" : "rounded-full"}`} />
-            <input
-              aria-label={`Option ${i + 1}`}
-              value={option.label}
-              maxLength={200}
-              onChange={(e) => {
-                const label = e.currentTarget.value;
-                set(options.map((o) => (o.id === option.id ? { ...o, label } : o)));
-              }}
-              className="field h-8 min-w-0 flex-1"
-            />
-            <button
-              type="button"
-              aria-label={`Remove option ${option.label || i + 1}`}
-              data-tooltip="Remove option"
-              disabled={options.length <= 1}
-              onClick={() => set(options.filter((o) => o.id !== option.id))}
-              className="btn-icon"
-            >
-              <X className="size-3.5" />
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => set([...options, { id: newId(), label: `Option ${options.length + 1}` }])}
-          className="btn-ghost h-7 text-xs"
-        >
-          <Plus className="size-3.5" aria-hidden />
-          Add option
-        </button>
-        {sources.length ? (
-          <SmartPicker
-            label="Copy options from"
-            placeholder="Copy options from…"
-            value={null}
-            onChange={(value) => {
-              const source = sources.find((s) => s.key === value);
-              if (source) set(source.options);
-            }}
-            className="h-7 text-xs"
-            options={sources.map((s) => ({ value: s.key, label: s.label }))}
-          />
-        ) : null}
-      </div>
-    </fieldset>
+    </div>
   );
 }
 
@@ -1287,11 +1863,14 @@ function MappingSelect({
   fields,
   onChange,
   prefix,
+  conflict,
 }: {
   question: FormQuestion;
   fields: FieldDef[];
   onChange: (next: FormQuestion) => void;
   prefix: string;
+  // Batch 43 (item 5): another question that can show with this one fills in the same detail.
+  conflict: { label: string; target: MapTarget } | null;
 }) {
   const value = question.maps_to?.target === "field" ? `field:${question.maps_to.field_id}` : (question.maps_to?.target ?? "");
   const mappable = fields.filter((f) => fieldAccepts(f, question.type));
@@ -1338,93 +1917,132 @@ function MappingSelect({
       {question.maps_to?.target === "section" || (question.maps_to?.target === "field" && isChoice(question.type)) ? (
         <p className="mt-1 text-xs text-zinc-500">Each option fills in the {question.maps_to?.target === "section" ? "section" : "field option"} with the same name.</p>
       ) : null}
+      {conflict ? (
+        <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900" data-mapping-conflict="">
+          <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+          <span>
+            “{conflict.label}” can show along with this question and fills in the same{" "}
+            {conflict.target === "title" ? "task name: their answers are joined" : conflict.target === "field" ? "field: the last answer wins" : `${mapTargetLabel(conflict.target).toLowerCase()}: the last answer wins`}
+            . Put them in different paths of a single choice, or fill in something else.
+          </span>
+        </p>
+      ) : null}
     </div>
   );
 }
 
 // "If the answer is X, show …": the questions after this one that each answer opens. A question shown by
-// a branch depends on one earlier question (the database's show_if), so picking it here moves it.
+// a branch depends on one earlier question (the database's show_if), so picking it here moves it. Batch 43:
+// a choice question can split into paths instead (one block per answer, meeting again after); a checkbox
+// can't ("not checked" isn't an answer), so it offers a Yes / No choice.
 function BranchEditor({
   question,
   questions,
-  onChangeAll,
+  fields,
+  onCommit,
   onCreateBranch,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
-  onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
+  fields: FieldDef[];
+  onCommit: (next: FormQuestion[], message: string | null) => void;
   onCreateBranch: (optionId: string) => void;
 }) {
   const index = questions.findIndex((q) => q.id === question.id);
   const later = questions.slice(index + 1);
+  // Only questions in the same flow (the main flow, or the same path): a question from another path would
+  // end up shown only through this one's path, out of place.
+  const owners = questionOwners(questions);
+  const sameFlow = (q: FormQuestion) => owners.get(q.id) === owners.get(question.id);
   const options = branchOptions(question);
 
   function show(childId: string, optionId: string, on: boolean) {
-    onChangeAll((current) => showInBranch(current, question.id, childId, optionId, on));
+    onCommit(showInBranch(questions, question.id, childId, optionId, on), null);
   }
+  // Turning a checkbox into Yes / No keeps a field mapping only when the field takes a single choice.
+  const mapped = question.maps_to?.target === "field" ? fields.find((f) => f.id === question.maps_to?.field_id) : undefined;
+  const losesField = Boolean(mapped && !fieldAccepts(mapped, "single_select"));
 
   return (
     <div className="rounded-md bg-zinc-50 p-2.5">
-      <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-700">
-        <GitBranch className="size-3.5 text-zinc-500" aria-hidden />
-        Branching
-      </p>
-      {later.length === 0 && options.length === 0 ? (
-        <p className="mt-1 text-xs text-zinc-500">Add answer options first, then show questions only for certain answers.</p>
-      ) : (
-        <ul className="mt-1.5 flex flex-col gap-1.5">
-          {options.map((option) => {
-            const children = later.filter((q) => q.show_if?.question_id === question.id && q.show_if.option_ids.includes(option.id));
-            const addable = later.filter((q) => !children.includes(q) && !isNameQuestion(q));
-            return (
-              <li key={option.id} className="flex flex-wrap items-center gap-1 text-xs text-zinc-600">
-                <span>
-                  If the answer is <span className="font-medium text-zinc-800">{option.label || "…"}</span>, show
-                </span>
-                {children.map((child) => (
-                  <span key={child.id} className="inline-flex max-w-full items-center gap-0.5 rounded bg-white px-1.5 py-0.5 ring-1 ring-zinc-200">
-                    <span className="truncate">{child.label || "Untitled question"}</span>
-                    <button
-                      type="button"
-                      aria-label={`Stop showing ${child.label || "the question"} for ${option.label}`}
-                      onClick={() => show(child.id, option.id, false)}
-                      className="rounded text-zinc-400 hover:text-zinc-700"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </span>
-                ))}
-                <Popover
-                    label={`Show a question when the answer is ${option.label}`}
-                    panelClassName="w-64 p-1.5"
-                    buttonClassName="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-accent-700 hover:bg-accent-50"
-                    button={
-                      <>
-                        <Plus className="size-3" aria-hidden />
-                        {children.length ? "Add" : "a question"}
-                      </>
-                    }
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium text-zinc-700">
+          <GitBranch className="size-3.5 text-zinc-500" aria-hidden />
+          Branching
+        </p>
+        {isChoice(question.type) ? (
+          <SplitIntoPathsButton questions={questions} question={question} onSplit={(next, message) => onCommit(next, message)} />
+        ) : null}
+      </div>
+      {question.type === "checkbox" ? (
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+          <span>For paths, ask a Yes / No single choice instead (a checkbox can’t branch on “not checked”).</span>
+          <button
+            type="button"
+            onClick={() =>
+              onCommit(
+                checkboxToYesNo(questions, question.id),
+                `“${question.label.trim() || "The question"}” is now a Yes / No choice; what it showed shows for Yes.${losesField ? " It no longer fills in its checkbox field." : ""}`,
+              )
+            }
+            className="font-medium text-accent-700 hover:underline"
+          >
+            Turn into Yes / No
+          </button>
+        </p>
+      ) : null}
+      <ul className="mt-1.5 flex flex-col gap-1.5">
+        {options.map((option) => {
+          const children = later.filter((q) => q.show_if?.question_id === question.id && q.show_if.option_ids.includes(option.id));
+          const addable = later.filter((q) => !children.includes(q) && !isNameQuestion(q) && sameFlow(q));
+          return (
+            <li key={option.id} className="flex flex-wrap items-center gap-1 text-xs text-zinc-600">
+              <span>
+                If the answer is <span className="font-medium text-zinc-800">{option.label || "…"}</span>, show
+              </span>
+              {children.map((child) => (
+                <span key={child.id} className="inline-flex max-w-full items-center gap-0.5 rounded bg-white px-1.5 py-0.5 ring-1 ring-zinc-200">
+                  <span className="truncate">{child.label || "Untitled question"}</span>
+                  <button
+                    type="button"
+                    aria-label={`Stop showing ${child.label || "the question"} for ${option.label}`}
+                    onClick={() => show(child.id, option.id, false)}
+                    className="rounded text-zinc-400 hover:text-zinc-700"
                   >
-                    {(close) => (
-                      <BranchTargetList
-                        source={question}
-                        addable={addable}
-                        onPick={(childId) => {
-                          close();
-                          show(childId, option.id, true);
-                        }}
-                        onCreate={() => {
-                          close();
-                          onCreateBranch(option.id);
-                        }}
-                      />
-                    )}
-                  </Popover>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ))}
+              <Popover
+                label={`Show a question when the answer is ${option.label}`}
+                panelClassName="w-64 p-1.5"
+                buttonClassName="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-accent-700 hover:bg-accent-50"
+                button={
+                  <>
+                    <Plus className="size-3" aria-hidden />
+                    {children.length ? "Add" : "a question"}
+                  </>
+                }
+              >
+                {(close) => (
+                  <BranchTargetList
+                    source={question}
+                    addable={addable}
+                    onPick={(childId) => {
+                      close();
+                      show(childId, option.id, true);
+                    }}
+                    onCreate={() => {
+                      close();
+                      onCreateBranch(option.id);
+                    }}
+                  />
+                )}
+              </Popover>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -1477,21 +2095,28 @@ function BranchTargetList({
 }
 
 // Item 68: a Branch button on every question card's header. Choice and checkbox questions pick an answer,
-// then a later question or "Create new question"; other types say why they can't branch.
+// then a later question or "Create new question"; other types say why they can't branch. Batch 43: on a
+// question that splits, it picks a path instead (the question joins that path's block).
 function BranchButton({
   question,
   questions,
-  onChangeAll,
+  onCommit,
   onCreateBranch,
+  onAddTo,
+  onPlaceIn,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
-  onChangeAll: (next: (current: FormQuestion[]) => FormQuestion[]) => void;
+  onCommit: (next: FormQuestion[], message: string | null, moved?: string[]) => void;
   onCreateBranch: (optionId: string) => void;
+  onAddTo: (container: FlowContainer, question: FormQuestion) => void;
+  onPlaceIn: (questionId: string, container: NonNullable<FlowContainer>) => void;
 }) {
   const [optionId, setOptionId] = useState<string | null>(null);
   const reason = branchUnavailableReason(question);
   const label = question.label.trim() || "this question";
+  const buttonClassName =
+    "mr-2 inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-2xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 aria-expanded:bg-zinc-100";
   if (reason) {
     return (
       <span
@@ -1506,17 +2131,88 @@ function BranchButton({
       </span>
     );
   }
-  const options = branchOptions(question);
   const index = questions.findIndex((q) => q.id === question.id);
   const later = questions.slice(index + 1).filter((q) => !isNameQuestion(q));
+  if (question.paths?.length) {
+    const paths = question.paths;
+    const chosen = paths.find((p) => p.id === optionId) ?? null;
+    const inBlock = chosen ? new Set(blockQuestionIds(questions, question.id, chosen.id)) : new Set<string>();
+    return (
+      <Popover
+        label={`Add a question to a path of ${label}`}
+        align="end"
+        panelClassName="w-72 p-1.5"
+        buttonClassName={buttonClassName}
+        tooltip="Add a question to one of its paths"
+        onOpenChange={(open) => {
+          if (!open) setOptionId(null);
+        }}
+        button={
+          <>
+            <GitFork className="size-3.5" aria-hidden />
+            Paths
+          </>
+        }
+      >
+        {(close) =>
+          !chosen ? (
+            <ul className="flex flex-col">
+              <li className="px-2 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wide text-zinc-400">Add to the path</li>
+              {paths.map((p) => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    onClick={() => setOptionId(p.id)}
+                    className="flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+                  >
+                    <span className="truncate font-medium">{pathLabel(question, p)}</span>
+                    <span className="truncate text-2xs text-zinc-500">{pathAnswersText(question, p)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div>
+              <p className="flex items-center gap-1 px-2 pb-1 pt-1 text-xs text-zinc-600">
+                Add to <span className="font-medium text-zinc-900">{pathLabel(question, chosen)}</span>
+                <button type="button" onClick={() => setOptionId(null)} className="ml-auto text-2xs text-accent-700 hover:underline">
+                  Change
+                </button>
+              </p>
+              <BranchTargetList
+                source={question}
+                addable={later.filter((q) => !inBlock.has(q.id) && canPlaceIn(questions, q.id, { sourceId: question.id, pathId: chosen.id }))}
+                onPick={(childId) => {
+                  close();
+                  setOptionId(null);
+                  onPlaceIn(childId, { sourceId: question.id, pathId: chosen.id });
+                }}
+                onCreate={() => {
+                  close();
+                  setOptionId(null);
+                  onAddTo({ sourceId: question.id, pathId: chosen.id }, { id: newId(), type: "short_text", label: "" });
+                }}
+              />
+            </div>
+          )
+        }
+      </Popover>
+    );
+  }
+  const options = branchOptions(question);
   const chosen = options.find((o) => o.id === optionId) ?? (options.length === 1 ? options[0] : null);
+  const owners = questionOwners(questions);
+  const sameFlow = (q: FormQuestion) => owners.get(q.id) === owners.get(question.id);
   return (
     <Popover
       label={`Branch from ${label}`}
       align="end"
       panelClassName="w-72 p-1.5"
-      buttonClassName="mr-2 inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-2xs font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 aria-expanded:bg-zinc-100"
+      buttonClassName={buttonClassName}
       tooltip="Show another question only for one answer"
+      onOpenChange={(open) => {
+        if (!open) setOptionId(null);
+      }}
       button={
         <>
           <GitBranch className="size-3.5" aria-hidden />
@@ -1554,11 +2250,11 @@ function BranchButton({
             </p>
             <BranchTargetList
               source={question}
-              addable={later.filter((q) => !(q.show_if?.question_id === question.id && q.show_if.option_ids.includes(chosen.id)))}
+              addable={later.filter((q) => sameFlow(q) && !(q.show_if?.question_id === question.id && q.show_if.option_ids.includes(chosen.id)))}
               onPick={(childId) => {
                 close();
                 setOptionId(null);
-                onChangeAll((current) => showInBranch(current, question.id, childId, chosen.id, true));
+                onCommit(showInBranch(questions, question.id, childId, chosen.id, true), null);
               }}
               onCreate={() => {
                 close();
@@ -1573,34 +2269,54 @@ function BranchButton({
   );
 }
 
+// Where a branched question shows: "Shown only if … is …" with Always show, or (batch 43) the path it's in,
+// with "Move out of the path" (asks first: it would show to more people).
 function ShownIf({
   question,
   questions,
-  onChange,
+  tag,
+  onCommit,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
-  onChange: (next: FormQuestion) => void;
+  tag: PathTag | null;
+  onCommit: (next: FormQuestion[], message: string | null, moved?: string[]) => void;
 }) {
+  const confirm = useConfirm();
   const parent = questions.find((q) => q.id === question.show_if?.question_id);
   if (!parent) return null;
   const labels = branchOptions(parent)
     .filter((o) => question.show_if?.option_ids.includes(o.id))
     .map((o) => o.label);
+  if (tag && question.show_if?.path_id) {
+    return (
+      <p className={`flex flex-wrap items-center gap-1 rounded-md px-2.5 py-2 text-xs text-zinc-700 ${tag.color.chip}`}>
+        <span aria-hidden className={`size-2 rounded-full ${tag.color.dot}`} />
+        In the path “{tag.label}”: shows when “{tag.sourceLabel}” is {labels.length ? labels.join(" or ") : "(no answers left)"}.
+        <button
+          type="button"
+          onClick={async () => {
+            const words = moveOutWords(questions, question.id);
+            if (!(await confirm({ title: words.title, message: words.message, confirmLabel: "Move it out" }))) return;
+            onCommit(moveOutOfPath(questions, question.id, "end"), `Moved “${question.label.trim() || "the question"}” out of its path.`, [question.id]);
+          }}
+          className="ml-auto rounded px-1.5 py-0.5 font-medium text-accent-700 hover:bg-white/70"
+        >
+          Move out of the path
+        </button>
+      </p>
+    );
+  }
   return (
     <p className="flex flex-wrap items-center gap-1 rounded-md bg-accent-50/60 px-2.5 py-2 text-xs text-zinc-700">
       <GitBranch className="size-3.5 text-accent-700" aria-hidden />
       Shown only if “{parent.label || "an earlier question"}” is {labels.length ? labels.join(" or ") : "(pick an answer there)"}.
       <button
         type="button"
-        onClick={() => {
-          const next = { ...question };
-          delete next.show_if;
-          onChange(next);
-        }}
+        onClick={() => onCommit(clearBranch(questions, question.id), null, [question.id])}
         className="ml-auto rounded px-1.5 py-0.5 font-medium text-accent-700 hover:bg-accent-100"
       >
-        Always show
+        {tag ? "Show on the whole path" : "Always show"}
       </button>
     </p>
   );
@@ -1627,8 +2343,9 @@ function SettingsTab({
   sections,
   publicUrl,
   embedSnippet,
+  dirty,
   onCopy,
-  onDeleted,
+  onLeave,
 }: {
   formId: string;
   projectId: string;
@@ -1650,11 +2367,28 @@ function SettingsTab({
   sections: SectionRef[];
   publicUrl: string;
   embedSnippet: string;
+  dirty: boolean;
   onCopy: (text: string, what: string) => void;
-  onDeleted: () => void;
+  // Delete leaves this form: nothing should ask about unsaved changes on the way out.
+  onLeave: () => void;
 }) {
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
+  // Batch 43 (item 9): a copy of the saved form, off, opened right away.
+  async function duplicate() {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Duplicate the saved version?",
+        message: "The copy is made from what’s saved: your unsaved changes here aren’t in it, and leaving this form discards them.",
+        confirmLabel: "Duplicate",
+      }))
+    ) {
+      return;
+    }
+    // Unsaved edits stay marked unsaved: if the copy fails, nothing is lost (on success the copy opens).
+    run(() => duplicateForm(formId, projectId));
+  }
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -1743,9 +2477,14 @@ function SettingsTab({
         <div className="flex flex-col gap-2">
           <CopyRow label="Form link" value={publicUrl} onCopy={() => onCopy(publicUrl, "Form link")} />
           <CopyRow label="Embed code" value={embedSnippet} multiline onCopy={() => onCopy(embedSnippet, "Embed code")} />
+          <p className="text-2xs text-zinc-500">{EMBED_NOTE}</p>
         </div>
       </SettingsGroup>
-      <div className="border-t border-zinc-100 pt-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3">
+        <button type="button" disabled={pending} onClick={() => void duplicate()} className="btn-ghost h-8">
+          <CopyPlus className="size-4" aria-hidden />
+          Duplicate form
+        </button>
         <button
           type="button"
           disabled={pending}
@@ -1757,7 +2496,7 @@ function SettingsTab({
               tone: "danger",
             });
             if (!ok) return;
-            onDeleted();
+            onLeave();
             run(() => deleteForm(formId, projectId));
           }}
           className="btn-ghost h-8 text-red-700 hover:bg-red-50 hover:text-red-800"
