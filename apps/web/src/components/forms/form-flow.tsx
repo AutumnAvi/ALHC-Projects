@@ -630,6 +630,7 @@ export function PathChoiceDialog({
   message,
   cancelLabel,
   single,
+  keepLabel,
   onKeep,
   onDelete,
   onCancel,
@@ -639,6 +640,7 @@ export function PathChoiceDialog({
   cancelLabel: string;
   // One question: "Delete it".
   single: boolean;
+  keepLabel: string;
   onKeep: () => void;
   onDelete: () => void;
   onCancel: () => void;
@@ -688,7 +690,7 @@ export function PathChoiceDialog({
             {single ? "Delete it" : "Delete them"}
           </button>
           <button ref={keepRef} type="button" onClick={onKeep} className="btn-primary">
-            Keep on the main flow
+            {keepLabel}
           </button>
         </div>
       </div>

@@ -92,6 +92,11 @@ test("Save never sends Live / Off, and both writes carry the version they expect
   assert.match(save, /expectedUpdatedAt: versionRef\.current/);
   assert.match(source, /setFormLive\(form\.id, next, versionRef\.current\)/);
   assert.match(source, /Save your changes and go live\?/);
+  // One write at a time (each carries the version the previous one returned): Save waits for Live / Off,
+  // and both Live switches wait for a Save.
+  assert.match(source, /disabled=\{pending \|\| livePending \|\| !dirty/);
+  assert.match(source, /async function changeLive\(next: boolean\) \{[\s\S]{0,160}if \(pending \|\| livePending\) return;/);
+  assert.match(source, /livePending=\{livePending \|\| pending\}/);
   assert.match(source, /View saved form/);
 });
 

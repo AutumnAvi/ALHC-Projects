@@ -85,7 +85,6 @@ import {
   problemSummary,
   putPathsTogether,
   questionOwners,
-  ruleWhenPlaced,
   stopSplitting,
   type FlowContainer,
   type FlowNode,
@@ -515,10 +514,11 @@ export function FormEditor({
     }
     const label = labelOf(questions, id);
     if (from && !target.container) {
-      // Out of a path onto the main flow: one level out keeps the split question's own rule (like Move out
-      // of the path); onto the main flow from deeper, it shows to everyone.
-      const stepOut = ruleWhenPlaced(questions, id, null);
-      const words = stepOut ? moveOutWords(questions, id) : null;
+      // Out of a path onto the main flow: one level out (below the question it names) it keeps the split
+      // question's own rule, like Move out of the path; otherwise it shows to everyone. The confirm says
+      // which, from the rule the move actually leaves it.
+      const kept = placeQuestion(questions, id, null, target.beforeId).find((q) => q.id === id)?.show_if;
+      const words = kept ? moveOutWords(questions, id) : null;
       const ok = await confirm({
         title: words?.title ?? `Move “${label}” to the main flow?`,
         message: words?.message ?? "It leaves its path and shows to everyone, whatever the answer.",
@@ -673,6 +673,8 @@ export function FormEditor({
     });
   }
   async function changeLive(next: boolean) {
+    // One write at a time: each carries the version the one before it returned.
+    if (pending || livePending) return;
     if (next && dirtyRef.current) {
       const ok = await confirm({
         title: "Save your changes and go live?",
@@ -700,9 +702,12 @@ export function FormEditor({
     if (!source || !path) return;
     const next = deletePath(base, sourceId, pathId, mode);
     const stillSplits = Boolean(next.find((q) => q.id === sourceId)?.paths?.length);
+    const kept = source.show_if
+      ? `; its questions now show whenever “${source.label.trim() || "the question"}” shows`
+      : "; its questions are on the main flow";
     commit(
       next,
-      `Deleted the path “${pathLabel(source, path)}”${mode === "keep" ? "; its questions are on the main flow" : ""}.${
+      `Deleted the path “${pathLabel(source, path)}”${mode === "keep" ? kept : ""}.${
         stillSplits ? "" : ` “${source.label.trim() || "The question"}” no longer splits: its last path’s questions show for the same answers.`
       }`,
       mode === "keep" ? blockQuestionIds(base, sourceId, pathId) : [],
@@ -1100,7 +1105,7 @@ export function FormEditor({
                     setDestination={touch(setDestination)}
                     accepting={accepting}
                     setAccepting={(next) => void changeLive(next)}
-                    livePending={livePending}
+                    livePending={livePending || pending}
                     sendConfirmation={sendConfirmation}
                     setSendConfirmation={touch(setSendConfirmation)}
                     verifiedOnly={verifiedOnly}
@@ -1135,6 +1140,7 @@ export function FormEditor({
           onCancel={() => setPathChoice(null)}
           cancelLabel={pathChoice.reason === "otherwise" ? "Decide later" : "Cancel"}
           single={choice.count === 1}
+          keepLabel={choice.keepLabel}
         />
       ) : null}
     </div>
@@ -1158,22 +1164,29 @@ function pathNameOf(questions: FormQuestion[], container: FlowContainer): string
   return source && path ? pathLabel(source, path) : null;
 }
 
-function describePathChoice(questions: FormQuestion[], choice: PathChoice): { title: string; message: string; count: number } | null {
+function describePathChoice(
+  questions: FormQuestion[],
+  choice: PathChoice,
+): { title: string; message: string; count: number; keepLabel: string } | null {
   const source = questions.find((q) => q.id === choice.sourceId);
   const path = source?.paths?.find((p) => p.id === choice.pathId);
   if (!source || !path) return null;
   const count = pathQuestionCount(questions, source.id, path.id);
   const what = count === 1 ? "its question" : `its ${count} questions`;
+  // A split inside a path keeps them in that path (they take the split question's own rule).
+  const keepLabel = source.show_if ? (count === 1 ? "Keep it" : "Keep them") : "Keep on the main flow";
   return choice.reason === "otherwise"
     ? {
         count,
+        keepLabel,
         title: "Otherwise has no answers left",
-        message: `Every answer of “${source.label.trim() || "the question"}” is on a path now, so Otherwise’s questions would never show. Keep ${what} on the main flow, or delete ${count === 1 ? "it" : "them"}?`,
+        message: `Every answer of “${source.label.trim() || "the question"}” is on a path now, so Otherwise’s questions would never show. Keep ${what} (after the paths meet), or delete ${count === 1 ? "it" : "them"}?`,
       }
     : {
         count,
+        keepLabel,
         title: `Delete the path “${pathLabel(source, path)}”?`,
-        message: `What happens to ${what}? Kept ones move to the main flow, after the paths meet, and show whenever “${source.label.trim() || "the question"}” shows.`,
+        message: `What happens to ${what}? Kept ones move to after the paths meet and show whenever “${source.label.trim() || "the question"}” shows.`,
       };
 }
 
@@ -1788,7 +1801,7 @@ function QuestionCard({
               }
             />
           ) : isBranchSource(question) ? (
-            <BranchEditor question={question} questions={questions} onCommit={onCommit} onCreateBranch={onCreateBranch} />
+            <BranchEditor question={question} questions={questions} fields={fields} onCommit={onCommit} onCreateBranch={onCreateBranch} />
           ) : null}
 
           {question.show_if ? <ShownIf question={question} questions={questions} tag={tag} onCommit={onCommit} /> : null}
@@ -1916,11 +1929,13 @@ function MappingSelect({
 function BranchEditor({
   question,
   questions,
+  fields,
   onCommit,
   onCreateBranch,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
+  fields: FieldDef[];
   onCommit: (next: FormQuestion[], message: string | null) => void;
   onCreateBranch: (optionId: string) => void;
 }) {
@@ -1935,6 +1950,9 @@ function BranchEditor({
   function show(childId: string, optionId: string, on: boolean) {
     onCommit(showInBranch(questions, question.id, childId, optionId, on), null);
   }
+  // Turning a checkbox into Yes / No keeps a field mapping only when the field takes a single choice.
+  const mapped = question.maps_to?.target === "field" ? fields.find((f) => f.id === question.maps_to?.field_id) : undefined;
+  const losesField = Boolean(mapped && !fieldAccepts(mapped, "single_select"));
 
   return (
     <div className="rounded-md bg-zinc-50 p-2.5">
@@ -1955,7 +1973,7 @@ function BranchEditor({
             onClick={() =>
               onCommit(
                 checkboxToYesNo(questions, question.id),
-                `“${question.label.trim() || "The question"}” is now a Yes / No choice; what it showed shows for Yes.${question.maps_to?.target === "field" ? " It no longer fills in its checkbox field." : ""}`,
+                `“${question.label.trim() || "The question"}” is now a Yes / No choice; what it showed shows for Yes.${losesField ? " It no longer fills in its checkbox field." : ""}`,
               )
             }
             className="font-medium text-accent-700 hover:underline"

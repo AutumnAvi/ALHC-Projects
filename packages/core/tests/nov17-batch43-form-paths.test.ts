@@ -515,6 +515,50 @@ describe("round 1 review fixes", () => {
   });
 });
 
+describe("round 2 review fixes", () => {
+  const color: FormQuestion = { id: "c", type: "single_select", label: "Color", options: [{ id: "red", label: "Red" }, { id: "blue", label: "Blue" }] };
+  const size: FormQuestion = {
+    id: "s",
+    type: "single_select",
+    label: "Size",
+    options: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+    show_if: { question_id: "c", option_ids: ["red"] },
+    paths: [{ id: "pa", option_ids: ["a"] }, { id: "pb", option_ids: ["b"] }],
+  };
+  const note: FormQuestion = { id: "n", type: "short_text", label: "Note", show_if: { question_id: "s", option_ids: ["a"], path_id: "pa" } };
+
+  it("stepping out above the question the split's rule names takes the container's rule instead", () => {
+    const q = applyPaths([color, size, note]);
+    const above = placeQuestion(q, "n", null, "c");
+    assert.equal(byId(above, "n").show_if, undefined, "above Color: shows to everyone (and says so)");
+    assert.equal(buildFlow(above).inOrder, true);
+    assert.deepEqual(byId(placeQuestion(q, "n", null, null), "n").show_if, { question_id: "c", option_ids: ["red"] }, "below: keeps Size's rule");
+  });
+
+  it("adopting a branch counts the paths of what depends on it", () => {
+    // k, x, and y sit in Size's path p-a4 (a level-2 block); y depends on x and splits (level 3). Splitting k
+    // makes level-3 paths: adopting x would carry y's paths to level 4, so x stays a plain branch.
+    const k: FormQuestion = { id: "k", type: "single_select", label: "K", options: [{ id: "k1", label: "1" }, { id: "k2", label: "2" }], show_if: { question_id: "size", option_ids: ["a4"], path_id: "p-a4" } };
+    const x: FormQuestion = { id: "x", type: "checkbox", label: "X", show_if: { question_id: "k", option_ids: ["k1"] } };
+    const y: FormQuestion = { id: "y", type: "single_select", label: "Y", options: [{ id: "y1", label: "1" }, { id: "y2", label: "2" }], show_if: { question_id: "x", option_ids: ["true"] }, paths: [{ id: "ya", option_ids: ["y1"] }, { id: "yb", option_ids: ["y2"] }] };
+    const q = putPathsTogether(applyPaths([...normalizeQuestions(form(), []), k, x, y]));
+    assert.deepEqual(formProblems(q), []);
+    assert.deepEqual(groupIntoPaths(q, "k"), [], "x stays a plain branch");
+    const { questions } = splitIntoPaths(q, "k", undefined, nextId);
+    assert.ok(!formProblems(questions).some((p) => p.kind === "too_deep"));
+  });
+
+  it("deleting the last regular path next to an emptied Otherwise gives its questions the answers left over", () => {
+    const s2: FormQuestion = { ...size, show_if: undefined, paths: [{ id: "pa", option_ids: ["a", "b"] }, { id: "po", otherwise: true }] };
+    const inO: FormQuestion = { id: "o", type: "short_text", label: "Other", show_if: { question_id: "s", option_ids: [], path_id: "po" } };
+    const q = applyPaths([s2, inO]);
+    assert.ok(formProblems(q).some((p) => p.kind === "otherwise_empty"));
+    const out = normalizeQuestions(deletePath(q, "s", "pa", "delete"), []);
+    assert.deepEqual(byId(out, "o").show_if, { question_id: "s", option_ids: ["a", "b"] });
+    assert.deepEqual(formProblems(out), []);
+  });
+});
+
 describe("the public form", () => {
   it("gets the rules without path names", () => {
     const out = withoutPathMetadata(normalizeQuestions(form(), []));
