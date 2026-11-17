@@ -115,7 +115,7 @@ export function pathLabel(source: FormQuestion, path: FormPath): string {
   const name = path.name?.trim();
   if (name) return name;
   if (path.otherwise) return OTHERWISE_LABEL;
-  return orList(optionLabels(source, pathOptionIds(source, path))) || "Path";
+  return orList(optionLabels(source, pathOptionIds(source, path))) || "Untitled path";
 }
 
 // The path header's second half: "answer is Print", "any other answer: Video", "no answers left".
@@ -457,7 +457,7 @@ export function pathProblems(questions: readonly FormQuestion[]): FormProblem[] 
           questionId: q.id,
           pathId: path.id,
           kind: "path_empty",
-          message: `The path “${pathLabel(q, path)}” has no answers, so ${hasQuestions ? "its questions never show" : "it never shows"}. Give it an answer, or delete it.`,
+          message: `${path.name?.trim() ? `The path “${path.name.trim()}”` : "This path"} has no answers, so ${hasQuestions ? "its questions never show" : "it never shows"}. Give it an answer (⋯ → Change answers), or delete it.`,
         });
       }
     }
@@ -868,14 +868,28 @@ export function insertIntoContainer(questions: FormQuestion[], container: FlowCo
 }
 
 // "Add question below": right after a question's unit, in the same container (same rule as a path question,
-// none on the main flow).
-export function insertAfter(questions: FormQuestion[], afterId: string, question: FormQuestion): FormQuestion[] {
+// none on the main flow). `keepRule` (Duplicate) keeps the new question's own rule: a copy shows for the same
+// answers as its original, a plain branch included.
+export function insertAfter(questions: FormQuestion[], afterId: string, question: FormQuestion, keepRule = false): FormQuestion[] {
   const owner = questionOwners(questions);
   const at = questions.findIndex((q) => q.id === afterId);
   if (at < 0) return [...questions, question];
   const end = unitEnd(questions, at, owner);
-  const added = withRule(question, containerRule(questions, containerOf(afterId, owner)));
+  const added = keepRule ? question : withRule(question, containerRule(questions, containerOf(afterId, owner)));
   return [...questions.slice(0, end + 1), added, ...questions.slice(end + 1)];
+}
+
+// "Stop splitting": the question keeps its answers and its path questions keep showing for the same
+// answers, as plain branches (applyPaths drops the path ids).
+export function stopSplitting(questions: FormQuestion[], sourceId: string): FormQuestion[] {
+  return applyPaths(
+    questions.map((q) => {
+      if (q.id !== sourceId || !q.paths) return q;
+      const copy = { ...q };
+      delete copy.paths;
+      return copy;
+    }),
+  );
 }
 
 // Out of its path, keeping what depends on it: it takes the split question's own rule and goes right before

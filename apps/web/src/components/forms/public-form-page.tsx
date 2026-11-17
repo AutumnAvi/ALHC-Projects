@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
+import { EmbedHeightReporter } from "@/components/forms/embed-height";
 import { PublicForm } from "@/components/forms/public-form";
 import { SetupRequired } from "@/components/setup-required";
 import { getPublicForm } from "@/lib/data";
@@ -34,7 +35,14 @@ export async function PublicFormPage({ formId, embed }: { formId: string; embed?
     </div>
   );
 
-  if (embed) return <main className="min-h-full bg-white">{body}</main>;
+  // Batch 43: the embed reports its height to the page framing it (the Share snippet sizes the frame).
+  if (embed) {
+    return (
+      <main className="min-h-full bg-white">
+        <EmbedHeightReporter formId={form.id}>{body}</EmbedHeightReporter>
+      </main>
+    );
+  }
   return (
     <main className="min-h-full bg-zinc-50 px-4 py-10 sm:py-16">
       <div className="mx-auto w-full max-w-xl">
