@@ -974,6 +974,27 @@ export function moveOutOfPath(questions: FormQuestion[], id: string, where: "sta
   return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
 }
 
+// A reorder inside a path that puts a question above the question its plain rule names would break that rule
+// (normalizeQuestions drops a rule on a question below it), and the question would leave its path. Instead it
+// keeps showing only on its path: it takes the path's rule, like "Show on the whole path". On the main flow
+// there's no outer rule to keep (the editor clears it there, with Undo, as before).
+export function keepBrokenBranchesInPath(moved: FormQuestion[], before: readonly FormQuestion[]): { questions: FormQuestion[]; kept: string[] } {
+  const owner = questionOwners(before);
+  const index = new Map(moved.map((q, i) => [q.id, i] as const));
+  const kept: string[] = [];
+  const next = moved.map((q, i) => {
+    const rule = q.show_if;
+    const parentAt = rule ? index.get(rule.question_id) : undefined;
+    if (!rule || (parentAt !== undefined && parentAt < i)) return q;
+    const fallback = containerRule(before, containerOf(q.id, owner));
+    const sourceAt = fallback ? index.get(fallback.question_id) : undefined;
+    if (!fallback || sourceAt === undefined || sourceAt >= i) return q;
+    kept.push(q.id);
+    return withRule(q, fallback);
+  });
+  return { questions: kept.length ? next : moved, kept };
+}
+
 // "Always show" on a plain branch: the question stops depending on that answer but stays where it is, so
 // inside a path it takes the path's rule (it still shows only on that path), on the main flow none.
 export function clearBranch(questions: FormQuestion[], id: string): FormQuestion[] {
