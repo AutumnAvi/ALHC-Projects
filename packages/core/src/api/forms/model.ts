@@ -19,7 +19,12 @@ export type FormPatch = {
   sendConfirmation?: boolean;
   confirmationMessage?: string | null;
   verifiedDomainsOnly?: boolean;
+  // Batch 43: write only while the form's updated_at is still this (the editor's last read or own write);
+  // otherwise the save is refused as a conflict (FORM_CHANGED_ELSEWHERE).
+  expectedUpdatedAt?: string;
 };
+
+export const FORM_CHANGED_ELSEWHERE = "Someone else changed this form. Reload to see their changes.";
 
 export type SubmitFormResult = {
   error?: string;
