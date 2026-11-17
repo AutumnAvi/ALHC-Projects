@@ -27,7 +27,10 @@ import {
   HOVER_PREFETCH_SECONDS,
 } from "@/lib/route-freshness";
 import { onHomeWrite, patchedAction, resetPatchedWritesForTests, type HomeWriteEvent } from "@/lib/patched-writes";
-import { FULL_PREFETCH, HOME_WARM_BUMP_DELAY_MS, HOME_WARM_DELAY_MS } from "@/components/shell/route-freshness";
+import { FULL_PREFETCH, HOME_WARM_BUMP_DELAY_MS, HOME_WARM_DELAY_MS, REFRESHED_WARM_WITHIN_MS, warmDelay } from "@/components/shell/route-freshness";
+import { createAlhcQueryClient } from "@alhc/core/query/client";
+import { addTaskEdits, EDIT_GRACE_MS, HELD_EDIT_GRACE_MS, liveEdits, pruneTaskEdits, readEdits, type EditStatus } from "@alhc/core/query/task-edits";
+import { recentCompletion, resetCompletionsForTests, trackCompletion } from "@/lib/completion-store";
 import { listInbox, listInboxPage } from "@alhc/core/api/inbox/queries";
 import { INBOX_LIMIT, inboxLimitNote } from "@alhc/core/inbox";
 
@@ -132,9 +135,13 @@ test("item 1: Home's summary line counts the Today card's live list (completions
   assert.match(page, /<HomeSummary\s+open=\{todayCard\.shown\}/);
 });
 
-test("item 1: checklist Undo is a save Home shows and records the reopen (Grok r2 F5)", () => {
+test("item 1: checklist Undo is a save Home shows and records the reopen (Grok r2 F5, r4 F1)", () => {
   const src = readFileSync(new URL("../../src/components/my-tasks/checklist.tsx", import.meta.url), "utf8");
-  assert.match(src, /trackCompletion\(task\.id, false, patchedAction\("complete", \(\) => undoTaskCompleted\(task\.id\), \{ refresh: true \}\)\)/);
+  // A one-off task's Undo is the untick's own save (screen-only where the tick was); a repeating task's
+  // takes back the next occurrence too.
+  assert.match(src, /patchedAction\("complete", \(screenOnly\) => setTaskCompleted\(task\.id, false, screenOnly\)/);
+  assert.match(src, /patchedAction\("complete", \(\) => undoTaskCompleted\(task\.id\), \{ refresh: true \}\)/);
+  assert.match(src, /trackCompletion\(\s*task\.id,\s*false,/);
   assert.match(src, /recordTaskEdits\(\[\{ type: "complete", taskId: task\.id, completed: false \}\]\)/);
 });
 
@@ -176,7 +183,7 @@ test("item 1: a save that refreshed drops fetched copies, keeps rendered-ahead o
 test("item 1: a save that refreshed doesn't wait for the 10 s gap (its edits last EDIT_GRACE_MS only)", () => {
   const src = readFileSync(new URL("../../src/components/shell/route-freshness.tsx", import.meta.url), "utf8");
   assert.match(src, /plan\.bump && !refreshedInBurst && now < bumpAllowedAt\(lastBumpAt\)/);
-  assert.match(src, /if \(!event\.screenOnly\) \{\s*refreshedInBurst = true;\s*noteSaveRefreshed\(state, current\.current, event\.at\);/);
+  assert.match(src, /if \(!event\.screenOnly\) \{\s*refreshedInBurst = true;[\s\S]{0,120}?noteSaveRefreshed\(state, current\.current, event\.at\);/);
   // The edits' grace is batch 40's, unchanged (Codex r3 F5).
   const edits = readFileSync(new URL("../../src/components/task/task-edits.ts", import.meta.url), "utf8");
   assert.match(edits, /held: writeWithoutRefresh,/);
@@ -203,6 +210,67 @@ test("item 1: patchedAction tells Home's warmer when a save Home shows starts an
 test("item 1: the full prefetch is the router's FULL kind (what <Link prefetch={true}> asks for)", () => {
   const types = require("next/dist/client/components/router-reducer/router-reducer-types.js") as { PrefetchKind: { FULL: string } };
   assert.equal(FULL_PREFETCH, types.PrefetchKind.FULL);
+});
+
+const editStatus = (over: Partial<EditStatus> = {}): EditStatus => ({
+  failed: () => false,
+  dropped: () => false,
+  endedAt: () => undefined,
+  ...over,
+});
+
+test("item 1: a newer edit retires the older one for good, unless it failed (Grok r4 F1)", (t) => {
+  const client = createAlhcQueryClient();
+  t.after(() => client.clear());
+  // The tick (token 1, saved without a refresh: held 35 s), then its Undo (token 2, refreshed: 4 s).
+  addTaskEdits(client, 1, [{ type: "complete", taskId: "a", completed: true }], 1_000);
+  addTaskEdits(client, 2, [{ type: "complete", taskId: "a", completed: false }], 2_000);
+  const ended = editStatus({ endedAt: (tk) => (tk === 1 ? 1_100 : 2_100), held: (tk) => tk === 1 });
+  const value = (now: number) => liveEdits(readEdits(client), ended, now).map((e) => e.edit.type === "complete" && e.edit.completed);
+  assert.deepEqual(value(3_000), [false], "the reopen shows");
+  // Past the reopen's grace the tick doesn't come back: the server's copy shows (no edit).
+  assert.deepEqual(value(2_100 + EDIT_GRACE_MS + 1), []);
+  pruneTaskEdits(client, ended, 2_100 + EDIT_GRACE_MS + 1);
+  assert.equal(readEdits(client).length, 0, "both gone once the newer one finished");
+  assert.ok(HELD_EDIT_GRACE_MS > EDIT_GRACE_MS);
+  // While the newer one is still saving, the older stays, so a failure rolls back to it.
+  addTaskEdits(client, 3, [{ type: "complete", taskId: "b", completed: true }], 10_000);
+  addTaskEdits(client, 4, [{ type: "complete", taskId: "b", completed: false }], 11_000);
+  const saving = editStatus({ endedAt: (tk) => (tk === 3 ? 10_100 : undefined), held: (tk) => tk === 3 });
+  pruneTaskEdits(client, saving, 12_000);
+  assert.equal(readEdits(client).length, 2);
+  const failed = editStatus({ ...saving, failed: (tk) => tk === 4 });
+  assert.deepEqual(liveEdits(readEdits(client), failed, 12_000).map((e) => e.token), [3]);
+});
+
+test("item 1: a refused or failed reopen puts back the tick's completion note (Grok r4 F2)", async () => {
+  resetCompletionsForTests();
+  await trackCompletion("t", true, async () => ({}))();
+  assert.equal(recentCompletion("t"), true);
+  await trackCompletion("t", false, async () => ({ error: "No" }))();
+  assert.equal(recentCompletion("t"), true, "refused: still the tick's note");
+  await assert.rejects(trackCompletion("t", false, async () => {
+    throw new Error("network");
+  })());
+  assert.equal(recentCompletion("t"), true, "thrown: still the tick's note");
+  await trackCompletion("t", false, async () => ({}))();
+  assert.equal(recentCompletion("t"), false, "a reopen that saved");
+  await trackCompletion("u", true, async () => ({ error: "No" }))();
+  assert.equal(recentCompletion("u"), undefined, "nothing before: nothing after");
+  resetCompletionsForTests();
+});
+
+test("item 1: after a save that refreshed, the warm-up runs within 2.5 s whatever follows (Codex r4 F8)", () => {
+  assert.equal(REFRESHED_WARM_WITHIN_MS, 2500);
+  assert.ok(REFRESHED_WARM_WITHIN_MS < EDIT_GRACE_MS);
+  assert.equal(warmDelay(true, undefined, 0), HOME_WARM_BUMP_DELAY_MS);
+  assert.equal(warmDelay(false, undefined, 0), HOME_WARM_DELAY_MS);
+  // First refreshing save ended at 1000: deadline 3500. A tick ending at 3000 warms 500 ms later at most.
+  assert.equal(warmDelay(true, 3_500, 3_000), 500);
+  assert.equal(warmDelay(true, 3_500, 4_000), 0, "past the deadline: at once");
+  assert.equal(warmDelay(false, 3_500, 1_000), HOME_WARM_DELAY_MS, "the shorter of the two");
+  const src = readFileSync(new URL("../../src/components/shell/route-freshness.tsx", import.meta.url), "utf8");
+  assert.match(src, /refreshDeadline \?\?= event\.at \+ REFRESHED_WARM_WITHIN_MS;/);
 });
 
 // ----- Item 2 -------------------------------------------------------------------------------------------

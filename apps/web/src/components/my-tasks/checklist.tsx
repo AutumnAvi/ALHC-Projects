@@ -127,9 +127,19 @@ export function useChecklist(
             label: "Undo",
             onClick: () =>
               run(
-                // Batch 42 (item 1): a save Home shows, like the tick (it refreshes as before), and the tick's
-                // completion note flips back (completion-store.ts: what it blocked locks again).
-                trackCompletion(task.id, false, patchedAction("complete", () => undoTaskCompleted(task.id), { refresh: true })),
+                // Batch 42 (item 1): a save Home shows, through the same path as the tick — saved without a
+                // refresh where the tick was, so its edit lasts as long and reaches My tasks' patches too —
+                // and the tick's completion note flips back (completion-store.ts). A repeating task's Undo
+                // also takes back the next occurrence (undoTaskCompleted), so it refreshes.
+                trackCompletion(
+                  task.id,
+                  false,
+                  task.recurring
+                    ? patchedAction("complete", () => undoTaskCompleted(task.id), { refresh: true })
+                    : patchedAction("complete", (screenOnly) => setTaskCompleted(task.id, false, screenOnly), {
+                        refresh: Boolean(task.rootTaskId),
+                      }),
+                ),
                 () => {
                   setToggled({ id: task.id, completed: false });
                   // The tick's edit would otherwise keep the task done on other screens (Home).

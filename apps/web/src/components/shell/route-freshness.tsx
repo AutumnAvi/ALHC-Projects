@@ -55,6 +55,14 @@ export const HOME_WARM_DELAY_MS = 250;
 // A warm-up that must empty the router's cache throws away the copy of Home a quick click would draw at
 // once, so it waits for the person to settle (and runs at most every MIN_BUMP_GAP_MS, route-freshness.ts).
 export const HOME_WARM_BUMP_DELAY_MS = 2000;
+// After a save that refreshed (its edits last EDIT_GRACE_MS, 4 s), the warm-up runs within this, however many
+// saves follow (Codex r4 F8): the held copy of Home is replaced while that save's edit still shows on it.
+export const REFRESHED_WARM_WITHIN_MS = 2500;
+
+export function warmDelay(bump: boolean, refreshDeadline: number | undefined, now: number): number {
+  const delay = bump ? HOME_WARM_BUMP_DELAY_MS : HOME_WARM_DELAY_MS;
+  return refreshDeadline === undefined ? delay : Math.max(0, Math.min(delay, refreshDeadline - now));
+}
 let warmTimer: number | undefined;
 let runWarm: (() => void) | null = null;
 
@@ -94,6 +102,8 @@ export function RouteFreshness() {
     let burstEndedAt = 0;
     let anyOk = false;
     let refreshedInBurst = false;
+    // A save that refreshed keeps its edits only EDIT_GRACE_MS: the warm-up runs by then whatever follows.
+    let refreshDeadline: number | undefined;
     let lastBumpAt = -Infinity;
     const warm = (intent: boolean) => {
       if (!intent) warmTimer = undefined;
@@ -102,6 +112,8 @@ export function RouteFreshness() {
       const here = current.current;
       if (here === HOME_KEY) {
         anyOk = false;
+        refreshedInBurst = false;
+        refreshDeadline = undefined;
         // Reached Home while the save was still going: render it again so it shows the save.
         if (homeNeedsRenderAfterSave(state, here, burstStartedAt, burstEndedAt)) requestLiveRefresh();
         return;
@@ -123,6 +135,7 @@ export function RouteFreshness() {
       }
       anyOk = false;
       refreshedInBurst = false;
+      refreshDeadline = undefined;
       if (!plan) return;
       if (plan.bump) {
         router.refresh();
@@ -150,12 +163,14 @@ export function RouteFreshness() {
         noteWriteWithoutRefresh(state, event.at);
         if (!event.screenOnly) {
           refreshedInBurst = true;
+          refreshDeadline ??= event.at + REFRESHED_WARM_WITHIN_MS;
           noteSaveRefreshed(state, current.current, event.at);
         }
       }
       if (inFlight === 0) {
-        const bump = homeWarmPlan(state, current.current, Date.now()).bump;
-        warmTimer = window.setTimeout(() => warm(false), bump ? HOME_WARM_BUMP_DELAY_MS : HOME_WARM_DELAY_MS);
+        const now = Date.now();
+        const bump = homeWarmPlan(state, current.current, now).bump;
+        warmTimer = window.setTimeout(() => warm(false), warmDelay(bump, refreshDeadline, now));
       }
     });
     return () => {

@@ -7,7 +7,8 @@
 //   COOKIE=/path/to/session-cookie node scripts/perf/tick-home-timing.mjs <baseUrl> <label> [rounds]
 // Env: FROM=project|my-tasks (default project), PROJECT="Second project 1", STAY_MS (default 40000),
 // CLICK_AFTER_MS: click Home this long after the tick instead of after its save settles (a quick click);
-// NO_TICK=1: the same moves without the tick (what the router keeps by itself).
+// NO_TICK=1: the same moves without the tick (what the router keeps by itself); TICKS=n TICK_GAP_MS=g:
+// n ticks g ms apart (none of them may show open on Home).
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -46,7 +47,7 @@ function probeHome(page, title) {
             document.removeEventListener("click", onClick, true);
             // The ticked task must not be offered as open on Home.
             const open = [...document.querySelectorAll('[role="checkbox"][aria-checked="false"]')].some((el) =>
-              (el.getAttribute("aria-label") ?? "").includes(`“${title}”`),
+              title.some((t) => (el.getAttribute("aria-label") ?? "").includes(`“${t}”`)),
             );
             return resolve({ ms: Math.round(now - t0), skeleton: sawSkeleton, stillOpen: open });
           }
@@ -93,11 +94,16 @@ function probeHome(page, title) {
       await page.getByRole("checkbox", { name: /^Mark “.*” complete$/ }).first().waitFor({ timeout: 60000 });
     }
     await page.waitForTimeout(STAY_MS);
-    const box = page.getByRole("checkbox", { name: /^Mark “.*” complete$/ }).first();
-    const name = (await box.getAttribute("aria-label")) ?? "";
-    const title = name.replace(/^Mark “/, "").replace(/” complete$/, "");
+    const titles = [];
     const tickAt = Date.now();
-    if (!process.env.NO_TICK) await box.click();
+    for (let n = 0; n < Number(process.env.TICKS ?? 1); n += 1) {
+      if (n > 0) await page.waitForTimeout(Number(process.env.TICK_GAP_MS ?? 1000));
+      const box = page.getByRole("checkbox", { name: /^Mark “.*” complete$/ }).first();
+      const name = (await box.getAttribute("aria-label")) ?? "";
+      titles.push(name.replace(/^Mark “/, "").replace(/” complete$/, ""));
+      if (!process.env.NO_TICK) await box.click();
+    }
+    const title = titles;
     if (process.env.CLICK_AFTER_MS) await page.waitForTimeout(Number(process.env.CLICK_AFTER_MS));
     else {
       // The save (a server action POST) and anything it sets off.
