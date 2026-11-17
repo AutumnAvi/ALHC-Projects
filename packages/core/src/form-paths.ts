@@ -887,7 +887,10 @@ export function placeQuestion(questions: FormQuestion[], id: string, container: 
   if (beforeId !== null && groupIds.includes(beforeId)) return questions;
   const group = new Set(groupIds);
   const rest = questions.filter((q) => !group.has(q.id));
-  const at = insertionIndex(rest, container, beforeId);
+  // The end of a container is found on the full list (taking the moving question out first would cut off a
+  // question below it whose rule names it), then counted without the questions that move.
+  const end = beforeId === null ? insertionIndex(questions, container, null) : -1;
+  const at = beforeId !== null ? rest.findIndex((q) => q.id === beforeId) : end < 0 ? -1 : questions.slice(0, end).filter((q) => !group.has(q.id)).length;
   if (at < 0) return questions;
   let rule = sameHome ? null : ruleWhenPlaced(questions, id, container);
   // A rule can only name a question above it: landing above the one the split question's rule names, it

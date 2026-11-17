@@ -428,7 +428,7 @@ export function FormEditor({
   // (the database only accepts a branch on an earlier question), with Undo. The order saves with the form.
   function applyOrder(movedId: string, moved: FormQuestion[]) {
     if (moved === questions) return;
-    // Inside a path, a question moved above the question it depends on keeps showing on its path (round 3).
+    // Inside a path, a question moved above the question it depends on keeps showing on its path.
     const { questions: repaired, kept } = keepBrokenBranchesInPath(moved, questions);
     const broken = brokenBranches(repaired);
     const previous = questions;
