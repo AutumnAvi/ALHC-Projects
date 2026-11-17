@@ -141,5 +141,6 @@ export function toFormDef(row: Tables<"forms">): FormDef {
     sendConfirmation: row.send_confirmation,
     confirmationMessage: row.confirmation_message,
     verifiedDomainsOnly: row.verified_domains_only ?? false,
+    updatedAt: row.updated_at,
   };
 }

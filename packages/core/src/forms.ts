@@ -1,5 +1,16 @@
 import type { FieldDef } from "./fields";
 import type { Json } from "./supabase/database.types";
+import {
+  applyPaths,
+  branchRule,
+  findPath,
+  insertIntoContainer,
+  isSplit,
+  moveOutOfPath,
+  parsePaths,
+  pathForAnswer,
+  placeQuestion,
+} from "./form-paths";
 
 // Mirrors the forms.questions shape validated by the `validate_form` trigger and enforced again by
 // `submit_form`. The database is the trust boundary; this module gives the same answers in the browser.
@@ -75,6 +86,22 @@ export type MapTarget = "title" | "notes" | "due_on" | "section" | "field";
 
 export type QuestionOption = { id: string; label: string };
 
+// Batch 43 (note 143): a path of a split question (form-paths.ts). Builder metadata: the walk reads only the
+// show_if rules it keeps in step.
+export type FormPath = {
+  id: string;
+  // Blank = named after its answers. Not drawn on the form, but not private (get_public_form returns it).
+  name?: string;
+  // A regular path: the answers that lead to it (each answer is on one path at most).
+  option_ids?: string[];
+  // Otherwise: every answer no other path has (computed, never stored as a list).
+  otherwise?: true;
+};
+
+// A question shows when its parent shows and the parent's answer is one of option_ids. path_id (batch 43)
+// says which path of the parent it belongs to; option_ids are then recomputed from that path.
+export type BranchRule = { question_id: string; option_ids: string[]; path_id?: string };
+
 export type FormQuestion = {
   id: string;
   type: QuestionType;
@@ -83,7 +110,9 @@ export type FormQuestion = {
   required?: boolean;
   options?: QuestionOption[];
   maps_to?: { target: MapTarget; field_id?: string };
-  show_if?: { question_id: string; option_ids: string[] };
+  show_if?: BranchRule;
+  // Batch 43: this choice question splits into paths (2–6, counting Otherwise).
+  paths?: FormPath[];
   // Nov 1 notes (batch 8): the requester's name. Every form has exactly one: a required, always-shown,
   // unmapped short-text question (kept that way by forms_04_requester_name in the database).
   role?: "name";
@@ -103,6 +132,9 @@ export type FormDef = {
   confirmationMessage: string | null;
   // Nov 1 notes, item 69: only addresses on a verified domain may submit (submit_form refuses others).
   verifiedDomainsOnly?: boolean;
+  // Batch 43: the row's updated_at when read; the editor's Save and Live / Off write only while it still
+  // matches (someone else's change in between is refused instead of overwritten).
+  updatedAt?: string;
 };
 
 export type PublicForm = {
@@ -186,11 +218,15 @@ export function parseQuestions(value: Json): FormQuestion[] {
     }
     const showIf = obj(q.show_if);
     if (showIf && typeof showIf.question_id === "string" && Array.isArray(showIf.option_ids)) {
-      question.show_if = {
-        question_id: showIf.question_id,
-        option_ids: showIf.option_ids.filter((id): id is string => typeof id === "string"),
-      };
+      // Batch 43: path_id is kept (every load, save, and public read comes through here).
+      question.show_if = branchRule(
+        showIf.question_id,
+        showIf.option_ids.filter((id): id is string => typeof id === "string"),
+        typeof showIf.path_id === "string" && showIf.path_id ? showIf.path_id : null,
+      );
     }
+    const paths = parsePaths(q.paths);
+    if (paths) question.paths = paths;
     return [question];
   });
 }
@@ -351,20 +387,26 @@ export function mappingAllowed(question: FormQuestion, fields: FieldDef[]) {
 
 // Drops anything the database would reject after edits: branching on a later or removed question,
 // branching on options that no longer exist, mappings the question type can't satisfy, and the parts a
-// heading can't have. While editing, a branch with no options picked yet is kept so the parent choice
-// isn't lost; saving drops it.
+// heading can't have; then keeps paths and their rules in step (applyPaths). Batch 43: a branch whose
+// answers are all gone is kept, empty, in both modes: it's an error on its card (formProblems) the person
+// fixes, never dropped quietly (that made the saved form show the question to everyone while the preview
+// kept it hidden). `forSave` also trims path names.
 export function normalizeQuestions(questions: FormQuestion[], fields: FieldDef[], forSave = false): FormQuestion[] {
   const earlier = new Map<string, FormQuestion>();
-  return ensureNameQuestion(questions).map((q) => {
+  const cleaned = ensureNameQuestion(questions).map((q) => {
     const next: FormQuestion = { ...q };
     if (isNameQuestion(next)) {
       delete next.maps_to;
       delete next.show_if;
       delete next.options;
+      delete next.paths;
       earlier.set(next.id, next);
       return next;
     }
-    if (!isChoice(next.type)) delete next.options;
+    if (!isChoice(next.type)) {
+      delete next.options;
+      delete next.paths;
+    }
     if (next.type === "heading") {
       delete next.required;
       delete next.maps_to;
@@ -373,9 +415,12 @@ export function normalizeQuestions(questions: FormQuestion[], fields: FieldDef[]
     if (next.show_if) {
       const parent = earlier.get(next.show_if.question_id);
       const valid = parent && isBranchSource(parent) ? branchOptions(parent).map((o) => o.id) : null;
-      const optionIds = next.show_if.option_ids.filter((id) => valid?.includes(id));
-      if (valid && (optionIds.length || !forSave)) {
-        next.show_if = { question_id: next.show_if.question_id, option_ids: optionIds };
+      if (valid) {
+        next.show_if = branchRule(
+          next.show_if.question_id,
+          next.show_if.option_ids.filter((id) => valid.includes(id)),
+          next.show_if.path_id,
+        );
       } else {
         delete next.show_if;
       }
@@ -383,6 +428,7 @@ export function normalizeQuestions(questions: FormQuestion[], fields: FieldDef[]
     earlier.set(next.id, next);
     return next;
   });
+  return applyPaths(cleaned, { trimNames: forSave });
 }
 
 // Reordering in the form editor (drag and drop, Move up / Move down, Alt+↑ / Alt+↓). The order saves
@@ -436,6 +482,34 @@ export function clearedBranchesMessage(broken: FormQuestion[]): string {
 export function lostBranches(before: FormQuestion[], after: FormQuestion[]): FormQuestion[] {
   const had = new Set(before.filter((q) => q.show_if).map((q) => q.id));
   return after.filter((q) => had.has(q.id) && !q.show_if);
+}
+
+// Batch 43: questions whose branch (or path) a change narrowed: some of the answers they were shown for are
+// gone (an answer removed, "Copy options from" replacing the answers, a path given fewer answers). `emptied`
+// = none left, so the question now never shows (an error on its card until it's fixed). lostBranches only
+// notices a branch that disappeared.
+export function narrowedBranches(before: FormQuestion[], after: FormQuestion[]): { narrowed: FormQuestion[]; emptied: FormQuestion[] } {
+  const was = new Map(before.map((q) => [q.id, q.show_if] as const));
+  const narrowed: FormQuestion[] = [];
+  const emptied: FormQuestion[] = [];
+  for (const q of after) {
+    const old = was.get(q.id);
+    if (!old || !q.show_if || old.question_id !== q.show_if.question_id) continue;
+    const now = new Set(q.show_if.option_ids);
+    if (!old.option_ids.some((id) => !now.has(id))) continue;
+    if (now.size === 0) emptied.push(q);
+    else narrowed.push(q);
+  }
+  return { narrowed, emptied };
+}
+
+export function narrowedBranchesMessage(change: { narrowed: FormQuestion[]; emptied: FormQuestion[] }): string | null {
+  const name = (q: FormQuestion) => `“${q.label.trim() || "Untitled question"}”`;
+  if (change.emptied.length === 1) return `${name(change.emptied[0])} now never shows: none of the answers it was shown for are left.`;
+  if (change.emptied.length > 1) return `${change.emptied.length} questions now never show: none of the answers they were shown for are left.`;
+  if (change.narrowed.length === 1) return `${name(change.narrowed[0])} now shows for fewer answers.`;
+  if (change.narrowed.length > 1) return `${change.narrowed.length} questions now show for fewer answers.`;
+  return null;
 }
 
 // What the editor says after a delete or a type change cleared those branches (with Undo).
@@ -499,6 +573,8 @@ export function ensureNameQuestion(questions: FormQuestion[]): FormQuestion[] {
       delete next.maps_to;
       delete next.show_if;
       delete next.options;
+      // Batch 43: the requester's name is never in a path, and never splits.
+      delete next.paths;
       return next;
     }
     if (q.role) {
@@ -540,7 +616,8 @@ export function submissionRequesterName(questionsJson: Json, answersJson: Json):
 // Nov 1 notes, item 68: branching from a question's Branch button. `showInBranch` turns one later
 // question's "shown if this answer" on or off (a question depends on one earlier question, so picking it
 // moves it from any other branch); `insertBranchQuestion` puts a new question right after the source's
-// branch (after the last question it already shows) with the branch set.
+// branch (after the last question it already shows) with the branch set. Batch 43: on a question that
+// splits into paths, both go through the path that has the answer (the question joins that path's block).
 export function showInBranch(
   questions: FormQuestion[],
   sourceId: string,
@@ -548,13 +625,22 @@ export function showInBranch(
   optionId: string,
   on: boolean,
 ): FormQuestion[] {
+  const source = questions.find((q) => q.id === sourceId);
+  if (source && isSplit(source)) {
+    const path = pathForAnswer(source, optionId);
+    const child = questions.find((q) => q.id === childId);
+    if (on) return path ? placeQuestion(questions, childId, { sourceId, pathId: path.id }, null) : questions;
+    // Off: out of the path, onto the split question's own flow (it shows whenever that question shows).
+    if (!child || child.show_if?.question_id !== sourceId || !findPath(source, child.show_if.path_id)) return questions;
+    return moveOutOfPath(questions, childId, "end");
+  }
   return questions.map((q) => {
     if (q.id !== childId) return q;
     const sameParent = q.show_if?.question_id === sourceId;
     const ids = sameParent ? (q.show_if?.option_ids ?? []) : [];
     const next = on ? [...new Set([...ids, optionId])] : ids.filter((id) => id !== optionId);
     const copy = { ...q };
-    if (next.length) copy.show_if = { question_id: sourceId, option_ids: next };
+    if (next.length) copy.show_if = branchRule(sourceId, next);
     else if (sameParent) delete copy.show_if;
     return copy;
   });
@@ -568,11 +654,16 @@ export function insertBranchQuestion(
 ): FormQuestion[] {
   const at = questions.findIndex((q) => q.id === sourceId);
   if (at < 0) return questions;
+  const source = questions[at];
+  if (isSplit(source)) {
+    const path = pathForAnswer(source, optionId);
+    if (path) return insertIntoContainer(questions, { sourceId, pathId: path.id }, question);
+  }
   let end = at;
   for (let i = at + 1; i < questions.length; i++) {
     if (questions[i].show_if?.question_id === sourceId) end = i;
   }
-  const added: FormQuestion = { ...question, show_if: { question_id: sourceId, option_ids: [optionId] } };
+  const added: FormQuestion = { ...question, show_if: branchRule(sourceId, [optionId]) };
   return [...questions.slice(0, end + 1), added, ...questions.slice(end + 1)];
 }
 
