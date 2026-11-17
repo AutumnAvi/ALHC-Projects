@@ -64,6 +64,7 @@ import {
   buildFlow,
   canPlaceIn,
   checkboxToYesNo,
+  clearBranch,
   containerKey,
   containerOf,
   deletePath,
@@ -83,6 +84,8 @@ import {
   placeQuestion,
   problemSummary,
   putPathsTogether,
+  questionOwners,
+  ruleWhenPlaced,
   stopSplitting,
   type FlowContainer,
   type FlowNode,
@@ -199,8 +202,8 @@ export function FormEditor({
   const [verifiedOnly, setVerifiedOnly] = useState(Boolean(form.verifiedDomainsOnly));
   const [confirmationMessage, setConfirmationMessage] = useState(form.confirmationMessage ?? "");
   // Batch 43: path questions whose stored answers disagree with their paths (written outside this editor)
-  // are drawn, previewed, and saved by their paths; the editor says so.
-  const [drifted] = useState(() => driftedPathQuestions(ensureNameQuestion(form.questions)));
+  // are drawn, previewed, and saved by their paths; the editor says so (to people who can save it).
+  const [drifted, setDrifted] = useState(() => (canEdit ? driftedPathQuestions(ensureNameQuestion(form.questions)) : []));
   const [questions, setQuestions] = useState<FormQuestion[]>(() => {
     const loaded = ensureNameQuestion(form.questions);
     return drifted.length ? applyPaths(loaded) : loaded;
@@ -348,16 +351,27 @@ export function FormEditor({
     questionsRef.current = result;
     setQuestions(result);
     setDirty(true);
-    const hadEmpty = new Set(pathProblems(previous).flatMap((p) => (p.kind === "otherwise_empty" ? [p.pathId] : [])));
-    const emptied = pathProblems(result).find((p) => p.kind === "otherwise_empty" && !hadEmpty.has(p.pathId));
+    const before = new Set(pathProblems(previous).map((p) => `${p.kind}:${p.pathId}`));
+    const fresh = pathProblems(result).filter(
+      (p) => (p.kind === "otherwise_empty" || p.kind === "path_empty") && !before.has(`${p.kind}:${p.pathId}`),
+    );
+    const emptied = fresh.find((p) => p.kind === "otherwise_empty");
     if (emptied?.pathId) setPathChoice({ sourceId: emptied.questionId, pathId: emptied.pathId, reason: "otherwise" });
     // Questions the change moves on purpose, and an emptied Otherwise's (the dialog asks about them), aren't
     // reported as losing their branch.
     const quiet = new Set([...moved, ...(emptied?.pathId ? blockQuestionIds(result, emptied.questionId, emptied.pathId) : [])]);
     const lost = lostBranches(previous, result).filter((q) => !quiet.has(q.id));
     const narrowed = narrowedBranches(previous, result);
+    const hadPaths = new Set(previous.filter((q) => q.paths?.length).map((q) => q.id));
+    const unsplit = message ? [] : result.filter((q) => hadPaths.has(q.id) && !q.paths?.length);
     const text = [
       message,
+      ...unsplit.map((q) => `“${q.label.trim() || "The question"}” no longer splits into paths.`),
+      ...fresh.map((p) => {
+        const source = result.find((q) => q.id === p.questionId);
+        const path = source?.paths?.find((x) => x.id === p.pathId);
+        return source && path ? `The path “${pathLabel(source, path)}” has no answers left.` : null;
+      }),
       lost.length ? lostBranchesMessage(lost) : null,
       narrowedBranchesMessage({
         narrowed: narrowed.narrowed.filter((q) => !quiet.has(q.id)),
@@ -373,6 +387,7 @@ export function FormEditor({
         if (questionsRef.current !== result) return;
         questionsRef.current = previous;
         setQuestions(previous);
+        setPathChoice(null);
         setDirty(true);
       },
     });
@@ -380,15 +395,14 @@ export function FormEditor({
 
   function updateQuestion(id: string, next: FormQuestion) {
     const before = questions.find((q) => q.id === id);
-    const list = questions.map((q) => (q.id === id ? next : q));
-    // A type change, or answers that change what a branch or path shows, says so with Undo.
+    // A type change, or answers that change what a branch or path shows, says so with Undo (commit only
+    // speaks when something did change).
     if (before && (before.type !== next.type || before.options !== next.options)) {
-      const result = normalizeQuestions(list, fields);
-      const narrowed = narrowedBranches(questions, result);
-      if (before.type !== next.type || lostBranches(questions, result).length || narrowed.narrowed.length || narrowed.emptied.length) {
-        commit(list, null);
-        return;
-      }
+      commit(
+        questions.map((q) => (q.id === id ? next : q)),
+        null,
+      );
+      return;
     }
     changeQuestions((current) => current.map((q) => (q.id === id ? next : q)));
   }
@@ -500,10 +514,14 @@ export function FormEditor({
       return;
     }
     const label = labelOf(questions, id);
-    if (!target.container) {
+    if (from && !target.container) {
+      // Out of a path onto the main flow: one level out keeps the split question's own rule (like Move out
+      // of the path); onto the main flow from deeper, it shows to everyone.
+      const stepOut = ruleWhenPlaced(questions, id, null);
+      const words = stepOut ? moveOutWords(questions, id) : null;
       const ok = await confirm({
-        title: `Move “${label}” to the main flow?`,
-        message: "It leaves its path and shows to everyone, whatever the answer.",
+        title: words?.title ?? `Move “${label}” to the main flow?`,
+        message: words?.message ?? "It leaves its path and shows to everyone, whatever the answer.",
         confirmLabel: "Move it",
       });
       if (!ok) return;
@@ -632,6 +650,7 @@ export function FormEditor({
       if (result.updatedAt) versionRef.current = result.updatedAt;
       if (!result.error) {
         setDirty(false);
+        setDrifted([]);
         notify("Form saved");
         after?.();
       }
@@ -764,7 +783,8 @@ export function FormEditor({
               ? (after) =>
                   dragOver({
                     container: place.container,
-                    // Over a split question (or its upper half): before it. Its lower half: after its paths.
+                    // A card's lower half: after it. A split question's whole card means "before it": its
+                    // paths follow it, so "after" is the "+ Add question" row or the card after "Paths meet here".
                     beforeId: after && !question.paths?.length ? place.nextSiblingId : question.id,
                   })
               : undefined
@@ -907,7 +927,7 @@ export function FormEditor({
             <Link2 className="size-4" />
           </button>
           {canEdit ? (
-            <button type="button" onClick={() => save()} disabled={pending || !dirty || !title.trim()} className="btn-primary h-8 px-3">
+            <button type="button" onClick={() => save()} disabled={pending || livePending || !dirty || !title.trim()} className="btn-primary h-8 px-3">
               {pending ? "Saving…" : dirty ? "Save" : "Saved"}
             </button>
           ) : null}
@@ -1771,7 +1791,7 @@ function QuestionCard({
             <BranchEditor question={question} questions={questions} onCommit={onCommit} onCreateBranch={onCreateBranch} />
           ) : null}
 
-          {question.show_if ? <ShownIf question={question} questions={questions} tag={tag} onChange={onChange} onCommit={onCommit} /> : null}
+          {question.show_if ? <ShownIf question={question} questions={questions} tag={tag} onCommit={onCommit} /> : null}
 
           <div className="flex items-center gap-1 border-t border-zinc-100 pt-2">
             <button
@@ -1906,6 +1926,10 @@ function BranchEditor({
 }) {
   const index = questions.findIndex((q) => q.id === question.id);
   const later = questions.slice(index + 1);
+  // Only questions in the same flow (the main flow, or the same path): a question from another path would
+  // end up shown only through this one's path, out of place.
+  const owners = questionOwners(questions);
+  const sameFlow = (q: FormQuestion) => owners.get(q.id) === owners.get(question.id);
   const options = branchOptions(question);
 
   function show(childId: string, optionId: string, on: boolean) {
@@ -1931,7 +1955,7 @@ function BranchEditor({
             onClick={() =>
               onCommit(
                 checkboxToYesNo(questions, question.id),
-                `“${question.label.trim() || "The question"}” is now a Yes / No choice; what it showed shows for Yes.${question.maps_to ? " It no longer fills in its checkbox field." : ""}`,
+                `“${question.label.trim() || "The question"}” is now a Yes / No choice; what it showed shows for Yes.${question.maps_to?.target === "field" ? " It no longer fills in its checkbox field." : ""}`,
               )
             }
             className="font-medium text-accent-700 hover:underline"
@@ -1943,7 +1967,7 @@ function BranchEditor({
       <ul className="mt-1.5 flex flex-col gap-1.5">
         {options.map((option) => {
           const children = later.filter((q) => q.show_if?.question_id === question.id && q.show_if.option_ids.includes(option.id));
-          const addable = later.filter((q) => !children.includes(q) && !isNameQuestion(q));
+          const addable = later.filter((q) => !children.includes(q) && !isNameQuestion(q) && sameFlow(q));
           return (
             <li key={option.id} className="flex flex-wrap items-center gap-1 text-xs text-zinc-600">
               <span>
@@ -2150,6 +2174,8 @@ function BranchButton({
   }
   const options = branchOptions(question);
   const chosen = options.find((o) => o.id === optionId) ?? (options.length === 1 ? options[0] : null);
+  const owners = questionOwners(questions);
+  const sameFlow = (q: FormQuestion) => owners.get(q.id) === owners.get(question.id);
   return (
     <Popover
       label={`Branch from ${label}`}
@@ -2197,7 +2223,7 @@ function BranchButton({
             </p>
             <BranchTargetList
               source={question}
-              addable={later.filter((q) => !(q.show_if?.question_id === question.id && q.show_if.option_ids.includes(chosen.id)))}
+              addable={later.filter((q) => sameFlow(q) && !(q.show_if?.question_id === question.id && q.show_if.option_ids.includes(chosen.id)))}
               onPick={(childId) => {
                 close();
                 setOptionId(null);
@@ -2222,13 +2248,11 @@ function ShownIf({
   question,
   questions,
   tag,
-  onChange,
   onCommit,
 }: {
   question: FormQuestion;
   questions: FormQuestion[];
   tag: PathTag | null;
-  onChange: (next: FormQuestion) => void;
   onCommit: (next: FormQuestion[], message: string | null, moved?: string[]) => void;
 }) {
   const confirm = useConfirm();
@@ -2262,14 +2286,10 @@ function ShownIf({
       Shown only if “{parent.label || "an earlier question"}” is {labels.length ? labels.join(" or ") : "(pick an answer there)"}.
       <button
         type="button"
-        onClick={() => {
-          const next = { ...question };
-          delete next.show_if;
-          onChange(next);
-        }}
+        onClick={() => onCommit(clearBranch(questions, question.id), null, [question.id])}
         className="ml-auto rounded px-1.5 py-0.5 font-medium text-accent-700 hover:bg-accent-100"
       >
-        Always show
+        {tag ? "Show on the whole path" : "Always show"}
       </button>
     </p>
   );
@@ -2322,7 +2342,7 @@ function SettingsTab({
   embedSnippet: string;
   dirty: boolean;
   onCopy: (text: string, what: string) => void;
-  // Duplicate and Delete leave this form: nothing should ask about unsaved changes on the way out.
+  // Delete leaves this form: nothing should ask about unsaved changes on the way out.
   onLeave: () => void;
 }) {
   const [pending, run] = useServerAction();
@@ -2339,7 +2359,7 @@ function SettingsTab({
     ) {
       return;
     }
-    onLeave();
+    // Unsaved edits stay marked unsaved: if the copy fails, nothing is lost (on success the copy opens).
     run(() => duplicateForm(formId, projectId));
   }
   return (

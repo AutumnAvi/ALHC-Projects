@@ -3,6 +3,9 @@ import type { Json } from "./supabase/database.types";
 import {
   applyPaths,
   branchRule,
+  buildFlow,
+  canonicalOrder,
+  clearBranch,
   findPath,
   insertIntoContainer,
   isSplit,
@@ -10,6 +13,7 @@ import {
   parsePaths,
   pathForAnswer,
   placeQuestion,
+  questionUnitEnd,
 } from "./form-paths";
 
 // Mirrors the forms.questions shape validated by the `validate_form` trigger and enforced again by
@@ -634,16 +638,16 @@ export function showInBranch(
     if (!child || child.show_if?.question_id !== sourceId || !findPath(source, child.show_if.path_id)) return questions;
     return moveOutOfPath(questions, childId, "end");
   }
-  return questions.map((q) => {
-    if (q.id !== childId) return q;
-    const sameParent = q.show_if?.question_id === sourceId;
-    const ids = sameParent ? (q.show_if?.option_ids ?? []) : [];
-    const next = on ? [...new Set([...ids, optionId])] : ids.filter((id) => id !== optionId);
-    const copy = { ...q };
-    if (next.length) copy.show_if = branchRule(sourceId, next);
-    else if (sameParent) delete copy.show_if;
-    return copy;
-  });
+  const child = questions.find((q) => q.id === childId);
+  if (!child) return questions;
+  const sameParent = child.show_if?.question_id === sourceId;
+  const ids = sameParent ? child.show_if!.option_ids : [];
+  const kept = on ? [...new Set([...ids, optionId])] : ids.filter((id) => id !== optionId);
+  // The last answer off: it stops depending on the question but stays in its path, if it's in one.
+  if (!kept.length) return sameParent ? clearBranch(questions, childId) : questions;
+  const next = questions.map((q) => (q.id === childId ? { ...q, show_if: branchRule(sourceId, kept) } : q));
+  // A question that joins a branch from another path moves next to its new branch question.
+  return buildFlow(questions).inOrder && !buildFlow(next).inOrder ? canonicalOrder(next) : next;
 }
 
 export function insertBranchQuestion(
@@ -659,9 +663,10 @@ export function insertBranchQuestion(
     const path = pathForAnswer(source, optionId);
     if (path) return insertIntoContainer(questions, { sourceId, pathId: path.id }, question);
   }
-  let end = at;
+  let end = questionUnitEnd(questions, at);
   for (let i = at + 1; i < questions.length; i++) {
-    if (questions[i].show_if?.question_id === sourceId) end = i;
+    // After the last question it shows, and that question's own paths.
+    if (questions[i].show_if?.question_id === sourceId) end = Math.max(end, questionUnitEnd(questions, i));
   }
   const added: FormQuestion = { ...question, show_if: branchRule(sourceId, [optionId]) };
   return [...questions.slice(0, end + 1), added, ...questions.slice(end + 1)];

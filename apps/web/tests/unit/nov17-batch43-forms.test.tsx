@@ -103,9 +103,10 @@ test("the read-only editor draws the paths in the preview but no editing side", 
 
 test("the embed snippet sizes its own frame: this app's origin, its own frame, a clamped height", () => {
   const snippet = formEmbedSnippet("https://app.example", "f1", 'Design <requests> & "more"');
-  assert.match(snippet, /^<iframe id="alhc-form-f1" src="https:\/\/app\.example\/forms\/f1\/embed" title="Design &lt;requests&gt; &amp; &quot;more&quot;" width="100%" height="900"/);
+  assert.match(snippet, /^<iframe data-alhc-form="f1" src="https:\/\/app\.example\/forms\/f1\/embed" title="Design &lt;requests&gt; &amp; &quot;more&quot;" width="100%" height="900"/);
   assert.match(snippet, /e\.origin!=="https:\/\/app\.example"/);
-  assert.match(snippet, /e\.source!==f\.contentWindow/);
+  assert.match(snippet, /fs\[i\]\.contentWindow===e\.source/, "only the frame that sent it");
+  assert.match(snippet, /querySelectorAll\("iframe\[data-alhc-form=\\"f1\\"\]"\)/, "every frame of this form (it can be embedded twice)");
   assert.match(snippet, new RegExp(`d\\.type!=="${EMBED_HEIGHT_MESSAGE}"`));
   assert.match(snippet, /d\.formId!=="f1"/);
   assert.match(snippet, new RegExp(`Math\\.min\\(Math\\.max\\(h,${EMBED_MIN_HEIGHT}\\),${EMBED_MAX_HEIGHT}\\)`));

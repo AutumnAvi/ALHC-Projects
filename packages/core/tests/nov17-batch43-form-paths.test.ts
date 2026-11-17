@@ -10,6 +10,7 @@ import {
   canPlaceIn,
   canShowTogether,
   checkboxToYesNo,
+  clearBranch,
   deletePath,
   driftedPathQuestions,
   fieldAskInContainer,
@@ -439,6 +440,81 @@ describe("mapping guards", () => {
   });
 });
 
+describe("round 1 review fixes", () => {
+  const ab: FormQuestion = {
+    id: "s",
+    type: "single_select",
+    label: "Kind",
+    options: [
+      { id: "a", label: "A" },
+      { id: "b", label: "B" },
+    ],
+    paths: [
+      { id: "pa", option_ids: ["a"] },
+      { id: "po", otherwise: true },
+    ],
+  };
+  const inA: FormQuestion = { id: "qa", type: "short_text", label: "For A", show_if: { question_id: "s", option_ids: ["a"], path_id: "pa" } };
+  const inO: FormQuestion = { id: "qo", type: "short_text", label: "For B", show_if: { question_id: "s", option_ids: ["b"], path_id: "po" } };
+
+  it("deleting a path down to one keeps the last path's questions on exactly the answers they had", () => {
+    const out = normalizeQuestions(deletePath(applyPaths([ab, inA, inO]), "s", "pa", "delete"), []);
+    assert.equal(byId(out, "s").paths, undefined);
+    assert.deepEqual(byId(out, "qo").show_if, { question_id: "s", option_ids: ["b"] }, "not A too");
+  });
+
+  it("a branch shown for every answer isn't adopted as a path, so splitting still makes two", () => {
+    const plain: FormQuestion = { ...ab, paths: undefined };
+    const every: FormQuestion = { id: "e", type: "short_text", label: "Any answer", show_if: { question_id: "s", option_ids: ["a", "b"] } };
+    const { questions, paths, adopted } = splitIntoPaths([plain, every], "s", undefined, nextId);
+    assert.equal(paths, 2);
+    assert.equal(adopted, 0);
+    assert.equal(byId(questions, "s").paths?.length, 2);
+    assert.equal(byId(questions, "e").show_if?.path_id, undefined);
+  });
+
+  it("Branch → Create new question lands after a branched question's own paths", () => {
+    const rush: FormQuestion = { id: "r", type: "checkbox", label: "Rush" };
+    const size: FormQuestion = { ...ab, id: "s", show_if: { question_id: "r", option_ids: ["true"] }, paths: [{ id: "pa", option_ids: ["a"] }, { id: "pb", option_ids: ["b"] }] };
+    const ia: FormQuestion = { id: "ia", type: "short_text", label: "A note", show_if: { question_id: "s", option_ids: ["a"], path_id: "pa" } };
+    const next = insertBranchQuestion(applyPaths([rush, size, ia]), "r", "true", { id: "new", type: "short_text", label: "" });
+    assert.deepEqual(ids(next), ["r", "s", "ia", "new"]);
+    assert.equal(buildFlow(next).inOrder, true);
+  });
+
+  it("dragging a path question out to its split question's flow keeps the split question's own rule", () => {
+    const color: FormQuestion = { id: "c", type: "single_select", label: "Color", options: [{ id: "red", label: "Red" }, { id: "blue", label: "Blue" }] };
+    const size: FormQuestion = { ...ab, id: "s", show_if: { question_id: "c", option_ids: ["red"] }, paths: [{ id: "pa", option_ids: ["a"] }, { id: "pb", option_ids: ["b"] }] };
+    const note: FormQuestion = { id: "n", type: "short_text", label: "Note", show_if: { question_id: "s", option_ids: ["a"], path_id: "pa" } };
+    const q = applyPaths([color, size, note]);
+    assert.deepEqual(byId(placeQuestion(q, "n", null, null), "n").show_if, { question_id: "c", option_ids: ["red"] }, "like Move out of the path");
+    assert.deepEqual(byId(moveOutOfPath(q, "n", "end"), "n").show_if, { question_id: "c", option_ids: ["red"] });
+  });
+
+  it("joining a path counts the nesting of everything that moves with the question", () => {
+    // x (main) has a plain dependent y that splits; y's paths are level 1. Moving x into a level-2 path would
+    // put y's paths at level 3 (allowed); one level deeper would not.
+    const x: FormQuestion = { id: "x", type: "checkbox", label: "X" };
+    const y: FormQuestion = { ...ab, id: "y", show_if: { question_id: "x", option_ids: ["true"] }, paths: [{ id: "ya", option_ids: ["a"] }, { id: "yb", option_ids: ["b"] }] };
+    const q = normalizeQuestions(form(), []);
+    const withXY = applyPaths([...q, x, y]);
+    assert.equal(canPlaceIn(withXY, "x", { sourceId: "size", pathId: "p-a4" }), true);
+    const deeper: FormQuestion = { ...ab, id: "d", show_if: { question_id: "size", option_ids: ["a4"], path_id: "p-a4" }, paths: [{ id: "da", option_ids: ["a"] }, { id: "db", option_ids: ["b"] }] };
+    const withDeeper = putPathsTogether(applyPaths([...withXY, deeper]));
+    assert.equal(canPlaceIn(withDeeper, "x", { sourceId: "d", pathId: "da" }), false);
+  });
+
+  it("Always show inside a path keeps the question in its path", () => {
+    const rush: FormQuestion = { id: "r", type: "checkbox", label: "Rush", show_if: { question_id: "kind", option_ids: ["web"], path_id: "p-web" } };
+    const by: FormQuestion = { id: "by", type: "date", label: "Needed by", show_if: { question_id: "r", option_ids: ["true"] } };
+    const q = putPathsTogether(applyPaths([...normalizeQuestions(form(), []), rush, by]));
+    const cleared = clearBranch(q, "by");
+    assert.deepEqual(byId(cleared, "by").show_if, { question_id: "kind", option_ids: ["web"], path_id: "p-web" });
+    assert.equal(buildFlow(cleared).inOrder, true);
+    assert.deepEqual(byId(showInBranch(q, "r", "by", "true", false), "by").show_if?.path_id, "p-web");
+  });
+});
+
 describe("the public form", () => {
   it("gets the rules without path names", () => {
     const out = withoutPathMetadata(normalizeQuestions(form(), []));
@@ -470,16 +546,26 @@ describe("conflict-checked writes and Duplicate form", () => {
     await assert.rejects(() => updateForm(createApiContext(db), FORM, { title: "X", expectedUpdatedAt: "2026-11-17T10:00:00+00:00" }), { code: "forbidden" });
   });
 
-  it("duplicates a form: off, with (copy) after its name", async () => {
+  it("duplicates a form: off, with (copy) after its name, without mappings to removed fields", async () => {
+    const stored = [
+      { id: "a", type: "short_text", label: "Kept", maps_to: { target: "field", field_id: "f-live" } },
+      { id: "b", type: "short_text", label: "Gone", maps_to: { target: "field", field_id: "f-removed" } },
+      { id: "c", type: "short_text", label: "Title", maps_to: { target: "title" } },
+    ];
     const { db, calls } = fakeDb((call) => {
       if (step(call, "insert")) return { data: { id: "copy" }, error: null };
-      return { data: { id: FORM, project_id: "p", title: "Design requests", description: "d", questions: [], destination_section_id: null, accepting_responses: true, send_confirmation: true, confirmation_message: null, verified_domains_only: true }, error: null };
+      if (call.target === "table:custom_fields") return { data: [{ id: "f-live" }], error: null };
+      return { data: { id: FORM, project_id: "p", title: "Design requests", description: "d", questions: stored, destination_section_id: null, accepting_responses: true, send_confirmation: true, confirmation_message: null, verified_domains_only: true }, error: null };
     });
     assert.equal(await duplicateForm(createApiContext(db), FORM), "copy");
     const insert = step(calls.find((c) => step(c, "insert")), "insert")?.[0] as Record<string, unknown>;
     assert.equal(insert.title, "Design requests (copy)");
     assert.equal(insert.accepting_responses, false);
     assert.equal(insert.verified_domains_only, true);
+    assert.deepEqual(
+      (insert.questions as { id: string; maps_to?: unknown }[]).map((q) => [q.id, Boolean(q.maps_to)]),
+      [["a", true], ["b", false], ["c", true]],
+    );
   });
 });
 
