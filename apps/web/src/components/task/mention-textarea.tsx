@@ -321,11 +321,9 @@ export function MentionTextarea({
         }}
         onKeyDown={(e) => {
           const element = e.currentTarget;
-          // An IME is composing (Japanese, Chinese, …): its Enter confirms the text, nothing else.
-          if (isComposingKey(e)) {
-            props.onKeyDown?.(e);
-            return;
-          }
+          // An IME is composing (Japanese, Chinese, …): its Enter confirms the text, nothing else — not
+          // even the owner's own keys (the task name's Enter would save and close before the text lands).
+          if (isComposingKey(e)) return;
           if (
             (e.key === "Backspace" || e.key === "Delete") &&
             !e.metaKey &&

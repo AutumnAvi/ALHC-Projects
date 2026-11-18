@@ -281,6 +281,8 @@ test("item 5: typing never makes a chip (only picking does), so the caret and th
   // A task named "@Dana Lee" never takes Dana's chip (a link's chip name never starts with "@").
   const link = addChipLink(NO_CHIP_LINKS, "https://app.test/projects/11111111-1111-4111-8111-111111111111?task=22222222-2222-4222-8222-222222222222", "@Dana Lee");
   assert.equal(link.label, "Dana Lee");
+  assert.equal(addChipLink(NO_CHIP_LINKS, "https://app.test/x", "@ @Dana Lee").label, "Dana Lee", "every leading @ goes");
+  assert.equal(addChipLink(NO_CHIP_LINKS, "https://app.test/x", " @@ ").label, "Link");
   const both = `${chipText("@Dana Lee")} ${chipText(link.label)}`;
   assert.equal(displayToBody(both, link.links), "@Dana Lee https://app.test/projects/11111111-1111-4111-8111-111111111111?task=22222222-2222-4222-8222-222222222222");
   assert.equal(tidyDisplay(both, link.links, dana), both);
@@ -291,6 +293,9 @@ test("item 5: typing never makes a chip (only picking does), so the caret and th
   const pane = source("src/components/task/task-detail-panel.tsx");
   assert.match(pane, /onBlur=\{\(\) => save\(draft \?\? title\)\}/, "never the textarea's value (it has the chip marks)");
   assert.doesNotMatch(pane, /save\(e\.currentTarget\.value\)/);
+  // An IME's Enter confirms its text and nothing else: the name's own Enter (save and close) never sees it.
+  assert.match(box, /if \(isComposingKey\(e\)\) return;/);
+  assert.doesNotMatch(box, /isComposingKey\(e\)\) \{\s*props\.onKeyDown/);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -329,8 +334,9 @@ test("item 7: a file opens in the preview right here (never a new tab), and arro
   assert.equal(previewStep("ArrowLeft", 0, 2), 1, "wraps back");
   assert.equal(previewStep("ArrowRight", 0, 1), null, "one file: nothing to move to");
   assert.equal(previewStep("Enter", 0, 2), null);
-  // A click in a PDF hands the keys to the browser's viewer; they come back once the pointer leaves it.
+  // A PDF is drawn by the app's own renderer in this page (never a browser viewer in a frame, which would
+  // keep Esc and the arrows once clicked).
   const overlay = source("src/components/file-preview-overlay.tsx");
-  assert.match(overlay, /tabIndex=\{-1\}\s+onMouseLeave=\{\(e\) => onLeaveFrame\(e\.currentTarget\)\}/);
-  assert.match(overlay, /if \(document\.activeElement === frame\) closeRef\.current\?\.focus/);
+  assert.match(overlay, /<ReviewViewer\s+file=\{\{ id: file\.id, name: file\.fileName, contentType: file\.contentType, src: fileUrl\(file\.id, "media"\)/);
+  assert.doesNotMatch(overlay, /<iframe/);
 });

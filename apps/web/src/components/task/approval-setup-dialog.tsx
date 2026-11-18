@@ -42,8 +42,9 @@ import { PeopleList } from "./person-picker";
 // screen (the stays-open note when it's two-stage); leaving with no approver asks first.
 // Nov 18 notes (batch 44, item 3): `make` — the task becomes an approval only when this is done
 // (setUpApprovalTask: the type, the approvers, and what happens after, in one go). Leaving early writes
-// nothing: the task stays what it was (`undoKind`: a template's approval task, which was made as one, goes
-// back to that kind, so no approval is ever left without its approvers).
+// nothing: the task stays what it was (`undoKind`: only for a template's task that is still an approval —
+// its save as a plain task was refused — which goes back to that kind, so no approval is ever left without
+// its approvers).
 export function ApprovalSetupDialog({
   task,
   profiles,
@@ -139,7 +140,7 @@ export function ApprovalSetupDialog({
     if (problem) return;
     run(async () => {
       const result = await setUpApprovalTask(task.id, {
-        // A template's approval task (undoKind) is an approval already; anything else becomes one now.
+        // A template's task that is still an approval (undoKind) keeps its kind; anything else becomes one now.
         fromKind: make ? task.kind : "approval",
         approvers: { approverIds: draft.approverIds, mode: draft.mode, dueOn: draft.dueOn },
         followUp: { followUp: draft.followUp, sectionId: draft.sectionId, reminders: draft.reminders },

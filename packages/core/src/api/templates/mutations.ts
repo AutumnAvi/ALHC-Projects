@@ -194,15 +194,22 @@ export async function createTaskFromTemplate(
   check(created);
   const taskId = typeof created.data === "string" ? created.data : undefined;
   let kind: string | undefined;
-  // Nov 1 notes, batch 9a: an approval task from a template opens the guided approval setup.
-  if (taskId) kind = (await supabase.from("tasks").select("kind").eq("id", taskId).maybeSingle()).data?.kind ?? undefined;
   let approvalSetup: boolean | undefined;
-  if (taskId && kind === "approval" && options.approvalAfterSetup) {
-    approvalSetup = true;
-    // If this is refused the task stays an approval, and the setup's Cancel turns it back.
-    const plain = await supabase.from("tasks").update({ kind: "task" }).eq("id", taskId).select("id");
-    if (!plain.error && (plain.data?.length ?? 0) > 0) kind = "task";
+  if (taskId && options.approvalAfterSetup) {
+    // Only an approval is flipped, in one step (no read first that could fail and leave it one). It's a
+    // second statement after the insert, so the task's activity shows the type going to Task here and
+    // back to Approval when the setup is done, and "Task type changes" automations see both — what the
+    // copy function's own insert can't avoid without a database change.
+    const plain = await supabase.from("tasks").update({ kind: "task" }).eq("id", taskId).eq("kind", "approval").select("id");
+    if (!plain.error && (plain.data?.length ?? 0) > 0) {
+      kind = "task";
+      approvalSetup = true;
+    }
   }
+  // Nov 1 notes, batch 9a: an approval task from a template opens the guided approval setup (if the flip
+  // above was refused, the task is still an approval and the setup's Cancel turns it back).
+  if (taskId && kind === undefined) kind = (await supabase.from("tasks").select("kind").eq("id", taskId).maybeSingle()).data?.kind ?? undefined;
+  if (kind === "approval" && options.approvalAfterSetup) approvalSetup = true;
   const lockedLeftOut = await lockedTemplateValues(ctx, templateKey);
   return { lockedLeftOut, taskId, kind, ...(approvalSetup ? { approvalSetup } : {}) };
 }
