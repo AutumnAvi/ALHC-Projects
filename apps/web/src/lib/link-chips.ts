@@ -19,8 +19,10 @@ export type ChipLinks = { byUrl: ReadonlyMap<string, string>; byLabel: ReadonlyM
 
 export const NO_CHIP_LINKS: ChipLinks = { byUrl: new Map(), byLabel: new Map() };
 
+// A link's chip name never starts with "@": names starting with "@" are people's mention chips (batch 44),
+// so a task named "@Dana Lee" can't be mistaken for Dana, or Dana for it.
 function cleanName(name: string): string {
-  const text = name.replace(MARKS, "").replace(/\s+/g, " ").trim();
+  const text = name.replace(MARKS, "").replace(/\s+/g, " ").trim().replace(/^@+\s*/, "");
   return text || "Link";
 }
 
@@ -140,9 +142,11 @@ export function displayPieces(display: string): DisplayPiece[] {
 
 // Nov 18 notes (batch 44, item 5): a person picked with "@" shows as a blue chip in the box right away,
 // like the mention pill the posted comment gets. The body keeps the plain token (`@Dana Lee`, what the
-// database parses), so nothing about what's saved changes; the box wraps each token of the people picked
-// here (or already mentioned in the text it opened with) in the chip marks. Only text outside other chips
-// is looked at, and only whole tokens (`@Dana Leex` isn't Dana, for the database either).
+// database parses), so nothing about what's saved changes. A picked mention and one typed by hand read the
+// same in the body, so the box keeps its own text (with the marks) while you type and only builds it from
+// the body when the body changes from outside: opening a comment that mentions people, or text put back
+// after a failed send. That's this: each whole token of the people given, outside other chips, wrapped in
+// the chip marks (`@Dana Leex` isn't Dana, for the database either).
 export function wrapMentions(display: string, people: readonly MentionPerson[]): string {
   if (people.length === 0 || !display.includes("@")) return display;
   const out: string[] = [];
@@ -165,7 +169,28 @@ export function seedMentionPeople<P extends MentionPerson>(body: string, candida
   return candidates.filter((p) => ids.has(p.id));
 }
 
-// Whether a chip is a person's mention (its label is "@…" and no picked link has that name).
-export function isMentionChip(label: string, links: ChipLinks): boolean {
-  return label.startsWith("@") && !links.byLabel.has(label);
+// Whether a chip is a person's mention: its label is "@…" (a link's never is: cleanName).
+export function isMentionChip(label: string): boolean {
+  return label.startsWith("@");
+}
+
+// Whether a mention chip's label is still exactly one of these people's tokens (a selection typed over
+// part of "@Dana Lee" leaves "@Dana X", which is no longer anyone's chip).
+function wholeMention(label: string, people: readonly MentionPerson[]): boolean {
+  const segments = mentionSegments(label, [...people]);
+  return segments.length === 1 && segments[0].type === "mention";
+}
+
+// What the box shows after a change typed into it: whole link chips stay chips, a whole mention chip of a
+// picked person stays a chip, and every other mark goes (a chip cut in two is text from then on). It never
+// adds a mention chip — a token typed by hand stays text, so the caret never jumps over new marks — and
+// it reads back as the same body (displayToBody of either is equal).
+export function tidyDisplay(raw: string, links: ChipLinks, people: readonly MentionPerson[]): string {
+  return displayPieces(raw)
+    .map((piece) =>
+      piece.type === "chip" && isMentionChip(piece.label) && wholeMention(piece.label, people)
+        ? piece.text
+        : bodyToDisplay(displayToBody(piece.text, links), links),
+    )
+    .join("");
 }

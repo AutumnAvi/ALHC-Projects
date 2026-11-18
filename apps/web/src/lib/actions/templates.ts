@@ -67,13 +67,14 @@ export async function saveTaskAsTemplate(
 }
 
 // From quick-add: a normal task creation. `lockedLeftOut`: the template's values of locked fields the
-// viewer may not set (the database leaves them out; the caller says so).
+// viewer may not set (the database leaves them out; the caller says so). An approval template's task is a
+// plain task until the approval setup it opens is done (`approvalSetup`; batch 44).
 export async function createTaskFromTemplate(
   templateId: string,
   sectionId: string | null,
   title: string | null,
-): Promise<ActionResult & { lockedLeftOut?: number; taskId?: string; kind?: string }> {
-  return runWith((ctx) => templatesApi.createTaskFromTemplate(ctx, templateId, sectionId, title));
+): Promise<ActionResult & { lockedLeftOut?: number; taskId?: string; kind?: string; approvalSetup?: boolean }> {
+  return runWith((ctx) => templatesApi.createTaskFromTemplate(ctx, templateId, sectionId, title, { approvalAfterSetup: true }));
 }
 
 export async function createTaskTemplate(projectId: string, input: { name: string; title: string }): Promise<ActionResult> {

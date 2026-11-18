@@ -581,7 +581,9 @@ function PaneTitle({ task, canEdit, completed, profiles }: { task: TaskDetail; c
         listBelow
         rows={1}
         autoFocus={draft !== null}
-        onBlur={(e) => save(e.currentTarget.value)}
+        // The box's own text carries the chip marks of picked @people (batch 44); the name saved is the
+        // plain text it reported (onValueChange), never the textarea's DOM value.
+        onBlur={() => save(draft ?? title)}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
