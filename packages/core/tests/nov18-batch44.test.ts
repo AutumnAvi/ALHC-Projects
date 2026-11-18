@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createApiContext, type Db } from "@alhc/core/api/core/context";
 import { setUpApprovalTask } from "@alhc/core/api/approvals/mutations";
+import { createTaskFromTemplate } from "@alhc/core/api/templates/mutations";
 import { isApiError } from "@alhc/core/api/core/errors";
 import { pruneTabOverrides, tabOverrideKey, withTabOverrides } from "@alhc/core/views";
 
@@ -118,6 +119,34 @@ test("item 3: an approval task already (Finish setup, a template's approval) kee
     setUpApprovalTask(createApiContext(ok.db), TASK, setup({ fromKind: "epic" as never })),
     (e) => isApiError(e) && e.code === "invalid",
   );
+});
+
+test("item 3: a template's approval task is saved as a plain task until its setup is done", async () => {
+  const TEMPLATE = "44444444-4444-4444-8444-444444444444";
+  const make = (refuse = false) =>
+    fakeDb((call) => {
+      if (call.target === "rpc:create_task_from_template") return { data: TASK, error: null };
+      if (call.target === "table:tasks") {
+        const update = call.steps.find(([name]) => name === "update");
+        if (update) return refuse ? { data: [], error: null } : { data: [{ id: TASK }], error: null };
+        return { data: { kind: "approval" }, error: null };
+      }
+      if (call.target === "table:task_templates") return { data: { project_id: SECTION, field_values: [] }, error: null };
+      return { data: null, error: null };
+    });
+  const ui = make();
+  const made = await createTaskFromTemplate(createApiContext(ui.db), TEMPLATE, null, "Sign-off", { approvalAfterSetup: true });
+  assert.deepEqual([made.kind, made.approvalSetup], ["task", true]);
+  assert.deepEqual(kinds(ui.calls.filter((c) => c.steps.some(([name]) => name === "update"))), ["task"]);
+  // Refused: it stays an approval (the setup's Cancel turns it back), and the setup still opens.
+  const refused = make(true);
+  const kept = await createTaskFromTemplate(createApiContext(refused.db), TEMPLATE, null, null, { approvalAfterSetup: true });
+  assert.deepEqual([kept.kind, kept.approvalSetup], ["approval", true]);
+  // Anyone else asking (not the person's own add row) gets the template's kind, as before.
+  const other = make();
+  const plain = await createTaskFromTemplate(createApiContext(other.db), TEMPLATE, null, null);
+  assert.deepEqual([plain.kind, plain.approvalSetup], ["approval", undefined]);
+  assert.equal(other.calls.filter((c) => c.steps.some(([name]) => name === "update")).length, 0);
 });
 
 test("item 6: overrides apply on top of the page's hidden lists, and go once the page agrees", () => {

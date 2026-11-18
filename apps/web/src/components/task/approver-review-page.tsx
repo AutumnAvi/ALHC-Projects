@@ -62,18 +62,28 @@ export function ApproverReviewPage(props: {
       <div className="mx-auto max-w-3xl space-y-4" data-approve-text-only="">
         <ReviewTaskDetailsPanel details={details} />
         {finalText}
-        <ApprovalDecisionForm idPrefix={`approve-${rest.taskId}`} pending={pending} recipientName={recipientName} onDecide={decide} />
+        {/* Batch 44 (item 1): the decisions stay at the bottom of the screen however long the text is. */}
+        <div
+          className="sticky bottom-0 z-10 -mx-1 rounded-t-lg bg-white px-1 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-10px_20px_-14px_rgba(24,24,27,0.35)]"
+          data-approve-decide=""
+        >
+          <ApprovalDecisionForm idPrefix={`approve-${rest.taskId}`} pending={pending} recipientName={recipientName} onDecide={decide} />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <ReviewTaskDetailsPanel details={details} />
-      {finalText}
       <ApproverReview
         {...rest}
         variant="full"
+        intro={
+          <>
+            <ReviewTaskDetailsPanel details={details} />
+            {finalText}
+          </>
+        }
         onDone={() => (stayAfterApproval ? router.refresh() : router.push(backHref))}
         extraAction={
           rejecting ? null : (

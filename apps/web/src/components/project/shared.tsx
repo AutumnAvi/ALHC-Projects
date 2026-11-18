@@ -485,7 +485,8 @@ export function AddTaskInput({
   const templates = useTaskTemplates();
   const approvalAction = useApprovalAction();
   // Nov 18 notes (batch 44, item 4): leaving the row — Escape, a click outside, or another add row
-  // opening — closes it and puts it back to Task, whichever kind was picked.
+  // opening — closes it and puts it back to Task, whichever kind was picked. Opening another add row is
+  // a choice to add there, so it closes this one even with a name typed (one add row at a time).
   const close = () => {
     setOpen(false);
     setKind("task");
@@ -500,7 +501,7 @@ export function AddTaskInput({
     if (!open) return;
     const release = claimAddRow(rowId, () => closeRef.current());
     // A press outside the row (and outside any menu it opened) closes it while the name is empty; a typed
-    // name stays until Escape or Enter, so a stray click never loses it.
+    // name stays (until Escape, Enter, or another add row opening), so a stray click never loses it.
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       const form = formRef.current;
@@ -633,9 +634,9 @@ export function AddTaskInput({
                     if (input) input.value = "";
                     run(async () => {
                       const result = await createTaskFromTemplate(template.id, sectionId, title);
-                      // Batch 44 (item 3): a template's approval task is set up before it counts (leaving the
-                      // setup early makes it a normal task).
-                      if (!result.error && result.kind === "approval" && result.taskId) approvalAction(result.taskId, "convert");
+                      // Batch 44 (item 3): a template's approval task is saved as a plain task and becomes an
+                      // approval only when the setup it opens is done.
+                      if (!result.error && result.approvalSetup && result.taskId) approvalAction(result.taskId, "convert");
                       // Locked fields (Oct 29 notes, batch 7): only the project's Owners and Admins set them.
                       if (!result.error && result.lockedLeftOut) {
                         notify(

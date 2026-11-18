@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Download, Files, Paperclip } from "lucide-react";
-import { FilePreviewOverlay, attachmentFileUrl, type FileUrl } from "@/components/file-preview-overlay";
+import { FilePreviewOverlay } from "@/components/file-preview-overlay";
 import { FileTypeIcon } from "@/components/task/file-type-icon";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
@@ -27,17 +27,17 @@ export function ProjectFiles({
   projectId,
   files,
   uploaderNames,
-  fileUrl = attachmentFileUrl,
 }: {
   projectId: string;
   files: ProjectFile[];
   uploaderNames: Record<string, string>;
-  fileUrl?: FileUrl;
 }) {
   const [filter, setFilter] = useState<FilterValue>("all");
-  const [previewing, setPreviewing] = useState<number | null>(null);
+  // The file being previewed, by id (the list can change under the overlay; it follows the file).
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const kindOf = (f: ProjectFile) => previewKind(f.fileName, f.contentType) ?? "other";
   const shown = filter === "all" ? files : files.filter((f) => kindOf(f) === filter);
+  const previewing = previewId === null ? -1 : shown.findIndex((f) => f.id === previewId);
   const taskHref = (f: ProjectFile) => `/projects/${projectId}/list?task=${f.taskId}`;
 
   return (
@@ -54,7 +54,7 @@ export function ProjectFiles({
               aria-pressed={filter === f.value}
               onClick={() => {
                 setFilter(f.value);
-                setPreviewing(null);
+                setPreviewId(null);
               }}
               className="rounded px-2 py-0.5 text-xs text-zinc-600 aria-pressed:bg-white aria-pressed:font-medium aria-pressed:text-zinc-900 aria-pressed:shadow-xs"
             >
@@ -100,7 +100,7 @@ export function ProjectFiles({
             </tr>
           </thead>
           <tbody>
-            {shown.map((file, index) => {
+            {shown.map((file) => {
               return (
                 <tr
                   key={file.id}
@@ -109,13 +109,13 @@ export function ProjectFiles({
                   // A click anywhere on the row (but its links) previews the file in place.
                   onClick={(e) => {
                     if ((e.target as HTMLElement).closest("a, button")) return;
-                    setPreviewing(index);
+                    setPreviewId(file.id);
                   }}
                 >
                   <th scope="row" className="py-2 pr-3 text-left font-normal">
                     <button
                       type="button"
-                      onClick={() => setPreviewing(index)}
+                      onClick={() => setPreviewId(file.id)}
                       aria-label={`Preview ${file.fileName}`}
                       className="-mx-1 flex w-full min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left hover:text-accent-700 focus-visible:outline-2 focus-visible:outline-accent-500"
                       data-file-open=""
@@ -142,7 +142,7 @@ export function ProjectFiles({
                   </td>
                   <td className="whitespace-nowrap py-2 text-right">
                     <a
-                      href={fileUrl(file.id, "download")}
+                      href={`/attachments/${file.id}?download`}
                       aria-label={`Download ${file.fileName}`}
                       data-tooltip="Download"
                       className="btn-icon"
@@ -156,7 +156,7 @@ export function ProjectFiles({
           </tbody>
         </table>
       )}
-      {previewing !== null && shown[previewing] ? (
+      {previewing >= 0 ? (
         <FilePreviewOverlay
           files={shown.map((f) => ({
             id: f.id,
@@ -166,9 +166,8 @@ export function ProjectFiles({
             context: { label: f.taskTitle, href: taskHref(f) },
           }))}
           index={previewing}
-          onIndex={setPreviewing}
-          onClose={() => setPreviewing(null)}
-          fileUrl={fileUrl}
+          onIndex={(index) => setPreviewId(shown[index]?.id ?? null)}
+          onClose={() => setPreviewId(null)}
         />
       ) : null}
     </div>

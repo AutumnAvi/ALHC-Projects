@@ -24,10 +24,8 @@ export type PreviewFile = {
   context?: { label: string; href: string } | null;
 };
 
-export type FileUrl = (id: string, mode: "preview" | "media" | "download") => string;
-
 // The app's own route for every file (RLS-checked, short-lived signed links).
-export const attachmentFileUrl: FileUrl = (id, mode) =>
+const fileUrl = (id: string, mode: "preview" | "media" | "download") =>
   mode === "download" ? `/attachments/${id}?download` : mode === "media" ? `/attachments/${id}?media=1` : `/attachments/${id}?preview=1`;
 
 const BUTTON =
@@ -46,13 +44,11 @@ export function FilePreviewOverlay({
   index,
   onIndex,
   onClose,
-  fileUrl = attachmentFileUrl,
 }: {
   files: PreviewFile[];
   index: number;
   onIndex: (index: number) => void;
   onClose: () => void;
-  fileUrl?: FileUrl;
 }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -174,7 +170,16 @@ export function FilePreviewOverlay({
             }}
             data-file-preview-kind={kind ?? "other"}
           >
-            <PreviewBody key={file.id} file={file} kind={kind} fileUrl={fileUrl} />
+            <PreviewBody
+              key={file.id}
+              file={file}
+              kind={kind}
+              // A click in a PDF gives the browser's viewer (another document) the keys, so Esc and the arrows
+              // wouldn't reach the overlay; once the pointer leaves the PDF they come back here.
+              onLeaveFrame={(frame) => {
+                if (document.activeElement === frame) closeRef.current?.focus({ preventScroll: true });
+              }}
+            />
           </div>
           {several ? (
             <button type="button" onClick={() => onIndex((index + 1) % files.length)} aria-label="Next file" data-tooltip="Next (→)" className={BUTTON}>
@@ -188,7 +193,15 @@ export function FilePreviewOverlay({
   );
 }
 
-function PreviewBody({ file, kind, fileUrl }: { file: PreviewFile; kind: ReturnType<typeof reviewMediaKind>; fileUrl: FileUrl }) {
+function PreviewBody({
+  file,
+  kind,
+  onLeaveFrame,
+}: {
+  file: PreviewFile;
+  kind: ReturnType<typeof reviewMediaKind>;
+  onLeaveFrame: (frame: HTMLIFrameElement) => void;
+}) {
   const [broken, setBroken] = useState(false);
   if (kind === "image" && !broken) {
     return (
@@ -202,7 +215,16 @@ function PreviewBody({ file, kind, fileUrl }: { file: PreviewFile; kind: ReturnT
     );
   }
   if (kind === "pdf") {
-    return <iframe title={file.fileName} src={fileUrl(file.id, "preview")} className="h-full w-full max-w-5xl rounded bg-white" />;
+    return (
+      <iframe
+        title={file.fileName}
+        src={fileUrl(file.id, "preview")}
+        // Out of the Tab order (Tab stays on the overlay's controls); a click still scrolls and zooms it.
+        tabIndex={-1}
+        onMouseLeave={(e) => onLeaveFrame(e.currentTarget)}
+        className="h-full w-full max-w-5xl rounded bg-white"
+      />
+    );
   }
   if (kind === "video" && !broken) {
     return (

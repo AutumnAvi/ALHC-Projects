@@ -901,7 +901,7 @@ function AddFromTemplate({
               run(async () => {
                 const result = await createTaskFromTemplate(template.id, topSectionId, null);
                 // Batch 44 (item 3): set up before it counts as an approval.
-                if (!result.error && result.kind === "approval" && result.taskId) approvalAction(result.taskId, "convert");
+                if (!result.error && result.approvalSetup && result.taskId) approvalAction(result.taskId, "convert");
                 // Locked fields (Oct 29 notes, batch 7): only the project's Owners and Admins set them.
                 if (!result.error && result.lockedLeftOut) {
                   notify(

@@ -17,7 +17,18 @@ import { ApprovalSetupDialog } from "@/components/task/approval-setup-dialog";
 import { ApprovalStatusHeading, ApprovalTaskBanner, approvalHeadingText, approvalSectionId } from "@/components/task/task-approval-banner";
 import { MentionTextarea } from "@/components/task/mention-textarea";
 import { claimAddRow, openAddRowIds } from "@/lib/add-row";
-import { bodyToDisplay, chipText, displayToBody, isMentionChip, NO_CHIP_LINKS, removeChipAt, seedMentionPeople, wrapMentions } from "@/lib/link-chips";
+import {
+  addChipLink,
+  bodyToDisplay,
+  chipText,
+  displayToBody,
+  isMentionChip,
+  NO_CHIP_LINKS,
+  removeChipAt,
+  seedMentionPeople,
+  tidyDisplay,
+  wrapMentions,
+} from "@/lib/link-chips";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { ProjectFile } from "@alhc/core/api/projects/model";
 import type { ApprovalRound, TaskApprovalInfo, TaskDetail } from "@alhc/core/api/task-pane/model";
@@ -187,6 +198,14 @@ test("item 3: making a task an approval opens the setup in make mode, and Cancel
   const rows = source("src/components/project/shared.tsx");
   assert.match(rows, /const made: TaskKind = asApproval \? "task" : kind;/, "a row added as Approval is a plain task until its setup is done");
   assert.match(rows, /approvalAction\(result\.taskId, "convert"\)/);
+  // A template's approval task is a plain task until its setup is done, from the row and the toolbar.
+  for (const file of ["src/components/project/shared.tsx", "src/components/project/view-toolbar.tsx"]) {
+    assert.match(source(file), /result\.approvalSetup && result\.taskId\) approvalAction\(result\.taskId, "convert"\)/, file);
+  }
+  assert.match(source("src/lib/actions/templates.ts"), /\{ approvalAfterSetup: true \}/);
+  // While Done saves, the setup can't be closed (it would say nothing changed while the save goes on).
+  assert.match(dialog, /async function requestClose\(\) \{[^}]*if \(pending\) return;/);
+  assert.match(dialog, /disabled=\{pending\}\s+className="btn-ghost mr-auto text-zinc-500"\s+data-approval-setup-skip=""/);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -231,8 +250,8 @@ test("item 5: a picked person is a chip in the box; the body keeps the plain tok
   assert.equal(wrapMentions("Thanks @Dana Leex", dana), `Thanks ${chipText("@Dana")} Leex`);
   assert.equal(wrapMentions("Thanks @Danax", dana), "Thanks @Danax");
   assert.equal(wrapMentions(bodyToDisplay("hi @dana", NO_CHIP_LINKS), dana), `hi ${chipText("@dana")}`, "the email name too");
-  assert.ok(isMentionChip("@Dana Lee", NO_CHIP_LINKS));
-  assert.ok(!isMentionChip("Launch plan", NO_CHIP_LINKS));
+  assert.ok(isMentionChip("@Dana Lee"));
+  assert.ok(!isMentionChip("Launch plan"));
   // Backspace right after the chip removes all of it.
   const caret = display.indexOf(" for");
   const removed = removeChipAt(display, caret, "Backspace");
@@ -246,6 +265,34 @@ test("item 5: a picked person is a chip in the box; the body keeps the plain tok
   assert.match(html, /bg-accent-50 text-accent-700/, "the posted pill's colors");
 });
 
+test("item 5: typing never makes a chip (only picking does), so the caret and the @ picker stay put", () => {
+  const dana = [people[1]];
+  // Dana was picked earlier in this box; typing her name again by hand stays text while it's typed.
+  const picked = `cc ${chipText("@Dana Lee")} and @Dana`;
+  assert.equal(tidyDisplay(picked, NO_CHIP_LINKS, dana), picked, "nothing added, nothing taken away");
+  assert.equal(tidyDisplay("hi @Dana Lee", NO_CHIP_LINKS, dana), "hi @Dana Lee", "a hand-typed token isn't wrapped");
+  // A chip cut in two, or a picked one typed over, is text from then on.
+  assert.equal(tidyDisplay(`hi ${chipText("@Dana Lee").slice(0, -1)}`, NO_CHIP_LINKS, dana), "hi @Dana Lee");
+  assert.equal(tidyDisplay(`hi ${chipText("@Dana X")}`, NO_CHIP_LINKS, dana), "hi @Dana X");
+  // It reads back as the same body.
+  for (const raw of [picked, `x ${chipText("@Dana X")} y`]) {
+    assert.equal(displayToBody(tidyDisplay(raw, NO_CHIP_LINKS, dana), NO_CHIP_LINKS), displayToBody(raw, NO_CHIP_LINKS));
+  }
+  // A task named "@Dana Lee" never takes Dana's chip (a link's chip name never starts with "@").
+  const link = addChipLink(NO_CHIP_LINKS, "https://app.test/projects/11111111-1111-4111-8111-111111111111?task=22222222-2222-4222-8222-222222222222", "@Dana Lee");
+  assert.equal(link.label, "Dana Lee");
+  const both = `${chipText("@Dana Lee")} ${chipText(link.label)}`;
+  assert.equal(displayToBody(both, link.links), "@Dana Lee https://app.test/projects/11111111-1111-4111-8111-111111111111?task=22222222-2222-4222-8222-222222222222");
+  assert.equal(tidyDisplay(both, link.links, dana), both);
+
+  // The box keeps its own text while it's typed in, and the task name saves the plain text it reported.
+  const box = source("src/components/task/mention-textarea.tsx");
+  assert.match(box, /const tidied = tidyDisplay\(raw, chipLinks, mentionPeople\);\s*setBoxText\(tidied\);/);
+  const pane = source("src/components/task/task-detail-panel.tsx");
+  assert.match(pane, /onBlur=\{\(\) => save\(draft \?\? title\)\}/, "never the textarea's value (it has the chip marks)");
+  assert.doesNotMatch(pane, /save\(e\.currentTarget\.value\)/);
+});
+
 // ---------------------------------------------------------------------------------------------
 // Item 1: Submit always in reach
 // ---------------------------------------------------------------------------------------------
@@ -256,6 +303,12 @@ test("item 1: the review page's answer and the approver review's Submit never ne
   assert.match(portal, /data-review-answer=""\s+className="fixed inset-x-0 bottom-0[^"]*lg:sticky lg:bottom-0/, "a fixed bar on phones, pinned to the column's bottom on wide screens");
   const approver = source("src/components/task/approver-review.tsx");
   assert.match(approver, /full \? "sticky bottom-0 z-10/);
+  // A sticky bar can't rise above its own block: the page's details and text are drawn inside the review,
+  // and a text-only round's decisions are pinned too.
+  assert.match(approver, />\s*\{intro\}/);
+  const page = source("src/components/task/approver-review-page.tsx");
+  assert.match(page, /intro=\{\s*<>\s*<ReviewTaskDetailsPanel details=\{details\} \/>\s*\{finalText\}/);
+  assert.match(page, /className="sticky bottom-0 z-10[^"]*"\s+data-approve-decide=""/);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -276,4 +329,8 @@ test("item 7: a file opens in the preview right here (never a new tab), and arro
   assert.equal(previewStep("ArrowLeft", 0, 2), 1, "wraps back");
   assert.equal(previewStep("ArrowRight", 0, 1), null, "one file: nothing to move to");
   assert.equal(previewStep("Enter", 0, 2), null);
+  // A click in a PDF hands the keys to the browser's viewer; they come back once the pointer leaves it.
+  const overlay = source("src/components/file-preview-overlay.tsx");
+  assert.match(overlay, /tabIndex=\{-1\}\s+onMouseLeave=\{\(e\) => onLeaveFrame\(e\.currentTarget\)\}/);
+  assert.match(overlay, /if \(document\.activeElement === frame\) closeRef\.current\?\.focus/);
 });

@@ -174,12 +174,16 @@ export async function saveTaskAsTemplate(
 // From quick-add: a normal task creation (stories, notifications, and task_created rules as usual).
 // `lockedLeftOut`: the template's values of locked fields the viewer may not set (Oct 29 notes, batch
 // 7) — the database leaves them out; the caller says so.
+// `approvalAfterSetup` (Nov 18 notes, batch 44, item 3): an approval template's task is saved as a plain
+// task (`approvalSetup: true` says so), and the person's approval setup makes it an approval only when it's
+// done — so leaving the setup, the page, or the app never leaves an approval nobody approves.
 export async function createTaskFromTemplate(
   ctx: ApiContext,
   templateId: string,
   sectionId: string | null,
   title: string | null,
-): Promise<{ lockedLeftOut: number; taskId: string | undefined; kind: string | undefined }> {
+  options: { approvalAfterSetup?: boolean } = {},
+): Promise<{ lockedLeftOut: number; taskId: string | undefined; kind: string | undefined; approvalSetup?: boolean }> {
   const supabase = ctx.db;
   const templateKey = id(templateId, "template");
   const created = await supabase.rpc("create_task_from_template", {
@@ -192,8 +196,15 @@ export async function createTaskFromTemplate(
   let kind: string | undefined;
   // Nov 1 notes, batch 9a: an approval task from a template opens the guided approval setup.
   if (taskId) kind = (await supabase.from("tasks").select("kind").eq("id", taskId).maybeSingle()).data?.kind ?? undefined;
+  let approvalSetup: boolean | undefined;
+  if (taskId && kind === "approval" && options.approvalAfterSetup) {
+    approvalSetup = true;
+    // If this is refused the task stays an approval, and the setup's Cancel turns it back.
+    const plain = await supabase.from("tasks").update({ kind: "task" }).eq("id", taskId).select("id");
+    if (!plain.error && (plain.data?.length ?? 0) > 0) kind = "task";
+  }
   const lockedLeftOut = await lockedTemplateValues(ctx, templateKey);
-  return { lockedLeftOut, taskId, kind };
+  return { lockedLeftOut, taskId, kind, ...(approvalSetup ? { approvalSetup } : {}) };
 }
 
 // How many of a task template's values are in locked fields the viewer can't set (a template's fields

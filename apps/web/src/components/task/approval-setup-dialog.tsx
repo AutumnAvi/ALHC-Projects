@@ -112,6 +112,9 @@ export function ApprovalSetupDialog({
   // half set up. A setup that already has approvers just closes. Batch 44: making a task an approval
   // isn't half set up when it's left — it simply doesn't happen (nothing was saved), so it just closes.
   async function requestClose() {
+    // While Done is saving, the setup stays open: closing then would say nothing changed while the save
+    // goes on (and a Cancel's undo could race it).
+    if (pending) return;
     if (make) {
       if (undoKind && undoKind !== task.kind) run(() => setTaskKind(task.id, undoKind));
       notify(`Not made an approval. It stays a ${(undoKind ?? task.kind) === "milestone" ? "milestone" : "task"}.`);
@@ -357,7 +360,13 @@ export function ApprovalSetupDialog({
         ) : null}
 
         <div className="flex items-center gap-2 border-t border-zinc-100 pt-3">
-          <button type="button" onClick={() => void requestClose()} className="btn-ghost mr-auto text-zinc-500" data-approval-setup-skip="">
+          <button
+            type="button"
+            onClick={() => void requestClose()}
+            disabled={pending}
+            className="btn-ghost mr-auto text-zinc-500"
+            data-approval-setup-skip=""
+          >
             {make ? "Cancel" : "Skip for now"}
           </button>
           <button type="button" onClick={finish} disabled={pending} className="btn-primary" data-approval-setup-done="">

@@ -68,6 +68,7 @@ export function ApproverReview({
   onDone,
   onDecide,
   extraAction,
+  intro,
 }: {
   // Nov 2 notes (batch 16, 126): the approval card shows the decision at once.
   onDecide?: (decision: "approved" | "changes_requested", note: string) => void;
@@ -80,6 +81,10 @@ export function ApproverReview({
   onDone?: () => void;
   // Batch 44 (item 1): another action shown next to Submit in the pinned bar (the review page's Reject).
   extraAction?: ReactNode;
+  // Batch 44 (item 1): what the review page shows above the files (the task's details, the final text).
+  // It's drawn inside the review so the pinned Submit bar holds from the top of the page: a sticky bar
+  // can't rise above the block it's in, so long details above that block would push it below the screen.
+  intro?: ReactNode;
 }) {
   const ids = useId();
   const key = approverReviewStorageKey(requestId);
@@ -151,6 +156,7 @@ export function ApproverReview({
       data-approver-review={variant}
       className={full ? "flex min-h-0 flex-col gap-3" : "mt-2 rounded-lg border border-accent-200 bg-white p-3 shadow-sm"}
     >
+      {intro}
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold text-zinc-900">Review the files</h3>
         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-700" data-approver-progress="">
