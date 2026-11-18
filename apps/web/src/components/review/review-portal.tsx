@@ -604,7 +604,14 @@ export function ReviewPortal({
           />
         </section>
 
-        <aside aria-label="Your review" className="space-y-3">
+        {/* Nov 18 notes (batch 44, item 1): nothing needs scrolling to act. On wide screens this column stays
+            in view (sticky) and scrolls on its own, with the answer card pinned to its bottom edge; on
+            small screens the answer is a bar fixed to the bottom of the screen. */}
+        <aside
+          aria-label="Your review"
+          className="space-y-3 lg:sticky lg:top-4 lg:-mx-1 lg:max-h-[calc(100dvh-6rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain lg:px-1"
+          data-review-aside=""
+        >
           <div className="rounded-lg border border-zinc-200 bg-white p-4">
             <h2 className="text-sm font-semibold text-zinc-900">
               {greetingName ? `${greetingName}, what do you think?` : "What do you think?"}
@@ -661,11 +668,13 @@ export function ReviewPortal({
             }
           />
 
-          {/* The answer: a fixed bar at the bottom of small screens, a card in the side column on wide ones. */}
+          {/* The answer: a fixed bar at the bottom of small screens, a card pinned to the bottom of the side
+              column on wide ones (always on screen either way). */}
           <div
             aria-label="Your answer"
             role="region"
-            className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white px-3 pb-3 pt-2.5 shadow-[0_-6px_16px_rgba(24,24,27,0.08)] lg:static lg:z-auto lg:rounded-lg lg:border lg:p-4 lg:shadow-none"
+            data-review-answer=""
+            className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 shadow-[0_-6px_16px_rgba(24,24,27,0.08)] lg:sticky lg:bottom-0 lg:z-10 lg:rounded-lg lg:border lg:p-4 lg:shadow-[0_-10px_20px_-14px_rgba(24,24,27,0.35)]"
           >
             <h2 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 max-lg:sr-only">Your answer</h2>
             <AnswerSummary tally={tally} decision={decision} />

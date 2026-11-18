@@ -17,9 +17,12 @@ import {
   displayPieces,
   displayToBody,
   hasChips,
+  isMentionChip,
   removeChipAt,
   seedChipLinks,
+  seedMentionPeople,
   snapCaret,
+  wrapMentions,
   type ChipLinks,
 } from "@/lib/link-chips";
 import type { CommentRefs } from "@alhc/core/api/comments/model";
@@ -141,8 +144,12 @@ export function MentionTextarea({
   const [chipLinks, setChipLinks] = useState<ChipLinks>(() =>
     links ? seedChipLinks(value, (link) => knownLinkName(link, linkRefs)) : NO_CHIP_LINKS,
   );
-  const display = bodyToDisplay(value, chipLinks);
-  const chips = links && hasChips(display);
+  // Batch 44 (item 5): people picked here (and those the text already mentions) show as chips too.
+  const [mentionPeople, setMentionPeople] = useState<Profile[]>(() => (peopleOn ? seedMentionPeople(value, candidates) : []));
+  const toDisplay = (body: string, linkSet: ChipLinks, people: readonly Profile[] = mentionPeople) =>
+    wrapMentions(bodyToDisplay(body, linkSet), people);
+  const display = toDisplay(value, chipLinks);
+  const chips = hasChips(display);
   const lastCaret = useRef<number | null>(null);
   const [trigger, setTrigger] = useState<Trigger | null>(null);
   const [active, setActive] = useState(0);
@@ -243,7 +250,10 @@ export function MentionTextarea({
     let token: string;
     let nextLinks = chipLinks;
     if (item.kind === "person") {
-      token = mentionToken(item.profile);
+      // The token goes in as a chip ("@Dana Lee", then a space); the body gets the plain token.
+      const plain = mentionToken(item.profile).trimEnd();
+      token = `${chipText(plain)} `;
+      if (!mentionPeople.some((p) => p.id === item.profile.id)) setMentionPeople((current) => [...current, item.profile]);
     } else {
       const url =
         item.kind === "task"
@@ -275,7 +285,7 @@ export function MentionTextarea({
     const raw = element.value;
     const body = displayToBody(raw, chipLinks);
     onValueChange(body);
-    const tidied = bodyToDisplay(body, chipLinks);
+    const tidied = toDisplay(body, chipLinks);
     if (tidied !== raw) placeCaret(caretAfterTidy(raw, tidied, element.selectionStart ?? raw.length));
   }
 
@@ -371,7 +381,7 @@ export function MentionTextarea({
           props.onKeyDown?.(e);
         }}
       />
-      {chips ? <LinkChipLayer display={display} textarea={ref} /> : null}
+      {chips ? <LinkChipLayer display={display} textarea={ref} links={chipLinks} /> : null}
       {open ? (
         <ul
           id={listId}
@@ -460,7 +470,15 @@ const MIRRORED = [
   "color",
 ] as const;
 
-function LinkChipLayer({ display, textarea }: { display: string; textarea: React.RefObject<HTMLTextAreaElement | null> }) {
+function LinkChipLayer({
+  display,
+  textarea,
+  links,
+}: {
+  display: string;
+  textarea: React.RefObject<HTMLTextAreaElement | null>;
+  links: ChipLinks;
+}) {
   const layer = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const element = textarea.current;
@@ -497,14 +515,26 @@ function LinkChipLayer({ display, textarea }: { display: string; textarea: React
     >
       {displayPieces(display).map((piece, index) =>
         piece.type === "chip" ? (
-          <span
-            key={index}
-            data-link-chip=""
-            title={piece.label}
-            className="rounded-[3px] bg-accent-50 text-accent-800 shadow-[0_0_0_2px_var(--color-accent-50)] [box-decoration-break:clone]"
-          >
-            {piece.text}
-          </span>
+          isMentionChip(piece.label, links) ? (
+            // A person (batch 44, item 5): the posted comment's mention pill colors, without its padding or
+            // bold, so the text keeps its width under the caret.
+            <span
+              key={index}
+              data-mention-chip=""
+              className="rounded-[3px] bg-accent-50 text-accent-700 shadow-[0_0_0_2px_var(--color-accent-50)] [box-decoration-break:clone]"
+            >
+              {piece.text}
+            </span>
+          ) : (
+            <span
+              key={index}
+              data-link-chip=""
+              title={piece.label}
+              className="rounded-[3px] bg-accent-50 text-accent-800 shadow-[0_0_0_2px_var(--color-accent-50)] [box-decoration-break:clone]"
+            >
+              {piece.text}
+            </span>
+          )
         ) : (
           <span key={index}>{piece.text}</span>
         ),

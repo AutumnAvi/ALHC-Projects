@@ -19,11 +19,13 @@ import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
 import { ExternalReviewBadge } from "@/components/project/task-meta";
 import type { Tag } from "@alhc/core/tags";
+import type { TaskKind } from "@alhc/core/task-kinds";
 import { completeModeLabel, completeModeOf, EXTERNAL_PENDING_REASON } from "@alhc/core/approval-complete";
 import { externallyApproved, isTwoStageApproval } from "@alhc/core/external-review";
 import { requestApprovalAction } from "./approval-action";
 import { ApprovalSetupDialog } from "./approval-setup-dialog";
-import { ApprovalFeedback, ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
+import { ApprovalStateProvider, ApprovalStatusHeading, ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
+import { useApprovalActionListener } from "./approval-action";
 import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
@@ -74,8 +76,19 @@ export function TaskDetailPanel({
   const [completedAt, setOptimisticCompleted] = useOptimistic(task.completedAt);
   const [assigneeId, setOptimisticAssignee] = useOptimistic(task.assigneeId);
   const [addingSubtask, setAddingSubtask] = useState(false);
-  // Nov 2 notes (batch 15, 112): the approval setup opened from Task type → Approval, before the type is saved.
-  const [approvalSetup, setApprovalSetup] = useState<Promise<{ error?: string }> | null>(null);
+  // Nov 18 notes (batch 44, item 3): making the task an approval (Task type → Approval, a List / Board
+  // row added as Approval, a template's approval task) opens its setup, and only the setup's Done makes it
+  // one. `undoKind`: a template's task is an approval already, and leaving the setup makes it this again.
+  const [makeApproval, setMakeApproval] = useState<{ undoKind?: TaskKind } | null>(null);
+  useApprovalActionListener(
+    task.id,
+    () => {
+      if (task.kind !== "approval") setMakeApproval({});
+      // A template's approval task with nobody approving it yet: set up, or back to a plain task.
+      else if (!task.approval?.approverIds.length) setMakeApproval({ undoKind: "task" });
+    },
+    (action) => action === "convert",
+  );
   const completed = Boolean(completedAt);
   // Finish → start and finish → finish links block completion while the other task is open (start →
   // finish until it starts; the database checks that one); hidden ones (tasks the viewer can't open)
@@ -168,6 +181,7 @@ export function TaskDetailPanel({
   );
 
   return (
+    <ApprovalStateProvider task={task}>
     <PaneShell label={`Task: ${task.title}`} taskId={task.id}>
       <RecordRecent kind="task" id={task.id} />
       {upload.input}
@@ -357,12 +371,7 @@ export function TaskDetailPanel({
             onAttach={upload.pick}
             onCopyLink={copyLink}
             onDeleted={close}
-            onApprovalSetup={(ready) => {
-              setApprovalSetup(ready);
-              ready.then((result) => {
-                if (result.error) setApprovalSetup(null);
-              });
-            }}
+            onApprovalSetup={() => setMakeApproval({})}
           />
           <CloseButton />
         </div>
@@ -371,11 +380,19 @@ export function TaskDetailPanel({
       <div className={`min-h-0 flex-1 ${SCROLL_AREA}`}>
         <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
-          {approvalSetup ? (
-            <ApprovalSetupDialog task={task} profiles={profiles} ready={approvalSetup} onClose={() => setApprovalSetup(null)} />
+          {makeApproval ? (
+            <ApprovalSetupDialog
+              task={task}
+              profiles={profiles}
+              make
+              undoKind={makeApproval.undoKind}
+              onClose={() => setMakeApproval(null)}
+            />
           ) : null}
           <TaskNumberChips numbers={numbers} currentProjectId={pathProjectId} className="mb-1.5" />
           <PaneTitle task={task} canEdit={canEdit} completed={completed} profiles={profiles} />
+          {/* Nov 18 notes (batch 44, item 2): only the approval's status under the name; a click goes to its section. */}
+          <ApprovalStatusHeading task={task} profiles={profiles} />
 
           <RequestBadges task={task} />
 
@@ -454,9 +471,6 @@ export function TaskDetailPanel({
             ) : null}
           </dl>
 
-          {/* Nov 4 notes (batch 27, 161): the approval as one compact row with the fields (Details in a dialog). */}
-          {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-
           <TaskFields task={task} profiles={profiles} canEdit={canEdit} />
 
           <section className="mt-6" aria-labelledby="task-notes-heading">
@@ -467,11 +481,12 @@ export function TaskDetailPanel({
             <OriginalRequestFiles attachments={task.attachments} />
           </section>
 
+          {/* Batch 44 (item 2): the approval as its own section, after the description and before the subtasks. */}
+          {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
+
           <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} memberId={memberId} />
 
           <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
-
-          {task.kind === "approval" ? <ApprovalFeedback task={task} profiles={profiles} memberId={memberId} /> : null}
 
           <TaskAttachments attachments={task.attachments} links={task.attachmentLinks} upload={upload} canEdit={canEdit} />
 
@@ -481,6 +496,7 @@ export function TaskDetailPanel({
 
       <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
     </PaneShell>
+    </ApprovalStateProvider>
   );
 }
 

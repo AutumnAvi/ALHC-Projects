@@ -41,6 +41,14 @@ export function openPopoverCount() {
   return open.size;
 }
 
+// Whether a node sits in an open popover's panel (or its button): a click there isn't "outside" a form
+// whose picker opened that panel on document.body (Nov 18 notes, batch 44, item 4).
+export function insideOpenPopover(node: Node | null): boolean {
+  if (!node) return false;
+  for (const entry of open) if (entry.contains(node)) return true;
+  return false;
+}
+
 // For modals, right panels, and the palette: closes every open popover when it opens (but not one the
 // modal itself is drawn inside; pass its element).
 export function useClosesPopovers(active = true, element?: RefObject<Element | null>) {

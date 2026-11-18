@@ -4,6 +4,7 @@
 import type {
   ApprovalDecision,
   ApprovalFollowUpInput,
+  ApprovalTaskSetupInput,
   SendForApprovalInput,
   TaskApproversInput,
 } from "@alhc/core/api/approvals/model";
@@ -33,6 +34,11 @@ export async function cancelApproval(approvalId: string): Promise<ActionResult> 
 
 export async function resubmitApproval(approvalId: string, note?: string): Promise<ActionResult> {
   return run((ctx) => approvalsApi.resubmitApproval(ctx, approvalId, note));
+}
+
+// Nov 18 notes (batch 44, item 3): the approval setup's Done — the task becomes an approval only now.
+export async function setUpApprovalTask(taskId: string, input: ApprovalTaskSetupInput): Promise<ActionResult> {
+  return run((ctx) => approvalsApi.setUpApprovalTask(ctx, taskId, input));
 }
 
 // 45 / 45b. Approval tasks.

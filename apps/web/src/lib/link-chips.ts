@@ -1,4 +1,5 @@
 import { appLinkSegments, type AppLink } from "@alhc/core/app-links";
+import { mentionSegments, type MentionPerson } from "@alhc/core/mentions";
 
 // Nov 4 notes (batch 21, note 153): a task or project picked with "#" shows in the comment box (and the
 // description) as a chip with its name right away, never as its raw link. A textarea can only hold plain
@@ -135,4 +136,36 @@ export function displayPieces(display: string): DisplayPiece[] {
   }
   if (last < display.length) out.push({ type: "text", text: display.slice(last) });
   return out;
+}
+
+// Nov 18 notes (batch 44, item 5): a person picked with "@" shows as a blue chip in the box right away,
+// like the mention pill the posted comment gets. The body keeps the plain token (`@Dana Lee`, what the
+// database parses), so nothing about what's saved changes; the box wraps each token of the people picked
+// here (or already mentioned in the text it opened with) in the chip marks. Only text outside other chips
+// is looked at, and only whole tokens (`@Dana Leex` isn't Dana, for the database either).
+export function wrapMentions(display: string, people: readonly MentionPerson[]): string {
+  if (people.length === 0 || !display.includes("@")) return display;
+  const out: string[] = [];
+  for (const piece of displayPieces(display)) {
+    if (piece.type === "chip") {
+      out.push(piece.text);
+      continue;
+    }
+    for (const seg of mentionSegments(piece.text, [...people])) out.push(seg.type === "text" ? seg.text : chipText(seg.raw));
+  }
+  return out.join("");
+}
+
+// The people a text already mentions (a comment opened for editing): their tokens start as chips.
+export function seedMentionPeople<P extends MentionPerson>(body: string, candidates: readonly P[]): P[] {
+  if (!body.includes("@") || candidates.length === 0) return [];
+  const ids = new Set(
+    mentionSegments(body.replace(MARKS, ""), [...candidates]).flatMap((seg) => (seg.type === "mention" ? [seg.profileId] : [])),
+  );
+  return candidates.filter((p) => ids.has(p.id));
+}
+
+// Whether a chip is a person's mention (its label is "@…" and no picked link has that name).
+export function isMentionChip(label: string, links: ChipLinks): boolean {
+  return label.startsWith("@") && !links.byLabel.has(label);
 }
