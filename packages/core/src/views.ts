@@ -156,6 +156,43 @@ export function projectTabList(views: ProjectView[], settings: ProjectViewSettin
   ];
 }
 
+// Nov 18 notes (batch 44, item 6): a tab hidden or shown again here, kept until the page's own copy
+// agrees (re-adding a hidden tab showed it, lost it when the save ended, and brought it back only after a
+// reload: the project layout's props lagged behind). Keys are "tab:<fixed tab>" / "view:<view id>", the
+// value whether it's hidden.
+export type TabOverrides = Readonly<Record<string, boolean>>;
+
+export function tabOverrideKey(kind: "tab" | "view", key: string): string {
+  return `${kind}:${key}`;
+}
+
+// The hidden list with the overrides of that kind applied (order kept; a newly hidden one goes last).
+export function withTabOverrides(hidden: readonly string[], kind: "tab" | "view", overrides: TabOverrides): string[] {
+  const prefix = `${kind}:`;
+  let out = [...hidden];
+  for (const [okey, isHidden] of Object.entries(overrides)) {
+    if (!okey.startsWith(prefix)) continue;
+    const key = okey.slice(prefix.length);
+    out = out.filter((k) => k !== key);
+    if (isHidden) out.push(key);
+  }
+  return out;
+}
+
+// Drops the overrides the page's copy now agrees with; the same object when none did.
+export function pruneTabOverrides(hiddenTabs: readonly string[], hiddenViewIds: readonly string[], overrides: TabOverrides): TabOverrides {
+  let changed = false;
+  const next: Record<string, boolean> = {};
+  for (const [okey, isHidden] of Object.entries(overrides)) {
+    const [kind, ...rest] = okey.split(":");
+    const key = rest.join(":");
+    const list = kind === "view" ? hiddenViewIds : hiddenTabs;
+    if (list.includes(key) === isHidden) changed = true;
+    else next[okey] = isHidden;
+  }
+  return changed ? next : overrides;
+}
+
 // Whether hiding this shared view would leave the project with no shown view tab (not allowed: the
 // project's link has to open something).
 export function isLastShownView(views: ProjectView[], hiddenViewIds: readonly string[], viewId: string): boolean {

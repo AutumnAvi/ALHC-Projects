@@ -176,8 +176,9 @@ function approvalTask(viewerRole: ProjectRole, approval: TaskApprovalInfo | null
   };
 }
 
-// Nov 4 notes (batch 27, 161): the row plus its Details dialog (open), and the feedback pills.
-const banner = (task: TaskDetail) => render(<ApprovalTaskBanner task={task} profiles={people} memberId="me" initialDetailsOpen />);
+// Nov 18 notes (batch 44, item 2): the approval section (everything in it, no Details dialog), and the
+// feedback pills.
+const banner = (task: TaskDetail) => render(<ApprovalTaskBanner task={task} profiles={people} memberId="me" />);
 const feedback = (task: TaskDetail) => render(<ApprovalFeedback task={task} profiles={people} memberId="me" />);
 const button = (html: string, label: string) => new RegExp(`<button[^>]*>(?:<svg[^>]*>.*?</svg>)?${label}</button>`).test(html);
 
@@ -272,7 +273,7 @@ test("changes requested / rejected: paused until the assignee marks it received,
   const pausedFeedback = feedback(approvalTask("commenter", info({ status: "changes_requested", paused: true, rounds: [changes] }), { assigneeId: "me" }));
   assert.match(pausedFeedback, /data-feedback-pill="changes_requested"/);
   assert.match(pausedFeedback, /Make the logo bigger/);
-  assert.match(paused, /1 note ↓/, "the row points to it");
+  assert.match(paused, /data-feedback-pill="changes_requested"/, "the feedback is inside the approval section");
   assert.ok(button(paused, "Feedback received"));
   assert.ok(!button(paused, "Ready for approval"), "not until the feedback is marked received");
 
@@ -504,7 +505,10 @@ test("the pane: Mark complete waits for a pending approval; a blocked task's but
     <TaskDetailPanel task={approvalTask("editor", info({ status: "pending", rounds: [round()] }))} projects={[]} profiles={people} memberId="me" tags={[]} />,
   );
   assert.match(pending, /<button type="button" disabled=""[^>]*data-tooltip="Waiting for approval[^"]*"/);
-  assert.match(pending, /aria-label="Approval"/, "the approval panel is at the top");
+  // Nov 18 notes (batch 44, item 2): a status heading under the name, and the approval section below.
+  assert.match(pending, /data-approval-heading="pending"/, "the status heading under the name");
+  assert.match(pending, /data-approval-section=""/, "the approval section");
+  assert.ok(pending.indexOf("data-approval-heading") < pending.indexOf("data-approval-section"), "heading first");
   assert.match(pending, />Assignee</, "the assignee is the assignee, not the approver");
 
   const blocked = render(

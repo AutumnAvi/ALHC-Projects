@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Download, Eye, FileImage, FileText, Files, Paperclip } from "lucide-react";
+import { Download, Files, Paperclip } from "lucide-react";
+import { FilePreviewOverlay, attachmentFileUrl, type FileUrl } from "@/components/file-preview-overlay";
+import { FileTypeIcon } from "@/components/task/file-type-icon";
 import { Timestamp } from "@/components/timestamp";
 import { EmptyState } from "@/components/ui";
 import { previewKind } from "@alhc/core/attachment-preview";
@@ -18,19 +20,25 @@ const FILTERS = [
 type FilterValue = (typeof FILTERS)[number]["value"];
 
 // The Files tab: one row per attachment, linked to its task. Opening and downloading go through the
-// same RLS-checked /attachments/<id> route as the task pane (60-second signed URLs).
+// same RLS-checked /attachments/<id> route as the task pane (60-second signed URLs). Nov 18 notes
+// (batch 44, item 7): a click on a file opens it right here (FilePreviewOverlay: images, PDFs, videos;
+// a card with Download for anything else), ← / → move through the files shown, Esc closes.
 export function ProjectFiles({
   projectId,
   files,
   uploaderNames,
+  fileUrl = attachmentFileUrl,
 }: {
   projectId: string;
   files: ProjectFile[];
   uploaderNames: Record<string, string>;
+  fileUrl?: FileUrl;
 }) {
   const [filter, setFilter] = useState<FilterValue>("all");
+  const [previewing, setPreviewing] = useState<number | null>(null);
   const kindOf = (f: ProjectFile) => previewKind(f.fileName, f.contentType) ?? "other";
   const shown = filter === "all" ? files : files.filter((f) => kindOf(f) === filter);
+  const taskHref = (f: ProjectFile) => `/projects/${projectId}/list?task=${f.taskId}`;
 
   return (
     <div className="w-full px-gutter py-4">
@@ -44,7 +52,10 @@ export function ProjectFiles({
               key={f.value}
               type="button"
               aria-pressed={filter === f.value}
-              onClick={() => setFilter(f.value)}
+              onClick={() => {
+                setFilter(f.value);
+                setPreviewing(null);
+              }}
               className="rounded px-2 py-0.5 text-xs text-zinc-600 aria-pressed:bg-white aria-pressed:font-medium aria-pressed:text-zinc-900 aria-pressed:shadow-xs"
             >
               {f.label}
@@ -83,27 +94,40 @@ export function ProjectFiles({
               <th scope="col" className="hidden w-24 py-2 pr-3 font-medium sm:table-cell">
                 Added
               </th>
-              <th scope="col" className="w-20 py-2 font-medium">
+              <th scope="col" className="w-12 py-2 font-medium">
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
           </thead>
           <tbody>
-            {shown.map((file) => {
-              const kind = kindOf(file);
-              const Icon = kind === "image" ? FileImage : FileText;
+            {shown.map((file, index) => {
               return (
-                <tr key={file.id} className="border-b border-zinc-100 hover:bg-zinc-50">
+                <tr
+                  key={file.id}
+                  className="cursor-pointer border-b border-zinc-100 hover:bg-zinc-50"
+                  data-file-row={file.id}
+                  // A click anywhere on the row (but its links) previews the file in place.
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest("a, button")) return;
+                    setPreviewing(index);
+                  }}
+                >
                   <th scope="row" className="py-2 pr-3 text-left font-normal">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <Icon className="size-4 shrink-0 text-zinc-400" aria-hidden />
+                    <button
+                      type="button"
+                      onClick={() => setPreviewing(index)}
+                      aria-label={`Preview ${file.fileName}`}
+                      className="-mx-1 flex w-full min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left hover:text-accent-700 focus-visible:outline-2 focus-visible:outline-accent-500"
+                      data-file-open=""
+                    >
+                      <FileTypeIcon fileName={file.fileName} contentType={file.contentType} className="size-4 shrink-0 text-zinc-400" />
                       <span className="truncate text-zinc-900">{file.fileName}</span>
                       <span className="shrink-0 text-xs text-zinc-400">{formatBytes(file.sizeBytes)}</span>
-                    </span>
+                    </button>
                   </th>
                   <td className="py-2 pr-3">
                     <Link
-                      href={`/projects/${projectId}/list?task=${file.taskId}`}
+                      href={taskHref(file)}
                       className="block truncate text-zinc-600 hover:text-zinc-900 hover:underline"
                     >
                       {file.taskTitle}
@@ -117,19 +141,12 @@ export function ProjectFiles({
                     <Timestamp iso={file.createdAt} />
                   </td>
                   <td className="whitespace-nowrap py-2 text-right">
-                    {kind !== "other" ? (
-                      <a
-                        href={`/attachments/${file.id}?preview=1`}
-                        target="_blank"
-                        rel="noopener"
-                        aria-label={`Open ${file.fileName}`}
-                        title="Open"
-                        className="btn-icon"
-                      >
-                        <Eye className="size-4" />
-                      </a>
-                    ) : null}
-                    <a href={`/attachments/${file.id}?download`} aria-label={`Download ${file.fileName}`} title="Download" className="btn-icon">
+                    <a
+                      href={fileUrl(file.id, "download")}
+                      aria-label={`Download ${file.fileName}`}
+                      data-tooltip="Download"
+                      className="btn-icon"
+                    >
                       <Download className="size-4" />
                     </a>
                   </td>
@@ -139,6 +156,21 @@ export function ProjectFiles({
           </tbody>
         </table>
       )}
+      {previewing !== null && shown[previewing] ? (
+        <FilePreviewOverlay
+          files={shown.map((f) => ({
+            id: f.id,
+            fileName: f.fileName,
+            contentType: f.contentType,
+            sizeBytes: f.sizeBytes,
+            context: { label: f.taskTitle, href: taskHref(f) },
+          }))}
+          index={previewing}
+          onIndex={setPreviewing}
+          onClose={() => setPreviewing(null)}
+          fileUrl={fileUrl}
+        />
+      ) : null}
     </div>
   );
 }

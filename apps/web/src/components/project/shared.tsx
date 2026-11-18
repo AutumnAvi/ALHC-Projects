@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useSearchParams } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -20,6 +20,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { MenuItem, Popover } from "@/components/popover";
+import { insideOpenPopover } from "@/components/overlay-registry";
+import { claimAddRow } from "@/lib/add-row";
 import { SmartPicker } from "@/components/smart-picker";
 import { SECTIONS_LOCKED_NOTE, useProjectPermissions, useSectionPermissions } from "@/components/project/project-access";
 import { useTaskTemplates } from "@/components/project/task-templates-context";
@@ -428,6 +430,9 @@ export function AddTaskKindControl({
               data-kind={k}
               aria-checked={selected}
               tabIndex={selected ? 0 : -1}
+              // Batch 44 (item 4): a click keeps the focus in the name box (Safari never focuses a clicked
+              // button, so focus fell to the page and nothing could close the row); keys still move here.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => onChange(k)}
               className={`inline-flex h-7 items-center gap-1 rounded px-1.5 text-xs ${
                 selected ? "bg-white font-medium text-zinc-900 shadow-xs" : "text-zinc-600 hover:text-zinc-900"
@@ -474,14 +479,46 @@ export function AddTaskInput({
   const [open, setOpen] = useState(defaultOpen);
   const [kind, setKind] = useState<TaskKind>(defaultKind);
   const inputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const rowId = useId();
   const canEdit = useProjectPermissions().canEdit;
   const templates = useTaskTemplates();
   const approvalAction = useApprovalAction();
-
-  if (!canEdit) return null;
+  // Nov 18 notes (batch 44, item 4): leaving the row — Escape, a click outside, or another add row
+  // opening — closes it and puts it back to Task, whichever kind was picked.
   const close = () => {
     setOpen(false);
+    setKind("task");
+    if (inputRef.current) inputRef.current.value = "";
     onClose?.();
+  };
+  const closeRef = useRef(close);
+  useEffect(() => {
+    closeRef.current = close;
+  });
+  useEffect(() => {
+    if (!open) return;
+    const release = claimAddRow(rowId, () => closeRef.current());
+    // A press outside the row (and outside any menu it opened) closes it while the name is empty; a typed
+    // name stays until Escape or Enter, so a stray click never loses it.
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      const form = formRef.current;
+      if (!form || !target || form.contains(target) || insideOpenPopover(target)) return;
+      if (inputRef.current?.value.trim()) return;
+      closeRef.current();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      release();
+    };
+  }, [open, rowId]);
+
+  if (!canEdit) return null;
+  const pickKind = (next: TaskKind) => {
+    setKind(next);
+    inputRef.current?.focus();
   };
   if (!open) {
     return variant === "row" ? (
@@ -512,26 +549,48 @@ export function AddTaskInput({
         const title = input?.value.trim();
         if (!input || !title) return;
         input.value = "";
+        // Nov 18 notes (batch 44, item 3): an approval is made in its setup, never half set. The task is
+        // added as a plain task and opens with the approval setup; it becomes an approval only when the
+        // setup is done (leaving the setup early leaves a normal task).
+        const asApproval = kind === "approval";
+        const made: TaskKind = asApproval ? "task" : kind;
+        // The row goes back to Task (the setup that opens is where the approval is chosen).
+        if (asApproval) setKind("task");
         run(async () => {
           // Nov 2 notes (batch 16, 121): the new task shows at once in its section (PendingTaskRows).
           const result = await withPendingCreate(
             pendingTaskScope(projectId, sectionId),
             title,
-            () => createTask(projectId, sectionId, title, kind, atTop),
-            { atTop, kind },
+            () => createTask(projectId, sectionId, title, made, atTop),
+            { atTop, kind: made },
           );
-          // Nov 1 notes, batch 9a: a new approval task opens in the pane with the guided setup.
-          if (!result.error && kind === "approval" && result.taskId) approvalAction(result.taskId, "setup");
+          if (!result.error && asApproval && result.taskId) approvalAction(result.taskId, "convert");
           return result;
         });
       }}
+      ref={formRef}
+      onKeyDown={(e) => {
+        // Escape anywhere in the row (the name, the kind control, the template button) closes it, unless
+        // a menu inside it took the key first.
+        if (e.key === "Escape" && !e.defaultPrevented) {
+          e.preventDefault();
+          close();
+        }
+      }}
+      onBlur={(e) => {
+        // Tabbing out of the row (keyboard) with no name typed closes it too.
+        const next = e.relatedTarget as Node | null;
+        if (!next || e.currentTarget.contains(next) || insideOpenPopover(next)) return;
+        if (!inputRef.current?.value.trim()) close();
+      }}
       className={`@container/add flex items-center gap-1.5 ${variant === "row" ? "py-1.5 pr-3 pl-1.5" : ""}`}
       data-add-task-row=""
+      data-add-task-kind-value={kind}
     >
       <AddTaskKindControl
         id={`add-task-kind-${sectionId ?? "none"}-${variant}${idSuffix}`}
         kind={kind}
-        onChange={setKind}
+        onChange={pickKind}
         onEscape={close}
       />
       <label className="sr-only" htmlFor={`add-task-${sectionId ?? "none"}-${variant}${idSuffix}`}>
@@ -542,15 +601,6 @@ export function AddTaskInput({
         id={`add-task-${sectionId ?? "none"}-${variant}${idSuffix}`}
         autoFocus
         placeholder={pending ? "Adding…" : `${kind === "task" ? "Task" : TASK_KIND_LABELS[kind]} name, then Enter`}
-        onBlur={(e) => {
-          // Moving to the kind control or the template picker (inside this form) keeps the input open.
-          if (!e.currentTarget.value.trim() && !e.currentTarget.form?.contains(e.relatedTarget as Node | null)) {
-            close();
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") close();
-        }}
         className={`min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm placeholder:text-zinc-400 focus:border-accent-500/60 focus:shadow-[0_0_0_3px_var(--focus-ring)] focus:outline-none ${
           variant === "card" ? "shadow-xs" : ""
         }`}
@@ -583,7 +633,9 @@ export function AddTaskInput({
                     if (input) input.value = "";
                     run(async () => {
                       const result = await createTaskFromTemplate(template.id, sectionId, title);
-                      if (!result.error && result.kind === "approval" && result.taskId) approvalAction(result.taskId, "setup");
+                      // Batch 44 (item 3): a template's approval task is set up before it counts (leaving the
+                      // setup early makes it a normal task).
+                      if (!result.error && result.kind === "approval" && result.taskId) approvalAction(result.taskId, "convert");
                       // Locked fields (Oct 29 notes, batch 7): only the project's Owners and Admins set them.
                       if (!result.error && result.lockedLeftOut) {
                         notify(

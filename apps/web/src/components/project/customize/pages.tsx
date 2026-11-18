@@ -26,6 +26,7 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { createForm, updateForm } from "@/lib/actions/forms";
 import { moveViewBy, setProjectTabHidden, setProjectViewHidden } from "@/lib/actions/views";
+import { dropTabHiddenOverride, setTabHiddenOverride, useTabVisibility } from "@/lib/tab-visibility";
 import {
   inboundWebhooksStatus,
   moveTabEntry,
@@ -433,15 +434,19 @@ function AppRow({
 // Tabs (07): a switch on each tab (hidden for everyone; one view always stays shown), and the views
 // dragged to reorder (or moved with the arrow keys on their handle).
 
-type TabChange = { type: "hide"; key: string; hidden: boolean } | { type: "move"; key: string; steps: number };
+type TabChange = { type: "move"; key: string; steps: number };
 
 export function TabsPage({ projectId, tabs }: { projectId: string; tabs: ProjectTabEntry[] }) {
   const [, run] = useServerAction();
-  const [shown, apply] = useOptimistic(tabs, (current, change: TabChange) =>
-    change.type === "hide"
-      ? current.map((t) => (t.key === change.key ? { ...t, hidden: change.hidden } : t))
-      : moveTabEntry(current, change.key, change.steps),
+  // Batch 44 (item 6): hidden / shown is the header's shared copy (tab-visibility.ts), so a switch here
+  // changes the tab bar at once too and neither snaps back before the page's copy agrees.
+  const visibility = useTabVisibility(
+    projectId,
+    tabs.filter((t) => t.kind === "tab" && t.hidden).map((t) => t.key),
+    tabs.filter((t) => t.kind === "view" && t.hidden).map((t) => t.key),
   );
+  const [ordered, apply] = useOptimistic(tabs, (current, change: TabChange) => moveTabEntry(current, change.key, change.steps));
+  const shown = ordered.map((t) => ({ ...t, hidden: (t.kind === "view" ? visibility.views : visibility.tabs).includes(t.key) }));
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const shownViews = shown.filter((t) => t.kind === "view" && !t.hidden).length;
@@ -520,12 +525,15 @@ export function TabsPage({ projectId, tabs }: { projectId: string; tabs: Project
                 focus={i === 0}
                 disabled={lastView}
                 tooltip={lastView ? "Keep at least one view tab shown" : tab.hidden ? "Hidden for everyone" : "Shown"}
-                onChange={(on) =>
-                  run(
-                    () => (view ? setProjectViewHidden(projectId, tab.key, !on) : setProjectTabHidden(projectId, tab.key, !on)),
-                    () => apply({ type: "hide", key: tab.key, hidden: !on }),
-                  )
-                }
+                onChange={(on) => {
+                  const kind = view ? "view" : "tab";
+                  setTabHiddenOverride(projectId, kind, tab.key, !on);
+                  run(async () => {
+                    const result = view ? await setProjectViewHidden(projectId, tab.key, !on) : await setProjectTabHidden(projectId, tab.key, !on);
+                    if (result.error) dropTabHiddenOverride(projectId, kind, tab.key);
+                    return result;
+                  });
+                }}
               />
             </li>
           );

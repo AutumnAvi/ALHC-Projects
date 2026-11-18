@@ -96,12 +96,14 @@ export async function moveViewBy(viewId: string, steps: number): Promise<ActionR
 // A project's tabs
 // ---------------------------------------------------------------------------------------------
 
+// Nov 18 notes (batch 44, item 6): the tab bar lives in the project's layout, so the layout is revalidated
+// too — a plain refresh could leave its old hidden list there (the re-added tab vanished until a reload).
 export async function setProjectTabHidden(projectId: string, tab: string, hidden: boolean): Promise<ActionResult> {
-  return run((ctx) => viewsApi.setProjectTabHidden(ctx, projectId, tab, hidden));
+  return run((ctx) => viewsApi.setProjectTabHidden(ctx, projectId, tab, hidden), { revalidate: [[`/projects/${projectId}`, "layout"]] });
 }
 
 export async function setProjectViewHidden(projectId: string, viewId: string, hidden: boolean): Promise<ActionResult> {
-  return run((ctx) => viewsApi.setProjectViewHidden(ctx, projectId, viewId, hidden));
+  return run((ctx) => viewsApi.setProjectViewHidden(ctx, projectId, viewId, hidden), { revalidate: [[`/projects/${projectId}`, "layout"]] });
 }
 
 export async function setDefaultView(projectId: string, viewId: string | null): Promise<ActionResult> {
