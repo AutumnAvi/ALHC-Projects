@@ -123,13 +123,15 @@ test("item 3: an approval task already (Finish setup, a template's approval) kee
 
 test("item 3: a template's approval task is saved as a plain task until its setup is done", async () => {
   const TEMPLATE = "44444444-4444-4444-8444-444444444444";
-  const make = (refuse = false) =>
+  const make = (refuse = false, templateKind = "approval") =>
     fakeDb((call) => {
       if (call.target === "rpc:create_task_from_template") return { data: TASK, error: null };
       if (call.target === "table:tasks") {
         const update = call.steps.find(([name]) => name === "update");
-        if (update) return refuse ? { data: [], error: null } : { data: [{ id: TASK }], error: null };
-        return { data: { kind: "approval" }, error: null };
+        // The flip only touches an approval (eq kind = approval).
+        const onlyApproval = call.steps.some(([name, args]) => name === "eq" && args[0] === "kind" && args[1] === "approval");
+        if (update) return refuse || (onlyApproval && templateKind !== "approval") ? { data: [], error: null } : { data: [{ id: TASK }], error: null };
+        return { data: { kind: templateKind }, error: null };
       }
       if (call.target === "table:task_templates") return { data: { project_id: SECTION, field_values: [] }, error: null };
       return { data: null, error: null };
@@ -138,6 +140,11 @@ test("item 3: a template's approval task is saved as a plain task until its setu
   const made = await createTaskFromTemplate(createApiContext(ui.db), TEMPLATE, null, "Sign-off", { approvalAfterSetup: true });
   assert.deepEqual([made.kind, made.approvalSetup], ["task", true]);
   assert.deepEqual(kinds(ui.calls.filter((c) => c.steps.some(([name]) => name === "update"))), ["task"]);
+  assert.equal(ui.calls.filter((c) => c.target === "table:tasks").length, 1, "one step: no read that could fail first");
+  // Any other template's task keeps its kind (a milestone stays a milestone).
+  const milestone = make(false, "milestone");
+  const kept2 = await createTaskFromTemplate(createApiContext(milestone.db), TEMPLATE, null, null, { approvalAfterSetup: true });
+  assert.deepEqual([kept2.kind, kept2.approvalSetup], ["milestone", undefined]);
   // Refused: it stays an approval (the setup's Cancel turns it back), and the setup still opens.
   const refused = make(true);
   const kept = await createTaskFromTemplate(createApiContext(refused.db), TEMPLATE, null, null, { approvalAfterSetup: true });

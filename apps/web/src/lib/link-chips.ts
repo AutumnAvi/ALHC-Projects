@@ -22,7 +22,7 @@ export const NO_CHIP_LINKS: ChipLinks = { byUrl: new Map(), byLabel: new Map() }
 // A link's chip name never starts with "@": names starting with "@" are people's mention chips (batch 44),
 // so a task named "@Dana Lee" can't be mistaken for Dana, or Dana for it.
 function cleanName(name: string): string {
-  const text = name.replace(MARKS, "").replace(/\s+/g, " ").trim().replace(/^@+\s*/, "");
+  const text = name.replace(MARKS, "").replace(/\s+/g, " ").trim().replace(/^[@\s]+/, "");
   return text || "Link";
 }
 

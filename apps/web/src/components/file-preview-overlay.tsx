@@ -5,15 +5,17 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, SquareCheck, X } from "lucide-react";
 import { useClosesPopovers } from "@/components/overlay-registry";
+import { ReviewViewer } from "@/components/review/review-viewer";
 import { FileTypeIcon } from "@/components/task/file-type-icon";
 import { formatBytes } from "@alhc/core/attachments";
 import { reviewMediaKind } from "@alhc/core/review-checks";
 
 // Nov 18 notes (batch 44, item 7): a file opens right where it's clicked, in an overlay over the page —
-// never a new tab. Images, PDFs (the browser's own viewer), and videos (the browser's player) show
-// inline through the same RLS-checked /attachments/<id> route as everywhere else; any other file gets a
-// card with its name, size, and a Download button. ← / → move between the files, Esc closes, and focus
-// goes back to whatever opened it.
+// never a new tab. Images, PDFs (the app's own PDF renderer, as on the Reviews tab: pages drawn in this
+// page, so Esc and ← / → always reach the overlay, which a browser PDF viewer in a frame would keep), and
+// videos (the browser's player) show inline through the same RLS-checked /attachments/<id> route as
+// everywhere else; any other file gets a card with its name, size, and a Download button. ← / → move
+// between the files, Esc closes, and focus goes back to whatever opened it.
 
 export type PreviewFile = {
   id: string;
@@ -170,16 +172,7 @@ export function FilePreviewOverlay({
             }}
             data-file-preview-kind={kind ?? "other"}
           >
-            <PreviewBody
-              key={file.id}
-              file={file}
-              kind={kind}
-              // A click in a PDF gives the browser's viewer (another document) the keys, so Esc and the arrows
-              // wouldn't reach the overlay; once the pointer leaves the PDF they come back here.
-              onLeaveFrame={(frame) => {
-                if (document.activeElement === frame) closeRef.current?.focus({ preventScroll: true });
-              }}
-            />
+            <PreviewBody key={file.id} file={file} kind={kind} />
           </div>
           {several ? (
             <button type="button" onClick={() => onIndex((index + 1) % files.length)} aria-label="Next file" data-tooltip="Next (→)" className={BUTTON}>
@@ -193,15 +186,7 @@ export function FilePreviewOverlay({
   );
 }
 
-function PreviewBody({
-  file,
-  kind,
-  onLeaveFrame,
-}: {
-  file: PreviewFile;
-  kind: ReturnType<typeof reviewMediaKind>;
-  onLeaveFrame: (frame: HTMLIFrameElement) => void;
-}) {
+function PreviewBody({ file, kind }: { file: PreviewFile; kind: ReturnType<typeof reviewMediaKind> }) {
   const [broken, setBroken] = useState(false);
   if (kind === "image" && !broken) {
     return (
@@ -216,14 +201,13 @@ function PreviewBody({
   }
   if (kind === "pdf") {
     return (
-      <iframe
-        title={file.fileName}
-        src={fileUrl(file.id, "preview")}
-        // Out of the Tab order (Tab stays on the overlay's controls); a click still scrolls and zooms it.
-        tabIndex={-1}
-        onMouseLeave={(e) => onLeaveFrame(e.currentTarget)}
-        className="h-full w-full max-w-5xl rounded bg-white"
-      />
+      <div className="h-full w-full max-w-4xl overflow-y-auto overscroll-contain rounded bg-zinc-100 p-3 sm:p-4" data-file-preview-pdf="">
+        <ReviewViewer
+          file={{ id: file.id, name: file.fileName, contentType: file.contentType, src: fileUrl(file.id, "media"), downloadHref: fileUrl(file.id, "download") }}
+          pins={[]}
+          activePin={null}
+        />
+      </div>
     );
   }
   if (kind === "video" && !broken) {

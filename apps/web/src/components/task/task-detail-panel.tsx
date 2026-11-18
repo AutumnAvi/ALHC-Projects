@@ -77,14 +77,15 @@ export function TaskDetailPanel({
   const [assigneeId, setOptimisticAssignee] = useOptimistic(task.assigneeId);
   const [addingSubtask, setAddingSubtask] = useState(false);
   // Nov 18 notes (batch 44, item 3): making the task an approval (Task type → Approval, a List / Board
-  // row added as Approval, a template's approval task) opens its setup, and only the setup's Done makes it
-  // one. `undoKind`: a template's task is an approval already, and leaving the setup makes it this again.
+  // row added as Approval, a template's approval task — saved as a plain task) opens its setup, and only
+  // the setup's Done makes it one. `undoKind`: only when a template's task couldn't be saved as a plain
+  // task and is still an approval; leaving the setup makes it this again.
   const [makeApproval, setMakeApproval] = useState<{ undoKind?: TaskKind } | null>(null);
   useApprovalActionListener(
     task.id,
     () => {
       if (task.kind !== "approval") setMakeApproval({});
-      // A template's approval task with nobody approving it yet: set up, or back to a plain task.
+      // A template's task still an approval (its flip to a plain task was refused): set up, or back.
       else if (!task.approval?.approverIds.length) setMakeApproval({ undoKind: "task" });
     },
     (action) => action === "convert",
