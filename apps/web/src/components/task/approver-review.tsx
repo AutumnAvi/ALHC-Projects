@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState, useSyncExternalStore } from "react";
+import { useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Maximize2, MessageSquare } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
@@ -67,6 +67,8 @@ export function ApproverReview({
   onExpand,
   onDone,
   onDecide,
+  extraAction,
+  intro,
 }: {
   // Nov 2 notes (batch 16, 126): the approval card shows the decision at once.
   onDecide?: (decision: "approved" | "changes_requested", note: string) => void;
@@ -77,6 +79,12 @@ export function ApproverReview({
   variant?: "compact" | "full";
   onExpand?: () => void;
   onDone?: () => void;
+  // Batch 44 (item 1): another action shown next to Submit in the pinned bar (the review page's Reject).
+  extraAction?: ReactNode;
+  // Batch 44 (item 1): what the review page shows above the files (the task's details, the final text).
+  // It's drawn inside the review so the pinned Submit bar holds from the top of the page: a sticky bar
+  // can't rise above the block it's in, so long details above that block would push it below the screen.
+  intro?: ReactNode;
 }) {
   const ids = useId();
   const key = approverReviewStorageKey(requestId);
@@ -148,6 +156,7 @@ export function ApproverReview({
       data-approver-review={variant}
       className={full ? "flex min-h-0 flex-col gap-3" : "mt-2 rounded-lg border border-accent-200 bg-white p-3 shadow-sm"}
     >
+      {intro}
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold text-zinc-900">Review the files</h3>
         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-700" data-approver-progress="">
@@ -256,7 +265,14 @@ export function ApproverReview({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3">
+      {/* Nov 18 notes (batch 44, item 1): on the full review (its page, Expand) Submit never needs a scroll:
+          the note and Submit stick to the bottom of the screen while the files are in view. */}
+      <div
+        className={`mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3 ${
+          full ? "sticky bottom-0 z-10 -mx-1 rounded-b-lg bg-white px-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-10px_20px_-14px_rgba(24,24,27,0.35)]" : ""
+        }`}
+        data-approver-review-submit=""
+      >
         <label htmlFor={`${ids}-overall`} className="text-xs font-medium text-zinc-700">
           Note for the assignee <span className="font-normal text-zinc-400">(optional)</span>
         </label>
@@ -271,6 +287,7 @@ export function ApproverReview({
           <p className="mr-auto text-xs text-zinc-500" aria-live="polite" data-approver-review-problem="">
             {problem ?? (decision === "approved" ? "Every file is approved." : "Some files have feedback: this requests changes.")}
           </p>
+          {extraAction}
           <button
             type="button"
             disabled={pending || Boolean(problem)}

@@ -54,6 +54,7 @@ import { useRightPanel } from "@/components/shell/right-panel";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { copyProjectLink, useProjectPage } from "@/components/project/project-page-context";
 import { useNotify, useServerAction } from "@/components/toast";
+import { dropTabHiddenOverride, setTabHiddenOverride, useTabVisibility } from "@/lib/tab-visibility";
 import {
   createView,
   deleteView,
@@ -128,22 +129,18 @@ export function ProjectHeader({
   const { canEdit: canEditViews, canManage: canEditProject } = useProjectPermissions();
   const base = `/projects/${project.id}`;
   const { shared, mine } = splitViews(views);
-  // Hiding or showing a tab takes effect at once (the refresh confirms it).
-  const [tabState, applyTabState] = useOptimistic(
-    { tabs: hiddenTabs as string[], views: hiddenViewIds },
-    (current, change: { kind: "tab" | "view"; key: string; hidden: boolean }) => {
-      const list = change.kind === "tab" ? current.tabs : current.views;
-      const next = change.hidden ? [...list.filter((k) => k !== change.key), change.key] : list.filter((k) => k !== change.key);
-      return change.kind === "tab" ? { ...current, tabs: next } : { ...current, views: next };
-    },
-  );
+  // Hiding or showing a tab takes effect at once and stays until the page's own copy agrees (Nov 18
+  // notes, batch 44, item 6: a re-added tab used to vanish when the save ended, until a reload).
+  const tabState = useTabVisibility(project.id, hiddenTabs, hiddenViewIds);
   const hidden = new Set(tabState.tabs as FixedTab[]);
   const hiddenViews = new Set(tabState.views);
   function setTabHidden(kind: "tab" | "view", key: string, hide: boolean) {
-    run(
-      () => (kind === "tab" ? setProjectTabHidden(project.id, key, hide) : setProjectViewHidden(project.id, key, hide)),
-      () => applyTabState({ kind, key, hidden: hide }),
-    );
+    setTabHiddenOverride(project.id, kind, key, hide);
+    run(async () => {
+      const result = kind === "tab" ? await setProjectTabHidden(project.id, key, hide) : await setProjectViewHidden(project.id, key, hide);
+      if (result.error) dropTabHiddenOverride(project.id, kind, key);
+      return result;
+    });
   }
   const shownShared = shared.filter((v) => !hiddenViews.has(v.id));
 

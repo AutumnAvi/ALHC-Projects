@@ -548,28 +548,24 @@ test("the pane (batch 9a): after an approval with More steps, an Editor who isn'
   assert.ok(!/>Mark complete<\/button>/.test(viewer), "a Viewer still can't");
 });
 
-test("the approval summary (Nov 4 notes, batch 27, 161): one row — status and round, approvers, due, the next step; the rest in a Details dialog", () => {
+test("the approval section (Nov 18 notes, batch 44, item 2): a dark header, the state in words, the next step, and every detail in place", () => {
   const html = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: ["sam", "lee"] }))} profiles={people} memberId="me" />);
+  assert.match(html, /data-approval-section=""/);
+  assert.match(html, /<header class="[^"]*bg-shell[^"]*text-white/, "its own dark header");
+  assert.match(html, /<h3[^>]*>Approval<\/h3>/, "with its own heading");
+  assert.match(html, /data-approval-pill=""/, "the status pill");
+  assert.match(html, /Not sent/);
+  assert.match(html, /data-approval-headline="">Not sent yet\./, "the state in plain words, visible");
+  assert.equal(html.match(/data-approver="/g)?.length, 2, "each approver");
   const row = html.slice(html.indexOf('data-approval-row=""'));
-  assert.match(row, /data-approval-pill=""/, "the status pill");
-  assert.match(row, /Not sent/);
-  assert.equal(row.match(/data-approver="/g)?.length, 2, "each approver's face");
-  assert.match(row, /aria-label="Approvers: Sam Approver and Lee Second"|aria-label="Approvers: Sam Approver, Lee Second"/);
-  assert.match(row, /aria-haspopup="dialog"/, "the summary opens Details");
-  assert.match(html, /data-approval-headline="">Not sent yet\./, "screen readers get the headline");
   assert.match(row, />Ready for approval<\/button>/, "the viewer's next step");
-  assert.ok(!/Who decides/.test(html), "how they decide is in Details");
-  assert.ok(!/data-approval-details=""/.test(html), "Details is closed by default");
-  assert.ok(!/History ·/.test(html), "and so is the history");
+  assert.match(html, /Who decides/, "how they decide is right there");
+  assert.match(html, /Approval due/);
+  assert.match(html, />Change</, "Change approvers");
+  assert.ok(!/role="dialog"/.test(html), "no Details dialog any more");
+  assert.match(html, /<section id="approval-section-[^"]+" tabindex="-1"/, "the heading under the name scrolls to it and focuses it");
 
-  const open = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: ["sam", "lee"] }))} profiles={people} memberId="me" initialDetailsOpen />);
-  assert.match(open, /role="dialog"/);
-  assert.match(open, /data-approval-details=""/);
-  assert.match(open, /Who decides/);
-  assert.match(open, /Approval due/);
-  assert.match(open, />Change</, "Change approvers");
-
-  const one = render(<ApprovalTaskBanner task={approvalTask("editor", info())} profiles={people} memberId="me" initialDetailsOpen />);
+  const one = render(<ApprovalTaskBanner task={approvalTask("editor", info())} profiles={people} memberId="me" />);
   assert.match(one, />Approver</, "one approver: singular");
 
   const none = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: [] }))} profiles={people} memberId="me" />);

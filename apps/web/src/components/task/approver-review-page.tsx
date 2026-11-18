@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApprovalDecisionForm } from "@/components/task/task-approval-banner";
 import { useServerAction } from "@/components/toast";
@@ -30,6 +30,12 @@ export function ApproverReviewPage(props: {
   const router = useRouter();
   const [pending, run] = useServerAction();
   const [rejecting, setRejecting] = useState(false);
+  const rejectRef = useRef<HTMLDivElement>(null);
+  // Batch 44 (item 1): Reject sits in the review's pinned bar next to Submit; its note form opens below.
+  function startRejecting() {
+    setRejecting(true);
+    requestAnimationFrame(() => rejectRef.current?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  }
   const { backHref, recipientName, details, stayAfterApproval = false, ...rest } = props;
   const hasFiles = approverReviewFiles(rest.round, rest.attachments).length > 0;
 
@@ -56,17 +62,44 @@ export function ApproverReviewPage(props: {
       <div className="mx-auto max-w-3xl space-y-4" data-approve-text-only="">
         <ReviewTaskDetailsPanel details={details} />
         {finalText}
-        <ApprovalDecisionForm idPrefix={`approve-${rest.taskId}`} pending={pending} recipientName={recipientName} onDecide={decide} />
+        {/* Batch 44 (item 1): the decisions stay at the bottom of the screen however long the text is. */}
+        <div
+          className="sticky bottom-0 z-10 -mx-1 rounded-t-lg bg-white px-1 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-10px_20px_-14px_rgba(24,24,27,0.35)]"
+          data-approve-decide=""
+        >
+          <ApprovalDecisionForm idPrefix={`approve-${rest.taskId}`} pending={pending} recipientName={recipientName} onDecide={decide} />
+        </div>
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <ReviewTaskDetailsPanel details={details} />
-      {finalText}
-      <ApproverReview {...rest} variant="full" onDone={() => (stayAfterApproval ? router.refresh() : router.push(backHref))} />
-      <div className="border-t border-zinc-200 pt-3" data-approve-reject="">
+      <ApproverReview
+        {...rest}
+        variant="full"
+        intro={
+          <>
+            <ReviewTaskDetailsPanel details={details} />
+            {finalText}
+          </>
+        }
+        onDone={() => (stayAfterApproval ? router.refresh() : router.push(backHref))}
+        extraAction={
+          rejecting ? null : (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={startRejecting}
+              className="btn-secondary h-8 border-red-200 px-3 text-red-700 hover:bg-red-50"
+              data-approve-reject-start=""
+            >
+              Reject this round…
+            </button>
+          )
+        }
+      />
+      <div ref={rejectRef} className="scroll-mb-40" data-approve-reject="">
         {rejecting ? (
           <ApprovalDecisionForm
             idPrefix={`approve-reject-${rest.taskId}`}
@@ -76,16 +109,7 @@ export function ApproverReviewPage(props: {
             onCancel={() => setRejecting(false)}
             onDecide={decide}
           />
-        ) : (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => setRejecting(true)}
-            className="btn-secondary border-red-200 text-red-700 hover:bg-red-50"
-          >
-            Reject this round…
-          </button>
-        )}
+        ) : null}
       </div>
     </div>
   );

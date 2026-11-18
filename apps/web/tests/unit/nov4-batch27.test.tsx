@@ -117,13 +117,18 @@ test("161: short names and snippets for the pills, and the subtask text keeps th
   assert.equal(feedbackSubtaskText({ fileName: null, text: "Bigger" }), "Bigger");
 });
 
-test("161: the summary pill says the status and the round; the block moved from the top to the fields", () => {
+test("161 / batch 44: the summary pill says the status and the round; the section sits after the description", () => {
   assert.equal(approvalPillText("changes_requested", 3), "Changes requested · Round 3");
   assert.equal(approvalPillText("not_sent", null), "Not sent");
   assert.equal(approvalPillText("not_sent", 2), "Not sent", "a withdrawn round isn't a round in progress");
   const pane = fs.readFileSync("src/components/task/task-detail-panel.tsx", "utf8");
-  assert.ok(pane.indexOf("<ApprovalTaskBanner") > pane.indexOf("</dl>"), "under the field rows, not at the top");
-  assert.ok(pane.indexOf("<ApprovalFeedback") < pane.indexOf("<TaskAttachments"), "the feedback sits by the files");
+  // Nov 18 notes (batch 44, item 2): a status heading under the name; the section after the description,
+  // before the subtasks, and not among the field rows.
+  assert.ok(pane.indexOf("<ApprovalStatusHeading") > pane.indexOf("<PaneTitle"), "the heading under the name");
+  assert.ok(pane.indexOf("<ApprovalStatusHeading") < pane.indexOf("</dl>"), "above the fields");
+  assert.ok(pane.indexOf("<ApprovalTaskBanner") > pane.indexOf("<TaskDescription"), "after the description");
+  assert.ok(pane.indexOf("<ApprovalTaskBanner") < pane.indexOf("<TaskSubtasks"), "before the subtasks");
+  assert.ok(!pane.includes("<ApprovalFeedback"), "the feedback is inside the section");
 });
 
 // ---------------------------------------------------------------------------------------------

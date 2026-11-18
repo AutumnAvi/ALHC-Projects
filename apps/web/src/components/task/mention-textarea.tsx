@@ -17,9 +17,13 @@ import {
   displayPieces,
   displayToBody,
   hasChips,
+  isMentionChip,
   removeChipAt,
   seedChipLinks,
+  seedMentionPeople,
   snapCaret,
+  tidyDisplay,
+  wrapMentions,
   type ChipLinks,
 } from "@/lib/link-chips";
 import type { CommentRefs } from "@alhc/core/api/comments/model";
@@ -141,8 +145,16 @@ export function MentionTextarea({
   const [chipLinks, setChipLinks] = useState<ChipLinks>(() =>
     links ? seedChipLinks(value, (link) => knownLinkName(link, linkRefs)) : NO_CHIP_LINKS,
   );
-  const display = bodyToDisplay(value, chipLinks);
-  const chips = links && hasChips(display);
+  // Batch 44 (item 5): people picked here (and those the text already mentions) show as chips too.
+  const [mentionPeople, setMentionPeople] = useState<Profile[]>(() => (peopleOn ? seedMentionPeople(value, candidates) : []));
+  const toDisplay = (body: string, linkSet: ChipLinks, people: readonly Profile[] = mentionPeople) =>
+    wrapMentions(bodyToDisplay(body, linkSet), people);
+  // What the box shows while it's being typed in (chips and all). A picked "@Dana Lee" and one typed by
+  // hand read the same in the body, so the box keeps its own text and builds it from the body again only
+  // when the body changed from outside (cleared after sending, put back after a failure).
+  const [boxText, setBoxText] = useState<string | null>(null);
+  const display = boxText !== null && displayToBody(boxText, chipLinks) === value ? boxText : toDisplay(value, chipLinks);
+  const chips = hasChips(display);
   const lastCaret = useRef<number | null>(null);
   const [trigger, setTrigger] = useState<Trigger | null>(null);
   const [active, setActive] = useState(0);
@@ -243,7 +255,10 @@ export function MentionTextarea({
     let token: string;
     let nextLinks = chipLinks;
     if (item.kind === "person") {
-      token = mentionToken(item.profile);
+      // The token goes in as a chip ("@Dana Lee", then a space); the body gets the plain token.
+      const plain = mentionToken(item.profile).trimEnd();
+      token = `${chipText(plain)} `;
+      if (!mentionPeople.some((p) => p.id === item.profile.id)) setMentionPeople((current) => [...current, item.profile]);
     } else {
       const url =
         item.kind === "task"
@@ -257,6 +272,7 @@ export function MentionTextarea({
     }
     const next = display.slice(0, trigger.start) + token + display.slice(trigger.end);
     if (nextLinks !== chipLinks) setChipLinks(nextLinks);
+    setBoxText(next);
     onValueChange(displayToBody(next, nextLinks));
     setTrigger(null);
     const caret = trigger.start + token.length;
@@ -274,8 +290,9 @@ export function MentionTextarea({
   function change(element: HTMLTextAreaElement) {
     const raw = element.value;
     const body = displayToBody(raw, chipLinks);
+    const tidied = tidyDisplay(raw, chipLinks, mentionPeople);
+    setBoxText(tidied);
     onValueChange(body);
-    const tidied = bodyToDisplay(body, chipLinks);
     if (tidied !== raw) placeCaret(caretAfterTidy(raw, tidied, element.selectionStart ?? raw.length));
   }
 
@@ -304,11 +321,9 @@ export function MentionTextarea({
         }}
         onKeyDown={(e) => {
           const element = e.currentTarget;
-          // An IME is composing (Japanese, Chinese, …): its Enter confirms the text, nothing else.
-          if (isComposingKey(e)) {
-            props.onKeyDown?.(e);
-            return;
-          }
+          // An IME is composing (Japanese, Chinese, …): its Enter confirms the text, nothing else — not
+          // even the owner's own keys (the task name's Enter would save and close before the text lands).
+          if (isComposingKey(e)) return;
           if (
             (e.key === "Backspace" || e.key === "Delete") &&
             !e.metaKey &&
@@ -320,6 +335,7 @@ export function MentionTextarea({
             const removed = removeChipAt(element.value, element.selectionStart ?? 0, e.key);
             if (removed) {
               e.preventDefault();
+              setBoxText(removed.display);
               onValueChange(displayToBody(removed.display, chipLinks));
               setTrigger(null);
               placeCaret(removed.caret);
@@ -497,14 +513,26 @@ function LinkChipLayer({ display, textarea }: { display: string; textarea: React
     >
       {displayPieces(display).map((piece, index) =>
         piece.type === "chip" ? (
-          <span
-            key={index}
-            data-link-chip=""
-            title={piece.label}
-            className="rounded-[3px] bg-accent-50 text-accent-800 shadow-[0_0_0_2px_var(--color-accent-50)] [box-decoration-break:clone]"
-          >
-            {piece.text}
-          </span>
+          isMentionChip(piece.label) ? (
+            // A person (batch 44, item 5): the posted comment's mention pill colors, without its padding or
+            // bold, so the text keeps its width under the caret.
+            <span
+              key={index}
+              data-mention-chip=""
+              className="rounded-[3px] bg-accent-50 text-accent-700 shadow-[0_0_0_2px_var(--color-accent-50)] [box-decoration-break:clone]"
+            >
+              {piece.text}
+            </span>
+          ) : (
+            <span
+              key={index}
+              data-link-chip=""
+              title={piece.label}
+              className="rounded-[3px] bg-accent-50 text-accent-800 shadow-[0_0_0_2px_var(--color-accent-50)] [box-decoration-break:clone]"
+            >
+              {piece.text}
+            </span>
+          )
         ) : (
           <span key={index}>{piece.text}</span>
         ),

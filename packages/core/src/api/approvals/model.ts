@@ -24,3 +24,14 @@ export type SentForApproval = { roundId: string | undefined; files: string[] };
 
 // Nov 1 notes, batch 9a: the guided approval setup's follow-up step.
 export type ApprovalFollowUpInput = { followUp: ApprovalFollowUp; sectionId: string | null; reminders: boolean };
+
+// Nov 18 notes (batch 44, item 3): an approval is made in one go from its setup — the kind, the approvers,
+// what happens after, and (when changed) the external reviewer. `fromKind` is what the task is now; any
+// failure puts it back to that, so no task is ever left a half set-up approval.
+export type ApprovalTaskSetupInput = {
+  fromKind: "task" | "milestone" | "approval";
+  approvers: TaskApproversInput;
+  followUp: ApprovalFollowUpInput;
+  // Undefined: leave who the external review is meant for as it is; an email of null clears it.
+  reviewer?: { email: string | null; name: string | null };
+};
