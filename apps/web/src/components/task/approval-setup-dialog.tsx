@@ -9,8 +9,10 @@ import { Dialog } from "@/components/dialog";
 import { Popover } from "@/components/popover";
 import { SmartPicker } from "@/components/smart-picker";
 import { useNotify, useServerAction } from "@/components/toast";
-import { setApprovalFollowUp, setTaskApprovers } from "@/lib/actions/approvals";
-import { saveExternalReviewer, withdrawReviewCheck } from "@/lib/actions/reviews";
+import { setUpApprovalTask } from "@/lib/actions/approvals";
+import { withdrawReviewCheck } from "@/lib/actions/reviews";
+import { setTaskKind } from "@/lib/actions/tasks";
+import type { TaskKind } from "@alhc/core/task-kinds";
 import { externalReviewerSectionOpen, reviewerLabel, TWO_STAGE_FOLLOW_UP_NOTE, TWO_STEP_NOTE } from "@alhc/core/external-review";
 import {
   APPROVAL_SETUP_LEAVE,
@@ -38,17 +40,23 @@ import { PeopleList } from "./person-picker";
 // review that is already open is named, with Withdraw, instead of being replaced silently.
 // Notes 184–186: the external reviewer is a collapsed optional section; "When it's approved" is on this
 // screen (the stays-open note when it's two-stage); leaving with no approver asks first.
+// Nov 18 notes (batch 44, item 3): `make` — the task becomes an approval only when this is done
+// (setUpApprovalTask: the type, the approvers, and what happens after, in one go). Leaving early writes
+// nothing: the task stays what it was (`undoKind`: only for a template's task that is still an approval —
+// its save as a plain task was refused — which goes back to that kind, so no approval is ever left without
+// its approvers).
 export function ApprovalSetupDialog({
   task,
   profiles,
   onClose,
-  ready,
+  make = false,
+  undoKind,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   onClose: () => void;
-  // Nov 2 notes (batch 15, 112): opened while the task type is still being saved; saving waits for it.
-  ready?: Promise<{ error?: string }> | null;
+  make?: boolean;
+  undoKind?: TaskKind;
 }) {
   const ids = useId();
   const notify = useNotify();
@@ -102,8 +110,18 @@ export function ApprovalSetupDialog({
   });
 
   // Note 185: closing (Skip, Escape, the X) while nobody approves it yet asks before leaving the task
-  // half set up. A setup that already has approvers just closes.
+  // half set up. A setup that already has approvers just closes. Batch 44: making a task an approval
+  // isn't half set up when it's left — it simply doesn't happen (nothing was saved), so it just closes.
   async function requestClose() {
+    // While Done is saving, the setup stays open: closing then would say nothing changed while the save
+    // goes on (and a Cancel's undo could race it).
+    if (pending) return;
+    if (make) {
+      if (undoKind && undoKind !== task.kind) run(() => setTaskKind(task.id, undoKind));
+      notify(`Not made an approval. It stays a ${(undoKind ?? task.kind) === "milestone" ? "milestone" : "task"}.`);
+      onClose();
+      return;
+    }
     if (approvalSetupUnfinished(info?.approverIds.length ?? 0)) {
       const leave = await confirm(APPROVAL_SETUP_LEAVE);
       if (!leave) return;
@@ -121,36 +139,35 @@ export function ApprovalSetupDialog({
     setTried(true);
     if (problem) return;
     run(async () => {
-      if (ready) {
-        const made = await ready;
-        if (made.error) return made;
-      }
-      const approvers = await setTaskApprovers(task.id, { approverIds: draft.approverIds, mode: draft.mode, dueOn: draft.dueOn });
-      if (approvers.error) return approvers;
-      const followUp = await setApprovalFollowUp(task.id, {
-        followUp: draft.followUp,
-        sectionId: draft.sectionId,
-        reminders: draft.reminders,
+      const result = await setUpApprovalTask(task.id, {
+        // A template's task that is still an approval (undoKind) keeps its kind; anything else becomes one now.
+        fromKind: make ? task.kind : "approval",
+        approvers: { approverIds: draft.approverIds, mode: draft.mode, dueOn: draft.dueOn },
+        followUp: { followUp: draft.followUp, sectionId: draft.sectionId, reminders: draft.reminders },
+        reviewer:
+          reviewerChanged && (reviewerEmail.trim() || savedReviewer)
+            ? { email: reviewerEmail.trim() || null, name: reviewerName.trim() || null }
+            : undefined,
       });
-      if (!followUp.error && reviewerChanged && (reviewerEmail.trim() || savedReviewer)) {
-        const saved = await saveExternalReviewer(task.id, reviewerEmail.trim() || null, reviewerName.trim() || null);
-        if (saved.error) return saved;
-      }
-      if (!followUp.error) {
-        notify(`Approval set up. ${approvalSetupSummary(draft, names, sectionName, twoStage)}`);
+      if (!result.error) {
+        notify(`${make ? "Approval made" : "Approval set up"}. ${approvalSetupSummary(draft, names, sectionName, twoStage)}`);
         onClose();
       }
-      return followUp;
+      return result;
     });
   }
 
   return (
     <Dialog
-      title="Set up this approval"
-      description="Who approves it, and what happens when they do."
+      title={make ? "Make this an approval" : "Set up this approval"}
+      description={
+        make
+          ? "It becomes an approval task only when you finish here. Until then nothing changes."
+          : "Who approves it, and what happens when they do."
+      }
       onClose={requestClose}
     >
-      <div className="flex flex-col gap-4" data-approval-setup="setup">
+      <div className="flex flex-col gap-4" data-approval-setup={make ? "make" : "setup"}>
         <div className="flex flex-col gap-2">
           <p className="text-sm text-zinc-600">
             Pick the people who approve it. The assignee does the work, then sends it to them.
@@ -344,11 +361,17 @@ export function ApprovalSetupDialog({
         ) : null}
 
         <div className="flex items-center gap-2 border-t border-zinc-100 pt-3">
-          <button type="button" onClick={() => void requestClose()} className="btn-ghost mr-auto text-zinc-500" data-approval-setup-skip="">
-            Skip for now
+          <button
+            type="button"
+            onClick={() => void requestClose()}
+            disabled={pending}
+            className="btn-ghost mr-auto text-zinc-500"
+            data-approval-setup-skip=""
+          >
+            {make ? "Cancel" : "Skip for now"}
           </button>
-          <button type="button" onClick={finish} disabled={pending} className="btn-primary">
-            {pending ? "Saving…" : "Done"}
+          <button type="button" onClick={finish} disabled={pending} className="btn-primary" data-approval-setup-done="">
+            {pending ? "Saving…" : make ? "Make it an approval" : "Done"}
           </button>
         </div>
       </div>

@@ -27,7 +27,6 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteTask, restoreTask, setTaskKind } from "@/lib/actions/tasks";
 import { setReplyThreadClosed } from "@/lib/actions/comments";
-import { type ActionResult } from "@alhc/core/api/core/result";
 import { requestApprovalAction } from "./approval-action";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { describeRecurrence } from "@alhc/core/recurrence";
@@ -81,7 +80,9 @@ export function TaskMoreMenu({
   onCopyLink: () => void;
   onDeleted: () => void;
   // Opens the approval setup at once; `ready` settles when the task type is saved.
-  onApprovalSetup?: (ready: Promise<ActionResult>) => void;
+  // Nov 18 notes (batch 44, item 3): Task type → Approval opens the approval setup; the type is saved
+  // with the setup's Done (leaving the setup early changes nothing).
+  onApprovalSetup?: () => void;
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
@@ -126,24 +127,15 @@ export function TaskMoreMenu({
     ) {
       return;
     }
-    // Nov 2 notes (batch 15, 112): a new approval task opens the guided setup at once (approvers, then
-    // what happens after approval); the type is saved in the background and the setup waits for it
-    // before saving its own choices.
-    if (kind === "approval" && onApprovalSetup) {
-      let settle: (result: ActionResult) => void = () => {};
-      onApprovalSetup(new Promise<ActionResult>((resolve) => (settle = resolve)));
-      run(async () => {
-        const result = await setTaskKind(task.id, kind);
-        settle(result);
-        return result;
-      });
+    // Nov 2 notes (batch 15, 112): making it an approval opens the guided setup at once. Nov 18 notes
+    // (batch 44, item 3): nothing is saved until the setup is done — its Done makes it an approval with
+    // its approvers in one go, and leaving early leaves the task as it was.
+    if (kind === "approval") {
+      if (onApprovalSetup) onApprovalSetup();
+      else requestApprovalAction(task.id, "convert");
       return;
     }
-    run(async () => {
-      const result = await setTaskKind(task.id, kind);
-      if (!result.error && kind === "approval") requestApprovalAction(task.id, "setup");
-      return result;
-    });
+    run(() => setTaskKind(task.id, kind));
   }
 
   // Close or reopen the request's reply thread, with Undo on the toast.

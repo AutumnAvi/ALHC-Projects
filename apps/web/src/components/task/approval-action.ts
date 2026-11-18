@@ -12,8 +12,12 @@ import { useOpenTask } from "./task-link";
 // mounted yet (the pane draws the row's preview while the task loads), so the request waits here for a
 // short while and the banner takes it when it mounts; an open banner hears it through the event.
 
-// "setup" (Nov 1 notes, batch 9a): open the guided approval setup (the task just became an approval task).
-export type ApprovalAction = "send" | "decide" | "setup";
+// "setup" (Nov 1 notes, batch 9a): open the guided approval setup of an approval task (Finish setup).
+// "convert" (Nov 18 notes, batch 44, item 3): make the task an approval through its setup — the pane opens
+// the setup on a plain task (added from a List / Board row as Approval), and the task becomes an approval
+// only when the setup is done. A template's approval task opens it too, and leaving the setup early makes
+// that task a plain task.
+export type ApprovalAction = "send" | "decide" | "setup" | "convert";
 
 const APPROVAL_ACTION_EVENT = "alhc:approval-action";
 // A request the pane didn't pick up by then (another task was opened meanwhile) is forgotten.
@@ -26,23 +30,34 @@ export function requestApprovalAction(taskId: string, action: ApprovalAction) {
   window.dispatchEvent(new Event(APPROVAL_ACTION_EVENT));
 }
 
-function takeApprovalAction(taskId: string): ApprovalAction | null {
+function takeApprovalAction(taskId: string, accepts: (action: ApprovalAction) => boolean): ApprovalAction | null {
   if (!pending || pending.taskId !== taskId) return null;
   const { action, at } = pending;
+  if (Date.now() - at > FRESH_MS) {
+    pending = null;
+    return null;
+  }
+  // A request another listener of this task handles (the pane vs. its approval section) stays waiting.
+  if (!accepts(action)) return null;
   pending = null;
-  return Date.now() - at <= FRESH_MS ? action : null;
+  return action;
 }
 
-// The approval banner: runs `onAction` for a request about its task (now, or whenever one comes).
-export function useApprovalActionListener(taskId: string, onAction: (action: ApprovalAction) => void) {
-  const handler = useRef(onAction);
+// The approval section (and the pane, for "convert" on a plain task): runs `onAction` for a request about
+// its task (now, or whenever one comes) that `accepts` takes.
+export function useApprovalActionListener(
+  taskId: string,
+  onAction: (action: ApprovalAction) => void,
+  accepts: (action: ApprovalAction) => boolean = () => true,
+) {
+  const handler = useRef({ onAction, accepts });
   useEffect(() => {
-    handler.current = onAction;
+    handler.current = { onAction, accepts };
   });
   useEffect(() => {
     const check = () => {
-      const action = takeApprovalAction(taskId);
-      if (action) handler.current(action);
+      const action = takeApprovalAction(taskId, (a) => handler.current.accepts(a));
+      if (action) handler.current.onAction(action);
     };
     check();
     window.addEventListener(APPROVAL_ACTION_EVENT, check);
