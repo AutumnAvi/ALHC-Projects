@@ -38,6 +38,7 @@ import {
   submitterReplyToken,
 } from "@alhc/core/api/system/queries";
 import { adminContext } from "@/lib/server/context";
+import { sendThroughResend } from "@/lib/email-send";
 import { EMAIL_GRID_FILES, emailFileList, type ReviewEmailAsset } from "@/lib/review-email";
 import { approverReviewHref } from "@alhc/core/approver-review";
 import { isUuid } from "@alhc/core/ids";
@@ -820,40 +821,52 @@ export function renderDesignSample(
 // One email sent right away (not through the outbox): a review check's email (Oct 26
 // notes, batch 3), whose link carries a token the database keeps only as a hash, so it can't wait in the
 // outbox. Mocked without an email provider. Logs only `what`, never an address or a link.
-export async function sendEmailNow(
+// Nov 24 batch 45 (item 5): a few short tries inside one time budget with the same Idempotency-Key
+// (email-send.ts), and the outcome — Resend's id, or why it didn't go out — instead of a throw.
+export type SendNowResult =
+  | { outcome: "sent"; id: string | null }
+  | { outcome: "mocked" }
+  | { outcome: "failed"; reason: string; status: number | null };
+
+export async function sendEmailNowResult(
   to: string,
   email: Rendered,
   what: string,
-  idempotencyKey?: string,
-): Promise<"sent" | "mocked"> {
+  idempotencyKey: string,
+  options: { budgetMs?: number } = {},
+): Promise<SendNowResult> {
   if (!isEmailConfigured()) {
     console.info(`[email:mocked] ${what}`);
-    return "mocked";
+    return { outcome: "mocked" };
   }
   const ctx = adminContext();
-  const senderName = ctx ? await emailSenderName(ctx) : null;
+  const senderName = ctx ? await emailSenderName(ctx).catch(() => null) : null;
   // No Reply-To here: a review check's email and every test are no-reply; a test of a replyable email
   // (a response to a submitter) comes from the same sender as the real one would.
   // Review checks (the only caller) are requester emails, as is a replyable design test.
   const from = fromFor(email.replyable === true, senderName, true)!;
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
-    },
-    body: JSON.stringify({
-      from,
-      to: [to],
-      subject: email.subject.slice(0, 300),
-      text: email.text,
-      html: email.html,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`Resend responded ${response.status}`);
-  return "sent";
+  const result = await sendThroughResend(
+    { from, to, subject: email.subject, text: email.text, html: email.html },
+    { apiKey: process.env.RESEND_API_KEY ?? "", idempotencyKey, budgetMs: options.budgetMs },
+  );
+  if (result.outcome === "sent") {
+    if (result.attempts > 1) console.info(`[email] ${what} sent on try ${result.attempts}`);
+    return { outcome: "sent", id: result.id };
+  }
+  console.error(`[email] ${what} not sent after ${result.attempts} ${result.attempts === 1 ? "try" : "tries"}: ${result.reason}`);
+  return { outcome: "failed", reason: result.reason, status: result.status };
+}
+
+// The older contract (sent / mocked, or a throw): kept for callers that only need that.
+export async function sendEmailNow(
+  to: string,
+  email: Rendered,
+  what: string,
+  idempotencyKey: string,
+): Promise<"sent" | "mocked"> {
+  const result = await sendEmailNowResult(to, email, what, idempotencyKey);
+  if (result.outcome === "failed") throw new Error(result.reason);
+  return result.outcome;
 }
 
 // Signed thumbnail links in an approval request email last this long (the email's own life; after that

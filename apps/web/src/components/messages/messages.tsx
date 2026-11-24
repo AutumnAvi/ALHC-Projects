@@ -8,6 +8,8 @@ import { displayName } from "@alhc/core/people";
 import { useConfirm } from "@/components/confirm";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { MentionTextarea } from "@/components/task/mention-textarea";
+import { DictationBar, TalkButton } from "@/components/dictation-button";
+import { useDictation } from "@/lib/dictation";
 import { COMMENT_INPUT, MentionText, ReactionBar } from "@/components/task/task-activity";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -157,6 +159,8 @@ function ThreadList({
   const [composing, setComposing] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  // Batch 45: Talk (dictation) into a new message.
+  const talk = useDictation();
   useMessagesRealtime(scope, "messages", false);
   const team = scope.kind === "team" ? scope : null;
 
@@ -214,24 +218,34 @@ function ThreadList({
             onValueChange={setBody}
             candidates={candidates}
             onSubmit={submit}
+            dictation={talk}
             placeholder={
               team ? "Write a message. Type @ to mention someone" : "Write a message. Type @ to mention someone in this project"
             }
             className={COMMENT_INPUT}
           />
-          <div className="flex items-center justify-end gap-2">
-            <span className="mr-auto text-xs text-zinc-500">
-              {team
-                ? `Everyone on ${team.name} is notified. Anyone you @mention is too, and follows the thread.`
-                : "Only project members can be @mentioned."}
-            </span>
-            <button type="button" className="btn-ghost" onClick={() => setComposing(false)}>
-              Cancel
-            </button>
-            <button type="submit" className="btn-primary" disabled={pending || !title.trim() || !body.trim()}>
-              Post
-            </button>
-          </div>
+          {talk.listening ? (
+            <DictationBar dictation={talk}>
+              <button type="submit" className="btn-primary" disabled>
+                Post
+              </button>
+            </DictationBar>
+          ) : (
+            <div className="flex items-center justify-end gap-2">
+              <span className="mr-auto text-xs text-zinc-500">
+                {team
+                  ? `Everyone on ${team.name} is notified. Anyone you @mention is too, and follows the thread.`
+                  : "Only project members can be @mentioned."}
+              </span>
+              <TalkButton dictation={talk} label="Dictate the message" />
+              <button type="button" className="btn-ghost" onClick={() => setComposing(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary" disabled={pending || !title.trim() || !body.trim()}>
+                Post
+              </button>
+            </div>
+          )}
         </form>
       ) : null}
 
@@ -337,6 +351,8 @@ function ThreadView({
   const nameOf = useNames(profiles);
   const [pending, run] = useServerAction();
   const [reply, setReply] = useState("");
+  // Batch 45: Talk (dictation) into a reply.
+  const talk = useDictation();
   useMessagesRealtime(scope, "thread", true);
 
   function submitReply() {
@@ -410,17 +426,27 @@ function ThreadView({
             onValueChange={setReply}
             candidates={candidates}
             onSubmit={submitReply}
+            dictation={talk}
             placeholder={scope.kind === "team" ? "Reply. Type @ to mention someone" : "Reply. Type @ to mention someone in this project"}
             className={COMMENT_INPUT}
           />
-          <div className="mt-2 flex items-center justify-end gap-2">
-            {scope.kind === "team" ? (
-              <span className="mr-auto text-xs text-zinc-500">Replying makes you follow this thread.</span>
-            ) : null}
-            <button type="button" className="btn-primary" onClick={submitReply} disabled={pending || !reply.trim()}>
-              Reply
-            </button>
-          </div>
+          {talk.listening ? (
+            <DictationBar dictation={talk} className="mt-2">
+              <button type="button" className="btn-primary" disabled>
+                Reply
+              </button>
+            </DictationBar>
+          ) : (
+            <div className="mt-2 flex items-center justify-end gap-2">
+              {scope.kind === "team" ? (
+                <span className="mr-auto text-xs text-zinc-500">Replying makes you follow this thread.</span>
+              ) : null}
+              <TalkButton dictation={talk} label="Dictate the reply" />
+              <button type="button" className="btn-primary" onClick={submitReply} disabled={pending || !reply.trim()}>
+                Reply
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <p className="text-sm text-zinc-600">

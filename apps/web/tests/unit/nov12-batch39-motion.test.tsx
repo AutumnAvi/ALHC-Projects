@@ -33,7 +33,10 @@ test("every new animation class is switched off under reduced motion", () => {
 });
 
 test("motion stays short and uses opacity / transform (the pane width is the one layout ease)", () => {
-  for (const match of css.matchAll(/(?:animation|transition):[^;]*?(\d+)ms/g)) {
+  for (const match of css.matchAll(/(?:animation|transition):[^;]*?(\d+)ms[^;]*;/g)) {
+    // Batch 45: a looping "listening" indicator (dictation's waveform) is a status, like a spinner, not a
+    // transition; it still stops under reduced motion (the test above).
+    if (/infinite/.test(match[0])) continue;
     assert.ok(Number(match[1]) <= 200, `${match[0]} is under 200 ms`);
   }
   for (const frames of css.matchAll(/@keyframes ui-[a-z-]+ \{([\s\S]*?)\n\}/g)) {

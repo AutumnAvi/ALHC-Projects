@@ -548,11 +548,12 @@ test("the pane (batch 9a): after an approval with More steps, an Editor who isn'
   assert.ok(!/>Mark complete<\/button>/.test(viewer), "a Viewer still can't");
 });
 
-test("the approval section (Nov 18 notes, batch 44, item 2): a dark header, the state in words, the next step, and every detail in place", () => {
+// Nov 24 batch 45: the section is the blue "Team approver" block (no dark header).
+test("the approval section (batch 44, item 2 / batch 45): the team block, the state in words, the next step, and every detail in place", () => {
   const html = render(<ApprovalTaskBanner task={approvalTask("editor", info({ approverIds: ["sam", "lee"] }))} profiles={people} memberId="me" />);
   assert.match(html, /data-approval-section=""/);
-  assert.match(html, /<header class="[^"]*bg-shell[^"]*text-white/, "its own dark header");
-  assert.match(html, /<h3[^>]*>Approval<\/h3>/, "with its own heading");
+  assert.match(html, /data-review-block="team"/, "the blue team block");
+  assert.match(html, /<h3[^>]*><span data-role-tag="team"[^>]*>.*Team approver<\/span><\/h3>/, "headed by its role");
   assert.match(html, /data-approval-pill=""/, "the status pill");
   assert.match(html, /Not sent/);
   assert.match(html, /data-approval-headline="">Not sent yet\./, "the state in plain words, visible");
@@ -585,7 +586,7 @@ test("the approval section (Nov 18 notes, batch 44, item 2): a dark header, the 
   assert.match(deciding, />Request changes<\/button>/);
   assert.match(deciding, />Reject<\/button>/);
   assert.match(deciding, /aria-label="Waiting"/, "their own request shows as waiting");
-  assert.match(deciding, /Waiting for approval · Round 1/);
+  assert.match(deciding, /Waiting on you/, "batch 45: the team block's status badge");
 });
 
 test("seeds and the instant preview know the button too", () => {

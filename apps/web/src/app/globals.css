@@ -321,6 +321,37 @@
   box-shadow: 0 6px 16px -4px rgb(24 24 27 / 0.18), 0 2px 4px -2px rgb(24 24 27 / 0.12);
 }
 
+/* Batch 45 (dictation): the listening waveform and the recording dot. Still under reduced motion. */
+@keyframes dictation-wave {
+  0%,
+  100% {
+    transform: scaleY(0.45);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes dictation-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgb(239 68 68 / 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgb(239 68 68 / 0.15);
+  }
+}
+
+.dictation-wave-bar {
+  transform-origin: center;
+  animation: dictation-wave 900ms ease-in-out infinite;
+}
+
+.dictation-rec-dot {
+  box-shadow: 0 0 0 3px rgb(239 68 68 / 0.2);
+  animation: dictation-pulse 1.2s ease-in-out infinite;
+}
+
 /* Reduced motion (batch 39): nothing above moves for people who asked their system for less motion —
    the panels, rows, and buttons simply appear, leave, and resize at once. */
 @media (prefers-reduced-motion: reduce) {
@@ -335,7 +366,9 @@
   .ui-anim-drawer-in,
   .ui-anim-drawer-out,
   .ui-anim-drawer-out > aside,
-  .ui-anim-row-in {
+  .ui-anim-row-in,
+  .dictation-wave-bar,
+  .dictation-rec-dot {
     animation: none !important;
     transition: none !important;
   }

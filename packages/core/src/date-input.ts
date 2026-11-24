@@ -3,6 +3,8 @@
 // functions with no "use client", so server components can use them too (src/lib/dates.ts is
 // client-only).
 
+import { localDayOf, localTimeOf, zonedInstant } from "./calendar-events";
+
 const MONTH_NAMES = [
   "january",
   "february",
@@ -176,6 +178,95 @@ export function parseTimeInput(text: string): string | null {
     return null;
   }
   return `${pad(hours)}:${pad(minutes)}`;
+}
+
+// Batch 45 (Isaiah, Nov 23): a time typed next to a date — "4pm", "4 PM", "4 p.m.", "4:30pm", "16:00",
+// "noon", "midnight". Meridiem times need both letters ("4 a" isn't a time); bare hours ("at 4") aren't
+// either: they're too often part of a name.
+export const TIME_PATTERN = String.raw`(?:\d{1,2}(?::[0-5]\d)?\s?(?:a\.?\s?m\.?|p\.?\s?m\.?)(?![a-z])|(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])|noon|midnight)`;
+
+const DATE_THEN_TIME = new RegExp(String.raw`^(.+?)[,\s]+(?:at\s+)?(${TIME_PATTERN})$`, "i");
+const TIME_THEN_DATE = new RegExp(String.raw`^(?:at\s+)?(${TIME_PATTERN})[,\s]+(?:on\s+)?(.+)$`, "i");
+
+// A date with an optional time: "tomorrow at 4 p.m." → { day: tomorrow, time: "16:00" }, "Jun 14th" →
+// { day, time: null }, "4pm tomorrow" too. Null when there's no date (a time alone isn't a date).
+export function parseDateTimeInput(text: string, today: string): { day: string; time: string | null } | null {
+  const value = text.trim().replace(/\s+/g, " ");
+  if (!value) return null;
+  const day = parseDateInput(value, today);
+  if (day) return { day, time: null };
+  for (const [re, datePart, timePart] of [
+    [DATE_THEN_TIME, 1, 2],
+    [TIME_THEN_DATE, 2, 1],
+  ] as const) {
+    const match = re.exec(value);
+    if (!match) continue;
+    const found = parseDateInput(match[datePart], today);
+    const time = parseTimeInput(match[timePart]);
+    if (found && time) return { day: found, time };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Batch 45 (Isaiah, Nov 23): a task's times on one clock
+// ---------------------------------------------------------------------------------------------
+// The database keeps due_on / start_on equal to the local date of due_at / start_at in tasks.time_zone, and
+// a change of time_zone alone re-reads both dates in the new zone (sync_task_times). So a task's dates and
+// times are read and written on the task's own clock: its zone once it has a time (UTC when it has a time
+// but no zone, as the database reads it), else the viewer's. Reading the time on the viewer's clock next to
+// a date on the task's clock showed "Jun 14, 4:00 AM" for a moment that was June 15 where it was read, and
+// stamping the viewer's zone when only the other time changed moved the due date to June 15.
+
+export type TaskClock = {
+  startAt: string | null;
+  dueAt: string | null;
+  timeZone: string | null;
+};
+
+// The zone a task's times are shown and typed in.
+export function taskClockZone(task: TaskClock, viewerZone: string): string {
+  return task.dueAt || task.startAt ? task.timeZone || "UTC" : viewerZone;
+}
+
+// "HH:MM" of one of the task's times on its own clock ("" when it has none).
+export function taskTimeOf(task: TaskClock, kind: "start" | "due", viewerZone: string): string {
+  const at = kind === "due" ? task.dueAt : task.startAt;
+  return at ? localTimeOf(at, taskClockZone(task, viewerZone)) : "";
+}
+
+// The task's zone in a few letters when it isn't the viewer's ("EDT", "GMT+3"), for the time's label; null
+// when it's the viewer's own (or the task has no time).
+export function taskZoneLabel(task: TaskClock, viewerZone: string): string | null {
+  const at = task.dueAt ?? task.startAt;
+  if (!at) return null;
+  const zone = taskClockZone(task, viewerZone);
+  if (zone === viewerZone || localTimeOf(at, zone) + localDayOf(at, zone) === localTimeOf(at, viewerZone) + localDayOf(at, viewerZone)) {
+    return null;
+  }
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" })
+      .formatToParts(new Date(at))
+      .find((p) => p.type === "timeZoneName");
+    return part?.value ?? zone;
+  } catch {
+    return zone;
+  }
+}
+
+export type TimePatch = { startAt?: string | null; dueAt?: string | null; timeZone?: string };
+
+// What to save when the viewer sets one of the task's times to `hhmm` on `day` (the day as shown), or
+// clears it (null). With the other time set, the task keeps its zone (changing it would move the other
+// time's date); else the time is the viewer's, in their zone. Either way the saved date is `day`.
+export function timeEditPatch(task: TaskClock, kind: "start" | "due", day: string, hhmm: string | null, viewerZone: string): TimePatch {
+  const key = kind === "due" ? "dueAt" : "startAt";
+  if (!hhmm) return { [key]: null };
+  const other = kind === "due" ? task.startAt : task.dueAt;
+  const zone = other ? task.timeZone || "UTC" : viewerZone;
+  const patch: TimePatch = { [key]: zonedInstant(day, hhmm, zone) };
+  if (!other) patch.timeZone = viewerZone;
+  return patch;
 }
 
 // "15:30" → "3:30 PM".

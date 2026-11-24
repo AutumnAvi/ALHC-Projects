@@ -612,6 +612,9 @@ begin
   -- create or reopen the one registered Testing data pilot workspace).
   -- Nov 12 batch 39 added open_blocker_count_set (open_blocker_count for a whole list in one pass: a
   -- number per task the caller may ask about, nothing more).
+  -- Nov 24 batch 45 added record_review_email (how a review check's email went: its sender or whoever may
+  -- send it) and review_check_copy_link (a separate copyable link for an open round: Editors and whoever may
+  -- send it).
   assert exposed =
     'acknowledge_approval,add_library_field,add_portfolio_member,add_portfolio_project,add_project_member,add_task_dependency,add_workspace_admin,ai_pilot_ensure_workspace,apply_task_numbering,assign_request_number,'
     'browse_project_people,browse_projects,can_manage_project_template,can_view_team,cancel_approval,cancel_integration_delivery,cancel_review_check,clear_email_suppression,'
@@ -621,9 +624,9 @@ begin
     'is_workspace_admin,join_project,list_commenter_members,list_email_deliveries,list_email_suppressions,list_field_library,list_integration_deliveries,'
     'list_member_last_activity,list_workspace_email_deliveries,list_workspace_member_activity,locked_field_value_writable,manage_slack_workspace,move_portfolio_project,my_task_cards,my_tasks_layout,open_blocker_count,open_blocker_count_set,'
     'portfolio_hidden_project_count,portfolio_ids_with_role,portfolio_role,profile_can_read_task,project_access_status,project_field_sharing,project_ids_with_role,project_role,project_schedule_cards,project_section_task_counts,'
-    'project_task_card_page,project_task_cards,receive_inbound_webhook,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
+    'project_task_card_page,project_task_cards,receive_inbound_webhook,record_review_email,remove_portfolio_member,remove_portfolio_project,remove_project_member,remove_task_dependency,'
     'remove_workspace_admin,remove_workspace_member,request_approval,request_project_access,request_team_join,resend_workspace_invite,restore_task,resubmit_approval,'
-    'retry_email_delivery,retry_integration_delivery,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'
+    'retry_email_delivery,retry_integration_delivery,review_check_copy_link,rotate_review_check_token,rule_has_role,run_manual_rule,run_portfolio_rule,save_project_as_template,send_for_approval,'
     'set_approval_followup,set_comment_pinned,set_default_project_role,set_email_conversation_override,set_project_archived,set_project_integration,set_project_slack_destination,set_project_status,set_submitter_thread_closed,set_task_approvers,set_task_dependency,'
     'slack_destination_usable,slack_settings,start_import_run,submit_form,submitter_conversation_status,submitter_thread_status,sync_my_task_placements,task_comment_page,task_role,test_rule,transfer_portfolio_ownership,'
     'transfer_project_ownership,update_portfolio_member_role,update_project_member_role,update_project_template,viewer_project_ids,viewer_rule_ids,withdraw_approval,workspace_email_summary,'

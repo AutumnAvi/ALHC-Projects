@@ -122,12 +122,12 @@ test("161 / batch 44: the summary pill says the status and the round; the sectio
   assert.equal(approvalPillText("not_sent", null), "Not sent");
   assert.equal(approvalPillText("not_sent", 2), "Not sent", "a withdrawn round isn't a round in progress");
   const pane = fs.readFileSync("src/components/task/task-detail-panel.tsx", "utf8");
-  // Nov 18 notes (batch 44, item 2): a status heading under the name; the section after the description,
-  // before the subtasks, and not among the field rows.
-  assert.ok(pane.indexOf("<ApprovalStatusHeading") > pane.indexOf("<PaneTitle"), "the heading under the name");
-  assert.ok(pane.indexOf("<ApprovalStatusHeading") < pane.indexOf("</dl>"), "above the fields");
-  assert.ok(pane.indexOf("<ApprovalTaskBanner") > pane.indexOf("<TaskDescription"), "after the description");
-  assert.ok(pane.indexOf("<ApprovalTaskBanner") < pane.indexOf("<TaskSubtasks"), "before the subtasks");
+  // Nov 24 batch 45: the step track at the top of the card instead of the heading under the name; the
+  // review blocks (the team block is the approval section) after the subtasks, never among the field rows.
+  assert.ok(!pane.includes("<ApprovalStatusHeading"), "no status line under the name");
+  assert.ok(pane.indexOf("<ApprovalTrackCard") > 0, "the track");
+  assert.ok(pane.indexOf("<TaskReviewSection") > pane.indexOf("<TaskDescription"), "after the description");
+  assert.ok(pane.indexOf("<TaskReviewSection") > pane.indexOf("<TaskSubtasks"), "after the subtasks");
   assert.ok(!pane.includes("<ApprovalFeedback"), "the feedback is inside the section");
 });
 

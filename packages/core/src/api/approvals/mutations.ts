@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalFollowUpInput,
   ApprovalTaskSetupInput,
+  ReviewPlanInput,
   SendForApprovalInput,
   SentForApproval,
   TaskApproversInput,
@@ -148,6 +149,20 @@ export async function setApprovalFollowUp(ctx: ApiContext, taskId: string, input
   check(result);
 }
 
+// Nov 24 batch 45: the review order and the outside reviewer's due date, on the task's review settings
+// (RLS: Editors+). The database refuses changing the order while a team round or an outside review is open.
+export async function setTaskReviewPlan(ctx: ApiContext, input: { taskId: string } & ReviewPlanInput): Promise<void> {
+  const task = id(input.taskId, "task");
+  if (input.order !== "sequential" && input.order !== "parallel") throw invalid("Unknown review order");
+  const dueOn = optionalDate(input.dueOn ?? null, "outside reviewer due date");
+  check(
+    await ctx.db
+      .from("task_review_settings")
+      .upsert({ task_id: task, review_order: input.order, reviewer_due_on: dueOn }, { onConflict: "task_id" }),
+    "Only Owners and Editors can change how this task is reviewed",
+  );
+}
+
 // Nov 18 notes (batch 44, item 3): make a task an approval from its setup, all or nothing. Nothing is
 // written until every required choice is made (at least one approver, a section when it moves on
 // approval); then the kind, the approvers, the follow-up, and the reviewer are saved in that order, and a
@@ -161,8 +176,12 @@ export async function setUpApprovalTask(ctx: ApiContext, taskId: string, input: 
     throw invalid("Choose who approves it");
   }
   if (input.followUp?.followUp === "move_section" && !input.followUp.sectionId) throw invalid("Choose the section to move it to");
+  if (input.plan && input.plan.order !== "sequential" && input.plan.order !== "parallel") throw invalid("Unknown review order");
   if (from !== "approval") await setTaskKind(ctx, task, "approval");
   try {
+    // Nov 24 batch 45: the review plan first — the one step the database may refuse because a round is
+    // open (changing the order) — so a refusal leaves the rest as it was.
+    if (input.plan) await setTaskReviewPlan(ctx, { taskId: task, ...input.plan });
     await setTaskApprovers(ctx, task, input.approvers);
     await setApprovalFollowUp(ctx, task, input.followUp);
     if (input.reviewer) await setTaskExternalReviewer(ctx, { taskId: task, email: input.reviewer.email, name: input.reviewer.name });

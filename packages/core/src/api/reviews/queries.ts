@@ -7,7 +7,8 @@
 import { getViewer } from "../auth/queries";
 import { listAttachmentFiles, signedFileUrl } from "../attachments/queries";
 import type { ApiContext } from "../core/context";
-import type { ReturnedReviewFile, ReviewEmailDetails, ReviewFileLink, RoundAsset } from "./model";
+import type { OutsideReviewPlan, ReturnedReviewFile, ReviewEmailDetails, ReviewFileLink, RoundAsset } from "./model";
+import { submissionRequesterName } from "../../forms";
 import { isUuid } from "../../ids";
 import {
   isReviewStatus,
@@ -182,4 +183,49 @@ export async function reviewFileLink(
     { download: options.download, media: true, seconds: options.seconds },
   );
   return url ? { status: "ok", url } : { status: "unsigned" };
+}
+
+// Nov 24 batch 45: the task's outside review plan as the person reads it (RLS): the order and who it goes
+// to — the reviewer set on the task, else the form's requester (the top-level task's latest submission),
+// else the address the latest round went to. Mirrors the task pane's ExternalReview.reviewer.
+export async function outsideReviewPlan(ctx: ApiContext, taskId: string): Promise<OutsideReviewPlan> {
+  const supabase = ctx.db;
+  const [settings, task, latest] = await Promise.all([
+    supabase.from("task_review_settings").select("reviewer_email, reviewer_name, review_order").eq("task_id", taskId).maybeSingle(),
+    supabase.from("tasks").select("root_task_id").eq("id", taskId).maybeSingle(),
+    supabase
+      .from("review_checks")
+      .select("recipient_email, recipient_name")
+      .eq("task_id", taskId)
+      .order("round", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const order = settings.data?.review_order === "parallel" ? "parallel" : "sequential";
+  if (settings.data?.reviewer_email) {
+    return { order, reviewer: { email: settings.data.reviewer_email, name: settings.data.reviewer_name ?? null } };
+  }
+  const submission = await supabase
+    .from("form_submissions")
+    .select("form_id, submitter_email, answers")
+    .eq("task_id", task.data?.root_task_id ?? taskId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (submission.data?.submitter_email) {
+    const form = submission.data.form_id
+      ? await supabase.from("forms").select("questions").eq("id", submission.data.form_id).maybeSingle()
+      : null;
+    return {
+      order,
+      reviewer: {
+        email: submission.data.submitter_email,
+        name: submissionRequesterName(form?.data?.questions ?? [], submission.data.answers),
+      },
+    };
+  }
+  return latest.data?.recipient_email
+    ? { order, reviewer: { email: latest.data.recipient_email, name: latest.data.recipient_name ?? null } }
+    : { order, reviewer: null };
 }

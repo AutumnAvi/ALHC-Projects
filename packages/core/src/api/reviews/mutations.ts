@@ -144,6 +144,35 @@ export async function setTaskExternalReviewer(
   if (error) throw reviewError(error);
 }
 
+// Nov 24 batch 45 (item 5): how a round's email went, stored on the round (record_review_email: the
+// round's sender or anyone who may send it now), so the task card shows sent / failed with a Retry after
+// the send dialog is gone. A database without this release's update has nowhere to keep it: skipped.
+export async function recordReviewEmail(
+  ctx: ApiContext,
+  input: { reviewId: string; outcome: "sent" | "failed" | "mocked" | "suppressed"; error?: string | null; providerId?: string | null },
+): Promise<void> {
+  const reviewId = id(input.reviewId, "review check");
+  if (!["sent", "failed", "mocked", "suppressed"].includes(input.outcome)) throw invalid("Unknown email outcome");
+  const providerId = input.providerId && /^[A-Za-z0-9_-]{1,100}$/.test(input.providerId) ? input.providerId : null;
+  const { error } = await ctx.db.rpc("record_review_email", {
+    target_review: reviewId,
+    outcome: input.outcome,
+    error_text: input.outcome === "failed" ? (input.error?.slice(0, 300) ?? null) : null,
+    provider_id: input.outcome === "sent" ? providerId : null,
+  });
+  if (error && error.code !== "PGRST202") throw reviewError(error);
+}
+
+// Nov 24 batch 45: "Copy review link" — a fresh link of an open round, its own (review_check_copy_link:
+// Editors and whoever may send it). The emailed link keeps working; copying again replaces the previous
+// copied link. The token comes back once (only its hash is kept).
+export async function copyReviewLink(ctx: ApiContext, reviewId: string): Promise<string> {
+  const { data, error } = await ctx.db.rpc("review_check_copy_link", { target_review: id(reviewId, "review check") });
+  if (error) throw reviewError(error);
+  if (!isReviewToken(data)) throw new ApiError("failed", "Couldn’t make a review link");
+  return data;
+}
+
 // Withdraw an open round (cancel_review_check: its link stops working).
 export async function cancelReviewCheck(ctx: ApiContext, reviewId: string): Promise<void> {
   id(reviewId, "review check");

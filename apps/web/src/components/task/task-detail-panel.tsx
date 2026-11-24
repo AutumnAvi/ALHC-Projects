@@ -2,7 +2,7 @@
 
 import { patchedAction } from "@/lib/patched-writes";
 import { useTagsEnabled } from "@/components/tags/tags-enabled";
-import { useMemo, useOptimistic, useRef, useState, useSyncExternalStore } from "react";
+import { useId, useMemo, useOptimistic, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { Check, ChevronRight, Clock, FileInput, Hash, Link2, ListPlus, Lock, Paperclip, Pencil, Send, ThumbsUp, UserRound, X } from "lucide-react";
 import { usePaneExpanded, usePaneWide } from "./pane-size";
@@ -24,12 +24,16 @@ import { completeModeLabel, completeModeOf, EXTERNAL_PENDING_REASON } from "@alh
 import { externallyApproved, isTwoStageApproval } from "@alhc/core/external-review";
 import { requestApprovalAction } from "./approval-action";
 import { ApprovalSetupDialog } from "./approval-setup-dialog";
-import { ApprovalStateProvider, ApprovalStatusHeading, ApprovalTaskBanner, canActOnApproval } from "./task-approval-banner";
+import { ApprovalStateProvider, approvalSectionId, canActOnApproval, useApprovalInfo } from "./task-approval-banner";
+import { approvalTrack, type TrackRole, type TrackStep } from "@alhc/core/approval-track";
+import { ApprovalTrackCard, TrackRail } from "./approval-track";
+import { TaskReviewSection, outsideBlockId } from "./review-blocks";
+import { TaskReviewTab } from "./task-review-tab";
 import { useApprovalActionListener } from "./approval-action";
 import { BlockersHover } from "./blockers-popover";
 import { TaskActivity, TaskPaneFooter } from "./task-activity";
 import { TaskApprovals } from "./task-approvals";
-import { OriginalRequestFiles, TaskAttachments, useAttachmentUpload } from "./task-attachments";
+import { OriginalRequestFiles, TaskAttachments, useAttachmentUpload, type AttachmentUpload } from "./task-attachments";
 import { TaskDueDate } from "./task-dates";
 import { TaskDescription } from "./task-description";
 import { TaskDependencies, hasDependencyRow } from "./task-dependencies";
@@ -40,7 +44,7 @@ import { TaskProjects, type ProjectOption } from "./task-projects";
 import { TaskSubtasks, canAddSubtask } from "./task-subtasks";
 import { TaskTags } from "./task-tags";
 import { TaskRolesRow } from "./task-roles";
-import { PANE_FIELDS, PANE_HEADING, PANE_LABEL } from "./pane-styles";
+import { PANE_FIELDS, PANE_LABEL } from "./pane-styles";
 import { paneTaskNumbers } from "@alhc/core/request-numbers";
 import { TaskNumberChips } from "./task-number";
 import { TaskLink } from "@/components/task/task-link";
@@ -68,8 +72,6 @@ export function TaskDetailPanel({
   const { close } = useClosePane();
   // Oct 26 notes (batch 3): no Tags row while the workspace's tags are switched off.
   const tagsOn = useTagsEnabled();
-  const expanded = usePaneExpanded();
-  const wide = usePaneWide();
   const [, run] = useServerAction();
   const notify = useNotify();
   const upload = useAttachmentUpload(task.id);
@@ -378,8 +380,16 @@ export function TaskDetailPanel({
         </div>
       </div>
 
-      <div className={`min-h-0 flex-1 ${SCROLL_AREA}`}>
-        <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>
+      <PaneBody
+        task={task}
+        profiles={profiles}
+        memberId={memberId}
+        canEdit={canEdit}
+        upload={upload}
+        addingSubtask={addingSubtask}
+        onAddingSubtask={setAddingSubtask}
+        head={
+          <>
           {task.ancestors.length ? <ParentBreadcrumb task={task} /> : null}
           {makeApproval ? (
             <ApprovalSetupDialog
@@ -392,11 +402,12 @@ export function TaskDetailPanel({
           ) : null}
           <TaskNumberChips numbers={numbers} currentProjectId={pathProjectId} className="mb-1.5" />
           <PaneTitle task={task} canEdit={canEdit} completed={completed} profiles={profiles} />
-          {/* Nov 18 notes (batch 44, item 2): only the approval's status under the name; a click goes to its section. */}
-          <ApprovalStatusHeading task={task} profiles={profiles} />
-
           <RequestBadges task={task} />
 
+          </>
+        }
+        fields={
+          <>
           <dl className={`mt-3 ${PANE_FIELDS}`}>
             <dt className={PANE_LABEL}>{assigneeLabel}</dt>
             <dd className="min-w-0">
@@ -472,32 +483,250 @@ export function TaskDetailPanel({
             ) : null}
           </dl>
 
-          <TaskFields task={task} profiles={profiles} canEdit={canEdit} />
-
-          <section className="mt-6" aria-labelledby="task-notes-heading">
-            <h3 id="task-notes-heading" className={PANE_HEADING}>
-              <label htmlFor="task-notes">Description</label>
-            </h3>
-            <TaskDescription task={task} canEdit={canEdit} />
-            <OriginalRequestFiles attachments={task.attachments} />
-          </section>
-
-          {/* Batch 44 (item 2): the approval as its own section, after the description and before the subtasks. */}
-          {task.kind === "approval" ? <ApprovalTaskBanner task={task} profiles={profiles} memberId={memberId} /> : null}
-
-          <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={setAddingSubtask} memberId={memberId} />
-
-          <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
-
-          <TaskAttachments attachments={task.attachments} links={task.attachmentLinks} upload={upload} canEdit={canEdit} />
-
-          <TaskActivity task={task} profiles={profiles} memberId={memberId} />
-        </div>
-      </div>
-
-      <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
+          </>
+        }
+      />
     </PaneShell>
     </ApprovalStateProvider>
+  );
+}
+
+type PaneTab = "task" | "files" | "review";
+
+// Full screen with room for three columns (the wide mockup, docs/design/task-card/png/07): the approval
+// path rail on the left, the task in the middle, comments on the right.
+const THREE_COLUMNS = "(min-width: 1200px)";
+function subscribeWide(callback: () => void) {
+  const query = window.matchMedia(THREE_COLUMNS);
+  query.addEventListener("change", callback);
+  return () => query.removeEventListener("change", callback);
+}
+const isWideScreen = () => window.matchMedia(THREE_COLUMNS).matches;
+
+// Scrolls the scroll area holding `id` (never the page) to put it near the top, then focuses it.
+function revealById(id: string) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  let area: HTMLElement | null = node.parentElement;
+  while (area && !/(auto|scroll)/.test(getComputedStyle(area).overflowY)) area = area.parentElement;
+  if (area) {
+    const top = node.getBoundingClientRect().top - area.getBoundingClientRect().top + area.scrollTop - 16;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    area.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
+  }
+  node.focus({ preventScroll: true });
+}
+
+// Nov 24 batch 45: the card below the header. It adapts to the task type: plain tasks have no step track;
+// approval tasks (and tasks with an outside review) get the track pinned at the top of the card, the Task /
+// Files / Review tabs, and the Review section (blue Team approver, amber Outside reviewer) below the
+// subtasks and above Files and comments. Inside ApprovalStateProvider, so the track follows the approval's
+// optimistic state (an Approve changes the pills at once).
+function PaneBody({
+  task,
+  profiles,
+  memberId,
+  canEdit,
+  upload,
+  addingSubtask,
+  onAddingSubtask,
+  head,
+  fields,
+}: {
+  task: TaskDetail;
+  profiles: Profile[];
+  memberId: string;
+  canEdit: boolean;
+  upload: AttachmentUpload;
+  addingSubtask: boolean;
+  onAddingSubtask: (adding: boolean) => void;
+  head: ReactNode;
+  fields: ReactNode;
+}) {
+  const expanded = usePaneExpanded();
+  const wide = usePaneWide();
+  const wideScreen = useSyncExternalStore(subscribeWide, isWideScreen, () => false);
+  const threeColumns = expanded && wideScreen;
+  const info = useApprovalInfo(task);
+  const byId = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  const track = useMemo(
+    () =>
+      approvalTrack(
+        { kind: task.kind, completedAt: task.completedAt, assigneeId: task.assigneeId, approval: info, externalReview: task.externalReview },
+        { nameOf: (id) => (byId.get(id) ? displayName(byId.get(id)!) : "Someone") },
+      ),
+    [task.kind, task.completedAt, task.assigneeId, info, task.externalReview, byId],
+  );
+  // The tab follows the task: another task opens on Task.
+  const [tabState, setTabState] = useState<{ taskId: string; tab: PaneTab }>({ taskId: task.id, tab: "task" });
+  const tab: PaneTab = tabState.taskId === task.id ? (tabState.tab === "review" && !track ? "task" : tabState.tab) : "task";
+  const setTab = (next: PaneTab) => setTabState({ taskId: task.id, tab: next });
+  const tabIds = useId();
+  const fileCount = task.attachments.length + task.attachmentLinks.length;
+
+  function goToStep(role: TrackRole) {
+    if (role === "done") {
+      setTab("review");
+      return;
+    }
+    setTab("task");
+    const id = role === "team" ? approvalSectionId(task.id) : role === "outside" ? outsideBlockId(task.id) : "task-title";
+    // After the Task tab has drawn.
+    requestAnimationFrame(() => requestAnimationFrame(() => revealById(id)));
+  }
+
+  const afterLabel = (() => {
+    const latest = info?.rounds[0];
+    const after = latest && (latest.status === "pending" || latest.status === "approved") ? latest.afterApproval : (info?.followUp?.afterApproval ?? "complete");
+    const section =
+      latest?.moveSectionName ?? task.memberships.flatMap((m) => m.sections).find((sec) => sec.id === info?.followUp?.sectionId)?.name ?? null;
+    if (track?.kind === "outside") return null;
+    return after === "move_section"
+      ? `Moves to ${section ?? "the chosen section"} automatically`
+      : after === "notify"
+        ? "The assignee is told"
+        : "Completes the task automatically";
+  })();
+  const extras = {
+    modeLabel: info ? (info.mode === "all" ? "Everyone must approve" : "Any one can approve") : null,
+    afterLabel,
+    jumpLabel: (step: TrackStep) => {
+      if (step.role === "team") {
+        const first = step.personIds[0] ? (byId.get(step.personIds[0]) ? displayName(byId.get(step.personIds[0])!) : "the team") : "the team";
+        return `Click to jump to ${step.personIds.length === 1 ? `${first.split(/\s+/)[0]}’s` : "the team’s"} block`;
+      }
+      if (step.role === "outside") return `Click to jump to ${(step.outside?.name ?? "the outside reviewer").split(/\s+/)[0]}’s block`;
+      if (step.role === "done") return "Click to open the Review tab";
+      return null;
+    },
+  };
+
+  const tabs: { id: PaneTab; label: string; badge: string | null }[] = [
+    { id: "task", label: "Task", badge: null },
+    { id: "files", label: "Files", badge: fileCount ? String(fileCount) : null },
+    ...(track ? [{ id: "review" as const, label: "Review", badge: track.round ? `Round ${track.round}` : null }] : []),
+  ];
+
+  const tabBar = (
+    <div role="tablist" aria-label="Task card" className="tab-strip mt-4 mb-3 flex gap-5 border-b border-zinc-200" data-card-tabs="">
+      {tabs.map((t, i) => (
+        <button
+          key={t.id}
+          id={`${tabIds}-${t.id}`}
+          type="button"
+          role="tab"
+          aria-selected={tab === t.id}
+          aria-controls={`${tabIds}-panel`}
+          tabIndex={tab === t.id ? 0 : -1}
+          data-card-tab={t.id}
+          onClick={() => setTab(t.id)}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") return;
+            e.preventDefault();
+            const next =
+              e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+            setTab(tabs[next].id);
+            document.getElementById(`${tabIds}-${tabs[next].id}`)?.focus();
+          }}
+          className={`-mb-px inline-flex items-center gap-1.5 border-b-2 pt-1.5 pb-2 text-sm font-medium transition-colors ${
+            tab === t.id ? "border-accent-500 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800"
+          }`}
+        >
+          {t.label}
+          {t.badge ? <span className="rounded-full bg-zinc-100 px-[7px] text-[11px] leading-[18px] font-medium text-zinc-600">{t.badge}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+
+  const activity = <TaskActivity task={task} profiles={profiles} memberId={memberId} />;
+
+  const taskTab = (
+    <>
+      <dl className={PANE_FIELDS}>{fields}</dl>
+
+      <TaskFields task={task} profiles={profiles} canEdit={canEdit} />
+
+      <section className="mt-6" aria-labelledby="task-notes-heading">
+        <TaskDescription task={task} canEdit={canEdit} />
+        <OriginalRequestFiles attachments={task.attachments} />
+      </section>
+
+      <TaskSubtasks task={task} profiles={profiles} adding={addingSubtask} onAddingChange={onAddingSubtask} memberId={memberId} />
+
+      {/* Batch 45: the review blocks sit below the subtasks and above Files and comments. */}
+      {track ? <TaskReviewSection task={task} profiles={profiles} memberId={memberId} track={track} onOpenReviewTab={() => setTab("review")} /> : null}
+
+      <TaskApprovals task={task} profiles={profiles} memberId={memberId} />
+
+      <TaskAttachments
+        attachments={task.attachments}
+        links={task.attachmentLinks}
+        upload={upload}
+        canEdit={canEdit}
+        onOpenFilesTab={() => setTab("files")}
+      />
+
+      {threeColumns ? null : activity}
+    </>
+  );
+
+  const filesTab = (
+    <div data-card-panel="files">
+      {fileCount === 0 && upload.uploading === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-4 py-10 text-center">
+          <p className="text-sm font-medium text-zinc-800">No files yet</p>
+          <p className="text-xs text-zinc-500">Files attached to this task, its review rounds, and its form show here.</p>
+          {canEdit ? (
+            <button type="button" onClick={upload.pick} className="btn-secondary mt-1 h-8 px-2.5 text-xs">
+              Attach files
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <TaskAttachments attachments={task.attachments} links={task.attachmentLinks} upload={upload} canEdit={canEdit} initialView="previews" bare />
+      )}
+    </div>
+  );
+
+  const card = (
+    <>
+      {head}
+      {track ? <ApprovalTrackCard track={track} profiles={profiles} onStep={goToStep} extras={extras} /> : null}
+      {tabBar}
+      <div id={`${tabIds}-panel`} role="tabpanel" aria-labelledby={`${tabIds}-${tab}`} data-card-panel={tab}>
+        {tab === "task" ? taskTab : tab === "files" ? filesTab : <TaskReviewTab task={task} profiles={profiles} memberId={memberId} />}
+      </div>
+      {tab !== "task" && !threeColumns ? <div className="mt-8 border-t border-zinc-100 pt-2">{activity}</div> : null}
+    </>
+  );
+
+  if (threeColumns) {
+    return (
+      <div className="flex min-h-0 flex-1" data-pane-layout="three">
+        {track ? (
+          <aside className={`w-[270px] shrink-0 border-r min-[1400px]:w-[300px] border-zinc-200 px-6 py-5 ${SCROLL_AREA}`} data-pane-rail="">
+            <TrackRail track={track} profiles={profiles} onStep={goToStep} extras={extras} />
+          </aside>
+        ) : null}
+        <div className={`min-w-0 flex-1 ${SCROLL_AREA}`}>
+          <div className={`mx-auto w-full px-8 py-4 ${wide ? "" : "max-w-4xl"}`}>{card}</div>
+        </div>
+        <div className="flex w-[360px] shrink-0 flex-col border-l border-zinc-200 min-[1400px]:w-[420px]" data-pane-comments="">
+          <div className={`min-h-0 flex-1 px-6 pb-4 ${SCROLL_AREA}`}>{activity}</div>
+          <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className={`min-h-0 flex-1 ${SCROLL_AREA}`}>
+        <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>{card}</div>
+      </div>
+      <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
+    </>
   );
 }
 
