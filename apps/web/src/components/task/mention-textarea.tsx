@@ -31,6 +31,7 @@ import type { Profile } from "@alhc/core/api/people/model";
 import { mentionToken } from "@alhc/core/reactions";
 import { formatRequestLabel } from "@alhc/core/request-numbers";
 import type { QuickProject, QuickTask } from "@alhc/core/shell";
+import { insertDictated, type Dictation, type DictationTarget } from "@/lib/dictation";
 
 const MAX_PEOPLE = 6;
 
@@ -120,6 +121,7 @@ export function MentionTextarea({
   linkRefs,
   people: peopleOn = true,
   listBelow = false,
+  dictation,
   ...props
 }: {
   value: string;
@@ -138,6 +140,10 @@ export function MentionTextarea({
   people?: boolean;
   // The suggestions open under the box (a box near the top of a scroll area, like the task name).
   listBelow?: boolean;
+  // Batch 45 (item 3): dictation writes into this box (useDictation in the owner, which draws the Talk
+  // button). Words land at the cursor in the box's own text (chips stay chips); the ones not settled yet
+  // show greyed in place. Typing ends the session, keeping what was shown; Enter stops it (never sends).
+  dictation?: Dictation;
 } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "onSubmit">) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -154,8 +160,16 @@ export function MentionTextarea({
   // when the body changed from outside (cleared after sending, put back after a failure).
   const [boxText, setBoxText] = useState<string | null>(null);
   const display = boxText !== null && displayToBody(boxText, chipLinks) === value ? boxText : toDisplay(value, chipLinks);
-  const chips = hasChips(display);
   const lastCaret = useRef<number | null>(null);
+  // Batch 45: the words dictation heard but hasn't settled, shown greyed where they'll go (the box's value
+  // only — nothing is reported to the owner until they settle or the person types over them).
+  const preview =
+    dictation?.listening && dictation.interim && dictation.at !== null
+      ? insertDictated(display, dictation.at, dictation.at, dictation.interim)
+      : null;
+  const boxValue = preview ? preview.text : display;
+  const chips = hasChips(display);
+  const layer = chips || preview !== null;
   const [trigger, setTrigger] = useState<Trigger | null>(null);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState<number | null>(null);
@@ -235,6 +249,66 @@ export function MentionTextarea({
     });
   }
 
+  // Batch 45: this box as the dictation's target. Its text is the box's own (with chip marks); settled
+  // words are written like typing (the owner hears the body). The latest values are read through a ref so
+  // the target stays one object.
+  const latest = useRef({ display, chipLinks, onValueChange });
+  useLayoutEffect(() => {
+    latest.current = { display, chipLinks, onValueChange };
+  });
+  const attachDictation = dictation?.attach;
+  useLayoutEffect(() => {
+    if (!attachDictation) return;
+    const target: DictationTarget = {
+      getText: () => latest.current.display,
+      setText: (next, caret) => {
+        setBoxText(next);
+        latest.current.onValueChange(displayToBody(next, latest.current.chipLinks));
+        requestAnimationFrame(() => {
+          const element = ref.current;
+          if (!element) return;
+          element.setSelectionRange(caret, caret);
+          lastCaret.current = caret;
+        });
+      },
+      getRange: () => {
+        const element = ref.current;
+        const text = latest.current.display;
+        if (element && document.activeElement === element) {
+          return { start: element.selectionStart ?? text.length, end: element.selectionEnd ?? text.length };
+        }
+        // Not focused (the Talk button outside the box): where the cursor last was, else the end.
+        const caret = lastCaret.current === null ? text.length : Math.min(lastCaret.current, text.length);
+        return { start: caret, end: caret };
+      },
+      focus: (caret) => {
+        const element = ref.current;
+        if (!element) return;
+        element.focus();
+        element.setSelectionRange(caret, caret);
+        lastCaret.current = caret;
+      },
+    };
+    return attachDictation(target);
+  }, [attachDictation]);
+
+  // The cursor follows the greyed words while they're heard (the box keeps focus while dictating).
+  const previewCaret = preview?.caret ?? null;
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (previewCaret === null || !element || document.activeElement !== element) return;
+    element.setSelectionRange(previewCaret, previewCaret);
+  }, [previewCaret, boxValue]);
+
+  // The greyed words become typed text (someone typed or deleted while dictating), and the session ends.
+  function keepPreview() {
+    if (preview) {
+      setBoxText(preview.text);
+      onValueChange(displayToBody(preview.text, chipLinks));
+    }
+    dictation?.abandon();
+  }
+
   function sync(element: HTMLTextAreaElement) {
     // The caret never rests inside a chip.
     if (hasChips(element.value) && element.selectionStart === element.selectionEnd) {
@@ -301,16 +375,27 @@ export function MentionTextarea({
       <textarea
         {...props}
         ref={ref}
-        value={display}
+        value={boxValue}
         // While the box holds a chip its own text is drawn by LinkChipLayer (same place, same font), so
-        // the textarea's glyphs are hidden; the caret and the selection stay the textarea's.
-        style={chips ? { ...props.style, WebkitTextFillColor: "transparent" } : props.style}
+        // the textarea's glyphs are hidden; the caret and the selection stay the textarea's. Batch 45: the
+        // same layer greys the words dictation is still hearing, and the cursor turns red while listening.
+        style={
+          layer || dictation?.listening
+            ? {
+                ...props.style,
+                ...(layer ? { WebkitTextFillColor: "transparent" } : null),
+                ...(dictation?.listening ? { caretColor: "var(--color-red-500)" } : null),
+              }
+            : props.style
+        }
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-activedescendant={open && suggestions.length > 0 ? `${listId}-${activeIndex}` : undefined}
         onChange={(e) => {
+          // Typing over dictation: what was shown (greyed words included) is the text now; the session ends.
+          if (dictation?.listening) dictation.abandon();
           change(e.currentTarget);
           sync(e.currentTarget);
         }}
@@ -324,6 +409,15 @@ export function MentionTextarea({
           // An IME is composing (Japanese, Chinese, …): its Enter confirms the text, nothing else — not
           // even the owner's own keys (the task name's Enter would save and close before the text lands).
           if (isComposingKey(e)) return;
+          if (dictation?.listening) {
+            // Enter ends dictation (the last words are kept) and never sends a half-heard comment.
+            if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+              e.preventDefault();
+              dictation.stop();
+              return;
+            }
+            if (e.key === "Backspace" || e.key === "Delete") keepPreview();
+          }
           if (
             (e.key === "Backspace" || e.key === "Delete") &&
             !e.metaKey &&
@@ -387,7 +481,9 @@ export function MentionTextarea({
           props.onKeyDown?.(e);
         }}
       />
-      {chips ? <LinkChipLayer display={display} textarea={ref} /> : null}
+      {layer ? (
+        <LinkChipLayer display={boxValue} textarea={ref} interim={preview ? { start: preview.from, end: preview.caret } : null} />
+      ) : null}
       {open ? (
         <ul
           id={listId}
@@ -476,7 +572,37 @@ const MIRRORED = [
   "color",
 ] as const;
 
-function LinkChipLayer({ display, textarea }: { display: string; textarea: React.RefObject<HTMLTextAreaElement | null> }) {
+// Batch 45: the plain-text pieces of the box's text, with [interim.start, interim.end) — the words dictation
+// is still hearing — split out so they can be drawn greyed.
+function withInterim(display: string, interim: { start: number; end: number } | null) {
+  const out: { type: "text" | "chip" | "interim"; text: string; label?: string }[] = [];
+  let offset = 0;
+  for (const piece of displayPieces(display)) {
+    const start = offset;
+    const end = offset + piece.text.length;
+    offset = end;
+    if (piece.type === "chip" || !interim || interim.end <= start || interim.start >= end) {
+      out.push(piece);
+      continue;
+    }
+    const a = Math.max(interim.start, start) - start;
+    const b = Math.min(interim.end, end) - start;
+    if (a > 0) out.push({ type: "text", text: piece.text.slice(0, a) });
+    out.push({ type: "interim", text: piece.text.slice(a, b) });
+    if (b < piece.text.length) out.push({ type: "text", text: piece.text.slice(b) });
+  }
+  return out;
+}
+
+function LinkChipLayer({
+  display,
+  textarea,
+  interim = null,
+}: {
+  display: string;
+  textarea: React.RefObject<HTMLTextAreaElement | null>;
+  interim?: { start: number; end: number } | null;
+}) {
   const layer = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const element = textarea.current;
@@ -511,9 +637,13 @@ function LinkChipLayer({ display, textarea }: { display: string; textarea: React
       data-link-chip-layer=""
       className="pointer-events-none absolute overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:break-word]"
     >
-      {displayPieces(display).map((piece, index) =>
-        piece.type === "chip" ? (
-          isMentionChip(piece.label) ? (
+      {withInterim(display, interim).map((piece, index) =>
+        piece.type === "interim" ? (
+          <span key={index} data-dictation-interim="" className="text-zinc-400">
+            {piece.text}
+          </span>
+        ) : piece.type === "chip" ? (
+          isMentionChip(piece.label ?? "") ? (
             // A person (batch 44, item 5): the posted comment's mention pill colors, without its padding or
             // bold, so the text keeps its width under the caret.
             <span

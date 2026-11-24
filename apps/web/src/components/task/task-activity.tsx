@@ -10,9 +10,9 @@ import { heldValue, sameIdSet, type Held } from "@alhc/core/held-edit";
 import { clearPinOverrides, setPinOverride, settledPinOverrides, usePinOverrides } from "@/components/task/pinned-comments-store";
 import { FeedbackSubtaskButton } from "@/components/task/feedback-subtask";
 import Link from "next/link";
-import { Bell, BellOff, FileCheck, Mail, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X, Zap } from "lucide-react";
-import { SendReviewDialog } from "@/components/task/send-review-dialog";
-import { reviewSendGate } from "@alhc/core/external-review";
+import { Bell, BellOff, Mail, Pencil, Pin, PinOff, SmilePlus, Trash2, UserPlus, X, Zap } from "lucide-react";
+import { DictationBar, TalkButton } from "@/components/dictation-button";
+import { useDictation } from "@/lib/dictation";
 import { RequestConversationNotice } from "@/components/task/request-conversation";
 import { Avatar } from "@/components/avatar";
 import { displayName } from "@alhc/core/people";
@@ -962,34 +962,15 @@ function CommentItem({
           {controls}
         </div>
         {editing ? (
-          <div className="mt-1">
-            <label htmlFor={`edit-comment-${comment.id}`} className="sr-only">
-              Edit comment
-            </label>
-            <MentionTextarea
-              id={`edit-comment-${comment.id}`}
-              value={draft}
-              onValueChange={setDraft}
-              candidates={candidates}
-              onSubmit={save}
-              submitOnEnter
-              onCancel={() => setDraft(null)}
-              links
-              linkRefs={refs}
-              autoFocus
-              rows={2}
-              className={COMMENT_INPUT}
-            />
-            <div className="mt-1.5 flex items-center justify-end gap-2">
-              <span className="mr-auto text-xs text-zinc-500">People you newly @mention are notified.</span>
-              <button type="button" onClick={() => setDraft(null)} className="btn-ghost">
-                Cancel
-              </button>
-              <button type="button" onClick={save} disabled={pending || !draft.trim()} className="btn-primary">
-                Save
-              </button>
-            </div>
-          </div>
+          <CommentEditBox
+            id={`edit-comment-${comment.id}`}
+            draft={draft}
+            setDraft={setDraft}
+            candidates={candidates}
+            save={save}
+            refs={refs}
+            pending={pending}
+          />
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-800">
             <MentionText
@@ -1010,6 +991,64 @@ function CommentItem({
 }
 
 // Nov 1 notes, batch 12 (84): an automation's comment shows a lightning mark instead of a letter avatar.
+// Editing a comment: the box, then Cancel / Save — and Batch 45's Talk (dictation) next to them; while
+// listening the row is the dictation's (Cancel takes back what was said, Stop keeps it).
+function CommentEditBox({
+  id,
+  draft,
+  setDraft,
+  candidates,
+  save,
+  refs,
+  pending,
+}: {
+  id: string;
+  draft: string;
+  setDraft: (value: string | null) => void;
+  candidates: Profile[];
+  save: () => void;
+  refs: CommentRefs;
+  pending: boolean;
+}) {
+  const talk = useDictation();
+  return (
+    <div className="mt-1">
+      <label htmlFor={id} className="sr-only">
+        Edit comment
+      </label>
+      <MentionTextarea
+        id={id}
+        value={draft}
+        onValueChange={setDraft}
+        candidates={candidates}
+        onSubmit={save}
+        submitOnEnter
+        onCancel={() => setDraft(null)}
+        links
+        linkRefs={refs}
+        autoFocus
+        rows={2}
+        className={COMMENT_INPUT}
+        dictation={talk}
+      />
+      {talk.listening ? (
+        <DictationBar dictation={talk} className="mt-1.5" />
+      ) : (
+        <div className="mt-1.5 flex items-center justify-end gap-2">
+          <span className="mr-auto min-w-0 truncate text-xs text-zinc-500">People you newly @mention are notified.</span>
+          <TalkButton dictation={talk} label="Dictate into this comment" />
+          <button type="button" onClick={() => setDraft(null)} className="btn-ghost">
+            Cancel
+          </button>
+          <button type="button" onClick={save} disabled={pending || !draft.trim()} className="btn-primary">
+            Save
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AutomationAvatar() {
   return (
     <span
@@ -1239,13 +1278,10 @@ export function TaskPaneFooter({
   const permissions = taskPermissions(task);
   const canComment = permissions.canComment;
   const submitterEmail = canRespondToSubmitter(task) ? (task.submission?.email ?? null) : null;
-  // Nov 1 notes (batch 8, item 60): "Send for review" next to "Send response to submitter" opens the review
-  // check dialog (pick or upload files, then send) with what was typed as the message. Editors and above
-  // (create_review_check needs Editor+); the dialog clears the box once the review is sent.
-  // Nov 10 batch 36: on an approval task with approvers only an approver sends it, after approving.
-  const canSendReview = reviewSendGate(task, memberId).allowed;
-  const [reviewing, setReviewing] = useState<string | null>(null);
-  const open = focused || draft.trim() !== "" || toSubmitter;
+  // Batch 45: the comment box no longer sends reviews — the outside review is sent from the task card's
+  // Outside reviewer block. Talk (dictation) writes into the box; it stays open while listening.
+  const talk = useDictation();
+  const open = focused || draft.trim() !== "" || toSubmitter || talk.listening;
   const activityTab: ActivityTab = useActivityTab();
 
   // ⌘/Ctrl+Enter and the Comment button: the comment shows in the feed at once (a pending row), the
@@ -1315,17 +1351,6 @@ export function TaskPaneFooter({
 
   return (
     <div className="shrink-0 border-t border-zinc-200 bg-white px-gutter pb-2 pt-2.5 print:hidden">
-      {reviewing !== null ? (
-        <SendReviewDialog
-          task={task}
-          initialMessage={reviewing}
-          onClose={() => setReviewing(null)}
-          onSent={() => {
-            // The typed text went out as the review's message; don't leave it in the box to post twice.
-            if (reviewing && draft.trim() === reviewing) setDraft("");
-          }}
-        />
-      ) : null}
       {/* Nov 2 notes (batch 17, 130): only a note when the email conversation is off; never "on … Change". */}
       {canComment ? <RequestConversationNotice task={task} /> : null}
       {canComment ? (
@@ -1336,8 +1361,12 @@ export function TaskPaneFooter({
             onBlur={(e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
             }}
-            className={`@container/composer min-w-0 flex-1 rounded-lg border bg-white transition-[border-color,box-shadow] ${
-              open ? "border-accent-500/60 shadow-[0_0_0_3px_var(--focus-ring)]" : "border-zinc-200 hover:border-zinc-300"
+            className={`@container/composer relative min-w-0 flex-1 rounded-lg border bg-white transition-[border-color,box-shadow] ${
+              talk.listening
+                ? "border-red-300 shadow-[0_0_0_3px_rgb(239_68_68/0.12)]"
+                : open
+                  ? "border-accent-500/60 shadow-[0_0_0_3px_var(--focus-ring)]"
+                  : "border-zinc-200 hover:border-zinc-300"
             }`}
           >
             <label htmlFor="new-comment" className="sr-only">
@@ -1353,15 +1382,18 @@ export function TaskPaneFooter({
               submitOnEnter
               links
               placeholder="Add a comment"
+              dictation={talk}
               className={`block w-full resize-none border-0 bg-transparent px-3 text-sm shadow-none outline-none placeholder:text-zinc-500 focus-visible:shadow-none field-sizing-content ${
-                open ? "min-h-16 py-2" : "h-8 min-h-8 py-1.5"
+                open ? "min-h-16 py-2" : `h-8 min-h-8 py-1.5 ${talk.supported ? "pr-20" : ""}`
               }`}
             />
+            {/* Batch 45 (mockup 01): the one-line box carries Talk at its right end. */}
+            {!open ? <TalkButton dictation={talk} label="Dictate a comment" className="absolute right-1.5 top-1" /> : null}
             {/* Nov 2 notes (batch 17, 132): at most two short lines under the text. The text eases down to
                 12px in a narrow pane (container units) before anything wraps, the email stays on one line
                 (cut with an ellipsis, the whole address in its tooltip), and the labels shorten instead of
                 stacking word by word. */}
-            {open && (submitterEmail || canSendReview) ? (
+            {open && submitterEmail ? (
               <div
                 className="flex min-w-0 items-center gap-2 px-3 pb-1 pt-0.5 text-[clamp(0.75rem,3.2cqi,0.8125rem)] text-zinc-600"
                 data-composer-options=""
@@ -1392,24 +1424,17 @@ export function TaskPaneFooter({
                       </a>
                     </label>
                   </span>
-                ) : (
-                  <span className="flex-1" />
-                )}
-                {canSendReview ? (
-                  <button
-                    type="button"
-                    onClick={() => setReviewing(draft.trim())}
-                    aria-label="Send for review…"
-                    data-tooltip="Email files to an outside reviewer for an external review (separate from the internal approval)"
-                    className="btn-secondary h-7 shrink-0 gap-1 whitespace-nowrap px-2 text-xs"
-                  >
-                    <FileCheck className="size-3.5" aria-hidden />
-                    <span className="@max-[22rem]/composer:hidden">Send for review…</span>
-                  </button>
                 ) : null}
               </div>
             ) : null}
-            {open ? (
+            {open && talk.listening ? (
+              // Mockup 10: the waveform, the red Listening pill, Cancel, Stop, and Comment waiting for them.
+              <DictationBar dictation={talk} className="px-2 pb-1.5">
+                <button type="button" disabled className="btn-primary h-7 shrink-0 px-3">
+                  {toSubmitter && submitterEmail ? "Send" : "Comment"}
+                </button>
+              </DictationBar>
+            ) : open ? (
               <div className="flex min-w-0 items-center gap-2 px-2 pb-1.5">
                 {(() => {
                   const hint =
@@ -1424,6 +1449,7 @@ export function TaskPaneFooter({
                     </span>
                   );
                 })()}
+                <TalkButton dictation={talk} label="Dictate a comment" />
                 <button type="button" onClick={submit} disabled={!draft.trim()} className="btn-primary h-7 shrink-0 px-3">
                   {toSubmitter && submitterEmail ? "Send" : "Comment"}
                 </button>

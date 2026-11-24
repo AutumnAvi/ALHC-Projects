@@ -71,6 +71,7 @@ export function TaskMoreMenu({
   onCopyLink,
   onDeleted,
   onApprovalSetup,
+  hasReviewBlock = false,
 }: {
   task: TaskDetail;
   canEdit: boolean;
@@ -83,6 +84,9 @@ export function TaskMoreMenu({
   // Nov 18 notes (batch 44, item 3): Task type → Approval opens the approval setup; the type is saved
   // with the setup's Done (leaving the setup early changes nothing).
   onApprovalSetup?: () => void;
+  // Nov 24 batch 45: the card's amber Outside reviewer block already sends and resends the review, so the
+  // menu doesn't offer it a second time.
+  hasReviewBlock?: boolean;
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
@@ -220,11 +224,13 @@ export function TaskMoreMenu({
                 )}
                 {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. Nov 10
                     batch 36: on an approval task with approvers the approver sends it, after approving. */}
-                {reviewGate.allowed
-                  ? item(Send, "Send review check…", () => setDialog("review"), close)
-                  : reviewGate.order === "after_approval"
-                    ? item(Send, "Send review check…", () => notify(reviewGate.reason ?? ""), close)
-                    : null}
+                {hasReviewBlock
+                  ? null
+                  : reviewGate.allowed
+                    ? item(Send, "Send review check…", () => setDialog("review"), close)
+                    : reviewGate.order === "after_approval"
+                      ? item(Send, "Send review check…", () => notify(reviewGate.reason ?? ""), close)
+                      : null}
                 {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}
                 {item(Paperclip, "Attach files…", onAttach, close)}
                 <div role="separator" className="my-1 border-t border-zinc-100" />
@@ -262,7 +268,7 @@ export function TaskMoreMenu({
                   : null}
               </>
             ) : null}
-            {!canEdit && reviewGate.allowed ? item(Send, "Send review check…", () => setDialog("review"), close) : null}
+            {!canEdit && reviewGate.allowed && !hasReviewBlock ? item(Send, "Send review check…", () => setDialog("review"), close) : null}
             {item(Link2, "Copy task link", onCopyLink, close)}
             {item(Printer, "Print", printTask, close)}
             {canEdit ? (

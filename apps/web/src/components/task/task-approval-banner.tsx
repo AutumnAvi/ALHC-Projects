@@ -9,9 +9,9 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Eye,
   History,
   MessageSquareText,
+  PanelsTopLeft,
   Paperclip,
   Pause,
   Send,
@@ -54,9 +54,9 @@ import { FeedbackSubtaskButton } from "./feedback-subtask";
 import { AssetThumb } from "./asset-thumb";
 import { feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
 import { canAddSubtask } from "./task-subtasks";
-import { SendReviewDialog } from "./send-review-dialog";
-import { ExternalReviewBadge } from "@/components/project/task-meta";
-import { externallyApproved, isTwoStageApproval, reviewSendGate, twoStepSteps } from "@alhc/core/external-review";
+import { externallyApproved, isTwoStageApproval, reviewsInParallel } from "@alhc/core/external-review";
+import { RoleTag } from "./approval-track";
+import { outsideBelongsToRound } from "@alhc/core/approval-track";
 import { APPROVAL_SETUP_UNFINISHED } from "@alhc/core/approval-setup";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (Nov 4 notes,
@@ -193,6 +193,11 @@ function useApprovalState(task: Pick<TaskDetail, "approval">) {
   return useContext(ApprovalStateContext) ?? { info: task.approval ?? null, apply: () => {} };
 }
 
+// Nov 24 batch 45: the approval as the pane draws it right now (the optimistic copy), for the step track.
+export function useApprovalInfo(task: Pick<TaskDetail, "approval">): TaskApprovalInfo | null {
+  return useApprovalState(task).info;
+}
+
 // Scrolls only the pane's own scroll area (never the page around it) to put the section near the top,
 // then focuses it. Smooth unless the person asked for reduced motion.
 function revealInScrollArea(section: HTMLElement) {
@@ -281,10 +286,13 @@ export function ApprovalTaskBanner({
   task,
   profiles,
   memberId,
+  onOpenReviewTab,
 }: {
   task: TaskDetail;
   profiles: Profile[];
   memberId: string;
+  // Nov 24 batch 45: "Open in Review tab".
+  onOpenReviewTab?: () => void;
 }) {
   const shared = useContext(ApprovalStateContext);
   if (!task.approval) {
@@ -297,7 +305,7 @@ export function ApprovalTaskBanner({
       </section>
     );
   }
-  const panel = <ApprovalPanel task={task} profiles={profiles} memberId={memberId} />;
+  const panel = <ApprovalPanel task={task} profiles={profiles} memberId={memberId} onOpenReviewTab={onOpenReviewTab} />;
   // Rendered on its own (tests, the instant preview): it keeps its own optimistic copy.
   return shared ? panel : <ApprovalStateProvider task={task}>{panel}</ApprovalStateProvider>;
 }
@@ -307,7 +315,17 @@ export function ApprovalTaskBanner({
 // says in plain words, the viewer's next step, the approver's decision (and their compact review of the
 // round's files), what's being approved, the approvers, how they decide, the approval due date, Hand
 // off / Withdraw, the latest feedback, and the history.
-function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profiles: Profile[]; memberId: string }) {
+function ApprovalPanel({
+  task,
+  profiles,
+  memberId,
+  onOpenReviewTab,
+}: {
+  task: TaskDetail;
+  profiles: Profile[];
+  memberId: string;
+  onOpenReviewTab?: () => void;
+}) {
   const [pending, run] = useServerAction();
   const state = useApprovalState(task);
   const info = state.info ?? task.approval!;
@@ -365,17 +383,19 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
   const eligible = profiles.filter((p) => hasRole(task.memberRoles[p.id], "commenter") || settings.approverIds.includes(p.id));
   const approvers = settings.approverIds.map((id) => ({ id, profile: profilesById.get(id) ?? null }));
   const approverNames = approvers.map((a) => nameOf(a.id));
-  // Nov 10 batch 36: with an external reviewer too, the approver sends the review check after approving.
-  const reviewGate = reviewSendGate(task, memberId);
-  const externalReviewer = task.externalReview?.reviewer ?? null;
-  const steps =
-    reviewGate.order === "after_approval" && externalReviewer
-      ? twoStepSteps(info, task.externalReview, info.approverIds.includes(memberId))
-      : null;
-  const [sendingReview, setSendingReview] = useState(false);
+  // Nov 24 batch 45: the outside reviewer has their own (amber) block; this one is the team's.
+  const externalReviewer = task.approval?.approverIds.length ? (task.externalReview?.reviewer ?? null) : null;
+  // While the outside review of this (approved) round is still open, a new team round would leave the outside
+  // reviewer on an old one (and, in order, lock its link's Copy / Remind / Retry until the team approves
+  // again), so there's nothing to send again until they answer (or the review is withdrawn).
+  const outsideStillReviewing =
+    status === "approved" &&
+    task.externalReview?.latest?.status === "pending" &&
+    outsideBelongsToRound(task.externalReview.latest, latest, reviewsInParallel(task) ? "parallel" : "sequential");
   const canSend =
     canAct &&
     !completed &&
+    !outsideStillReviewing &&
     (status === "not_sent" || ((status === "changes_requested" || status === "rejected") && !paused) || status === "approved");
 
   function reveal() {
@@ -393,7 +413,11 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
         return;
       }
       if (action === "decide") {
-        if (canDecide && reviewsFiles) setReviewExpanded(true);
+        // Batch 45: a round with files is reviewed file by file in the card's Review tab.
+        if (canDecide && reviewsFiles) {
+          if (onOpenReviewTab) onOpenReviewTab();
+          else setReviewExpanded(true);
+        }
         else if (canDecide) setDecision((current) => ({ choice: "approved", nonce: (current?.nonce ?? 0) + 1 }));
         else notify(decideRefusal);
         return;
@@ -440,7 +464,9 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
   if (status === "not_sent") {
     if (completed) headline = "The task is complete. It wasn’t sent for approval.";
     else if (settings.approverIds.length === 0) headline = `${APPROVAL_SETUP_UNFINISHED}. Choose who approves this before anything is sent.`;
-    else if (latest?.status === "withdrawn") headline = "The request was withdrawn. Send it again with Ready for approval when it’s ready.";
+    else if (latest?.status === "withdrawn" && latest.closedReason === "outside_changes") {
+      headline = `${externalReviewer?.name?.trim() || "The outside reviewer"} asked for changes, which ended this round for the team too. Send it again with Ready for approval when it’s ready: the next round goes to both.`;
+    } else if (latest?.status === "withdrawn") headline = "The request was withdrawn. Send it again with Ready for approval when it’s ready.";
     else headline = `Not sent yet. When it’s ready, Ready for approval sends it to ${joinNames(approverNames)}.`;
   } else if (status === "pending") {
     const waiting = (latest?.requests ?? []).filter((r) => r.status === "pending").map((r) => nameOf(r.approverId));
@@ -511,13 +537,20 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
     action = (
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Your decision">
         {reviewsFiles ? (
-          <button type="button" disabled={pending} onClick={() => setReviewExpanded(true)} className={`btn-primary ${small}`} data-approval-open-review="">
-            <Eye className="size-3.5" aria-hidden />
-            Open review
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => (onOpenReviewTab ? onOpenReviewTab() : setReviewExpanded(true))}
+            className={`btn-primary bg-green-600 hover:bg-green-700 ${small}`}
+            data-approval-open-review=""
+          >
+            <ThumbsUp className="size-3.5" aria-hidden />
+            Review &amp; approve
           </button>
         ) : (
           <>
-            <button type="button" disabled={pending} onClick={() => decide("approved")} className={`btn-primary bg-green-700 hover:bg-green-800 ${small}`}>
+            <button type="button" disabled={pending} onClick={() => decide("approved")} className={`btn-primary bg-green-600 hover:bg-green-700 ${small}`}>
+              <ThumbsUp className="size-3.5" aria-hidden />
               Approve
             </button>
             <button type="button" disabled={pending} onClick={() => decide("changes_requested")} className={`btn-secondary ${small}`}>
@@ -529,7 +562,7 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
           type="button"
           disabled={pending}
           onClick={() => decide("rejected")}
-          className={`btn-secondary border-red-200 text-red-700 hover:bg-red-50 ${small}`}
+          className={`btn-ghost text-zinc-700 hover:bg-red-50 hover:text-red-700 ${small}`}
         >
           Reject
         </button>
@@ -553,13 +586,6 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
         Finish setup
       </button>
     );
-  } else if (reviewGate.allowed && steps && steps[1].state === "current") {
-    action = (
-      <button type="button" onClick={() => setSendingReview(true)} className={`btn-primary ${small}`} data-approval-send-external="">
-        <Send className="size-3.5" aria-hidden />
-        Send to {externalReviewer?.name ?? externalReviewer?.email}
-      </button>
-    );
   } else if (canSend) {
     action = (
       <button
@@ -575,132 +601,227 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
     );
   }
 
+  // Nov 24 batch 45: what happens when it's approved, in the block's meta line.
+  const followUpRound = latest && (latest.status === "pending" || latest.status === "approved") ? latest : null;
+  const followUpAfter = followUpRound?.afterApproval ?? info.followUp?.afterApproval ?? "complete";
+  const followUpSection =
+    followUpRound?.moveSectionName ??
+    (info.followUp?.sectionId
+      ? (task.memberships.flatMap((m) => m.sections).find((sec) => sec.id === info.followUp?.sectionId)?.name ?? null)
+      : null);
+  const followUpText =
+    followUpAfter === "move_section" ? `move to ${followUpSection ?? "the chosen section"}` : followUpAfter === "notify" ? "tell the assignee" : "complete the task";
+  const outsideName = externalReviewer ? (externalReviewer.name?.trim().split(/\s+/)[0] ?? externalReviewer.email) : null;
+  const followUpWhen = outsideName
+    ? `When the team and ${outsideName} approve`
+    : settings.mode === "all" && settings.approverIds.length > 1
+      ? "When everyone’s approved"
+      : "When it’s approved";
+  const myTurn = Boolean(myRequest);
+  const waitingNames = roundOpen
+    ? (latest?.requests ?? []).filter((r) => r.status === "pending").map((r) => nameOf(r.approverId, true))
+    : [];
+  const badge: { text: string; tone: "blue" | "green" | "amber" | "red" | "grey"; icon: "clock" | "check" | "back" | "x" | "dot" } =
+    status === "pending"
+      ? {
+          text: `${myTurn ? "Waiting on you" : `Waiting on ${waitingNames.length ? joinNames(waitingNames) : joinNames(approverNames)}`}${settings.dueOn ? ` · due ${formatDueDate(settings.dueOn)}` : ""}`,
+          tone: "blue",
+          icon: "clock",
+        }
+      : status === "approved"
+        ? { text: latest?.decidedAt ? `Approved ${formatDueDate(latest.decidedAt.slice(0, 10))}` : "Approved", tone: "green", icon: "check" }
+        : status === "changes_requested"
+          ? { text: paused ? "Changes requested · paused" : "Changes requested", tone: "amber", icon: "back" }
+          : status === "rejected"
+            ? { text: paused ? "Rejected · paused" : "Rejected", tone: "red", icon: "x" }
+            : latest?.closedReason === "outside_changes"
+              ? { text: "Round ended", tone: "grey", icon: "back" }
+              : { text: settings.approverIds.length ? "Not sent yet" : "Setup not finished", tone: "grey", icon: "dot" };
+  const BADGE_CLASS = {
+    blue: "bg-accent-500 text-white",
+    green: "bg-green-100 text-green-700",
+    amber: "bg-amber-100 text-amber-800",
+    red: "bg-red-100 text-red-800",
+    grey: "bg-zinc-100 text-zinc-600",
+  } as const;
+  const BadgeIcon = { clock: Clock, check: Check, back: AlertCircle, x: X, dot: Clock }[badge.icon];
+
   return (
     <section
       ref={sectionRef}
       id={approvalSectionId(task.id)}
       tabIndex={-1}
       aria-labelledby={headingId}
-      className="mt-6 scroll-mt-4 overflow-hidden rounded-lg border border-zinc-300 bg-white shadow-sm outline-none focus:ring-2 focus:ring-accent-400 focus:ring-offset-2"
+      className="scroll-mt-4 rounded-[10px] border border-l-4 border-[#c0d1f1] border-l-accent-500 bg-gradient-to-t from-white to-[#f6f8fd] px-3.5 pt-[11px] pb-3 outline-none focus-visible:ring-2 focus-visible:ring-accent-400 focus-visible:ring-offset-2"
       data-approval-section=""
+      data-review-block="team"
       data-approval-status={status}
       data-approval-paused={paused ? "true" : undefined}
     >
-      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-shell px-3 py-2 text-white" data-approval-header="">
-        <ThumbsUp className="size-4 shrink-0 text-white/80" aria-hidden />
-        <h3 id={headingId} className="text-sm font-semibold">
-          Approval
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2" data-approval-header="">
+        <h3 id={headingId} className="m-0 flex items-center">
+          <RoleTag role="team" />
         </h3>
         <span
-          className={`inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ring-1 ring-inset ${APPROVAL_PILL[status]}`}
+          className={`inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap ${BADGE_CLASS[badge.tone]}`}
           data-approval-pill=""
         >
-          {paused ? <Pause className="size-3 shrink-0" aria-hidden /> : <ThumbsUp className={`size-3 shrink-0 ${APPROVAL_ICON[status]}`} aria-hidden />}
-          <span className="truncate">{approvalPillText(status, latest?.number ?? null)}</span>
+          {paused ? <Pause className="size-3 shrink-0" aria-hidden /> : <BadgeIcon className="size-3 shrink-0" aria-hidden />}
+          <span className="truncate">{badge.text}</span>
         </span>
-        {paused ? <span className="text-2xs font-semibold tracking-wide text-amber-200 uppercase">Paused</span> : null}
-        {task.externalReview?.latest ? <ExternalReviewBadge status={task.externalReview.latest.status} /> : null}
-        {settings.dueOn ? (
-          <span className={`ml-auto inline-flex shrink-0 items-center gap-1 text-xs ${dueOverdue ? "font-medium text-red-300" : "text-white/80"}`}>
-            <CalendarDays className="size-3.5" aria-hidden />
-            Due {formatDueDate(settings.dueOn)}
-            {dueOverdue ? " · overdue" : ""}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 font-medium text-zinc-800" data-approval-people="">
+        {approvers.length ? (
+          approvers.map(({ id, profile }) => {
+            const name = profile ? displayName(profile) : "Someone";
+            const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
+            return (
+              <span key={id} data-approver={id} className="inline-flex max-w-full items-center gap-1.5 text-sm">
+                <Avatar name={name} src={profile?.avatar_url} profileId={id} size="md" />
+                <span className="truncate">{id === memberId ? `${name} (you)` : name}</span>
+                {request?.status === "approved" ? (
+                  <Check className="size-3.5 shrink-0 text-green-600" aria-label="Approved" />
+                ) : request?.status === "pending" ? (
+                  <Clock className="size-3.5 shrink-0 text-amber-600" aria-label="Waiting" />
+                ) : null}
+              </span>
+            );
+          })
+        ) : (
+          <span className="text-xs font-medium text-amber-800" data-approval-unfinished="">
+            {APPROVAL_SETUP_UNFINISHED}
           </span>
-        ) : null}
-      </header>
+        )}
+        {approverPicker}
+      </div>
 
-      <div className="px-3 py-3" data-approval-body="">
-        <div className="flex flex-wrap items-start gap-x-3 gap-y-2" data-approval-row="">
-          <p className="min-w-0 flex-1 text-sm text-zinc-800" data-approval-headline="">
-            {headline}
-          </p>
-          {action ? <div className="flex shrink-0 flex-wrap items-center gap-1.5">{action}</div> : null}
-        </div>
-        {paused && !canAct ? (
-          <p className="mt-1 text-xs text-zinc-500">
-            Waiting on {assigneeName} to mark the {status === "rejected" ? "rejection" : "feedback"} received.
-          </p>
+      <p className="mt-1.5 text-xs leading-[17px] text-zinc-600" data-approval-meta="">
+        {APPROVAL_MODE_LABELS[settings.mode]}
+        {settings.dueOn ? <> · Approval due <span className={dueOverdue ? "font-medium text-red-700" : ""}>{formatDueDate(settings.dueOn)}{dueOverdue ? " (overdue)" : ""}</span></> : null}
+        {settings.approverIds.length ? (
+          <>
+            {" "}· {followUpWhen}: <b className="font-medium text-zinc-800">{followUpText}</b>
+          </>
         ) : null}
-        {steps ? (
-          <ol className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-zinc-500" aria-label="Approval steps" data-approval-steps="">
-            {steps.map((step, i) => (
-              <li key={i} className={step.state === "done" ? "text-green-700" : step.state === "current" ? "font-medium text-zinc-800" : ""}>
-                {i + 1}. {step.label}
-                {step.state === "done" ? " ✓" : ""}
-              </li>
-            ))}
-          </ol>
-        ) : null}
+      </p>
+      {status !== "pending" || paused ? (
+        <p className="mt-1 text-xs text-zinc-600" data-approval-headline="">
+          {headline}
+        </p>
+      ) : (
+        <p className="sr-only" data-approval-headline="">
+          {headline}
+        </p>
+      )}
+      {paused && !canAct ? (
+        <p className="mt-1 text-xs text-zinc-500">
+          Waiting on {assigneeName} to mark the {status === "rejected" ? "rejection" : "feedback"} received.
+        </p>
+      ) : null}
 
-        {canDecide && myRequest && decision ? (
-          <div className="mt-2 space-y-2" data-approval-deciding="">
-            {latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What you’re approving" /> : null}
-            <ApprovalDecisionForm
-              key={decision.nonce}
-              idPrefix={`approval-${task.id}`}
-              pending={pending}
-              recipientName={task.assigneeId ? assigneeName : null}
-              initialDecision={decision.choice}
-              onCancel={() => setDecision(null)}
-              onDecide={(choice, note) => {
-                setDecision(null);
+      {action || canDecide || canWithdraw || onOpenReviewTab ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5" data-approval-row="">
+          {action}
+          {canDecide && !decision ? (
+            <HandOffButton
+              candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
+              onHandOff={(personId, note) =>
                 run(
-                  () => decideApproval(myRequest.id, choice, note || undefined),
+                  () => handOffApproval(task.id, personId, note),
                   () =>
-                    applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() }),
-                );
-              }}
+                    myRequest &&
+                    applyInfo({ type: "hand_off", requestId: myRequest.id, from: memberId, to: personId, note: note || null, at: nowIso() }),
+                )
+              }
             />
-          </div>
-        ) : null}
+          ) : null}
+          {canWithdraw ? (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: "Withdraw the approval request?",
+                  message: reviewsInParallel(task)
+                    ? "The approvers can’t decide on it anymore, and the outside review sent with it is withdrawn too. You can send it again later."
+                    : "The approvers can’t decide on it anymore. You can send it again later.",
+                  confirmLabel: "Withdraw",
+                  cancelLabel: "Keep it",
+                  tone: "danger",
+                });
+                if (ok) run(() => withdrawApproval(task.id), () => applyInfo({ type: "withdraw", at: nowIso() }));
+              }}
+              className="btn-ghost h-8 px-2 text-xs text-zinc-600"
+            >
+              Withdraw
+            </button>
+          ) : null}
+          {onOpenReviewTab && !reviewsFiles && latest ? (
+            <button type="button" onClick={onOpenReviewTab} className="btn-ghost h-8 px-2 text-xs text-zinc-600" data-approval-open-tab="">
+              <PanelsTopLeft className="size-3.5" aria-hidden />
+              Open in Review tab
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
-        {/* The approver's compact review of the round's files, right here (Expand / Open review: full screen). */}
-        {reviewsFiles && myRequest && latest && !decision ? (
-          <ApproverReview
-            taskId={task.id}
-            requestId={myRequest.id}
-            round={latest}
-            attachments={task.attachments}
-            onExpand={() => setReviewExpanded(true)}
-            onDecide={(choice, note) =>
-              applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
-            }
+      {canDecide && myRequest && decision ? (
+        <div className="mt-2 space-y-2" data-approval-deciding="">
+          {latest ? <RoundContent round={latest} task={task} nameOf={nameOf} label="What you’re approving" /> : null}
+          <ApprovalDecisionForm
+            key={decision.nonce}
+            idPrefix={`approval-${task.id}`}
+            pending={pending}
+            recipientName={task.assigneeId ? assigneeName : null}
+            initialDecision={decision.choice}
+            onCancel={() => setDecision(null)}
+            onDecide={(choice, note) => {
+              setDecision(null);
+              run(
+                () => decideApproval(myRequest.id, choice, note || undefined),
+                () =>
+                  applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() }),
+              );
+            }}
           />
-        ) : null}
+        </div>
+      ) : null}
 
-        {roundOpen && latest && !(canDecide && decision) ? (
-          <RoundContent round={latest} task={task} nameOf={nameOf} label="What’s being approved" />
-        ) : null}
+      {/* The approver's compact review of the round's files, right here (Expand / Open review: full screen). */}
+      {reviewsFiles && myRequest && latest && !decision && !onOpenReviewTab ? (
+        <ApproverReview
+          taskId={task.id}
+          requestId={myRequest.id}
+          round={latest}
+          attachments={task.attachments}
+          onExpand={() => setReviewExpanded(true)}
+          onDecide={(choice, note) =>
+            applyInfo({ type: "decide", requestId: myRequest.id, decision: choice, note: note || null, by: memberId, at: nowIso() })
+          }
+        />
+      ) : null}
 
-        <dl className={`mt-3 border-t border-zinc-100 pt-2 ${PANE_FIELDS}`} data-approval-details="">
+      {roundOpen && latest && !(canDecide && decision) ? (
+        <RoundContent round={latest} task={task} nameOf={nameOf} label="What’s being approved" />
+      ) : null}
+
+      <ApprovalFeedback task={{ ...task, approval: info }} profiles={profiles} memberId={memberId} inSection />
+
+      <details className="group/details mt-2.5 border-t border-[#dfe6f5] pt-2" data-approval-details="">
+        <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-zinc-600 hover:text-zinc-900 [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-3.5 transition-transform group-open/details:rotate-90" aria-hidden />
+          Approvers, due date, and history
+        </summary>
+        <dl className={`mt-2 ${PANE_FIELDS}`}>
           <dt className={`${PANE_LABEL} self-start`}>{approvers.length === 1 ? "Approver" : "Approvers"}</dt>
           <dd className="min-w-0">
             <div className="flex min-h-8 flex-wrap items-center gap-1.5 py-0.5">
-              {approvers.length ? (
-                approvers.map(({ id, profile }) => {
-                  const name = profile ? displayName(profile) : "Someone";
-                  const request = roundOpen ? latest?.requests.find((r) => r.approverId === id && r.status !== "cancelled") : undefined;
-                  return (
-                    <span
-                      key={id}
-                      data-approver={id}
-                      className="relative inline-flex max-w-full items-center gap-1 rounded-full bg-zinc-100 py-0.5 pr-2 pl-0.5 text-xs text-zinc-700"
-                    >
-                      <Avatar name={name} src={profile?.avatar_url} profileId={id} />
-                      <span className="truncate">{id === memberId ? `${name} (you)` : name}</span>
-                      {request?.status === "approved" ? (
-                        <Check className="size-3.5 shrink-0 text-green-600" aria-label="Approved" />
-                      ) : request?.status === "pending" ? (
-                        <Clock className="size-3.5 shrink-0 text-amber-600" aria-label="Waiting" />
-                      ) : null}
-                    </span>
-                  );
-                })
-              ) : (
-                <span className="text-xs font-medium text-amber-800" data-approval-unfinished="">
-                  {APPROVAL_SETUP_UNFINISHED}
+              {approvers.map(({ id }) => (
+                <span key={id} className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-xs text-zinc-700 ring-1 ring-zinc-200">
+                  {nameOf(id, true)}
                 </span>
-              )}
+              ))}
               {approverPicker}
             </div>
           </dd>
@@ -735,7 +856,7 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
               <Popover
                 label={`Approval due: ${settings.dueOn ? formatDueDate(settings.dueOn) : "no date"}. Change`}
                 panelClassName="w-[19rem] p-0"
-                buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-zinc-100 aria-expanded:bg-zinc-100"
+                buttonClassName="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md px-1 text-sm hover:bg-white aria-expanded:bg-white"
                 button={<DueLabel dueOn={settings.dueOn} overdue={dueOverdue} />}
               >
                 {(close) => (
@@ -759,48 +880,13 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
         {settings.dueOn && roundOpen ? (
           <p className="mt-0.5 text-2xs text-zinc-500">Approvers get a reminder the day before, and again once it’s overdue.</p>
         ) : null}
-
-        {canDecide || canWithdraw ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {canDecide ? (
-              <HandOffButton
-                candidates={eligible.filter((p) => p.id !== memberId && !settings.approverIds.includes(p.id))}
-                onHandOff={(personId, note) =>
-                  run(
-                    () => handOffApproval(task.id, personId, note),
-                    () =>
-                      myRequest &&
-                      applyInfo({ type: "hand_off", requestId: myRequest.id, from: memberId, to: personId, note: note || null, at: nowIso() }),
-                  )
-                }
-              />
-            ) : null}
-            {canWithdraw ? (
-              <button
-                type="button"
-                disabled={pending}
-                onClick={async () => {
-                  const ok = await confirm({
-                    title: "Withdraw the approval request?",
-                    message: "The approvers can’t decide on it anymore. You can send it again later.",
-                    confirmLabel: "Withdraw",
-                    cancelLabel: "Keep it",
-                    tone: "danger",
-                  });
-                  if (ok) run(() => withdrawApproval(task.id), () => applyInfo({ type: "withdraw", at: nowIso() }));
-                }}
-                className="btn-ghost text-zinc-600"
-              >
-                Withdraw
-              </button>
-            ) : null}
-          </div>
+        {canChangeApprovers && !roundOpen && !completed ? (
+          <button type="button" onClick={() => setSettingUp(true)} className="btn-ghost mt-1 h-7 px-2 text-xs text-accent-700" data-approval-edit-setup="">
+            Edit the approval setup…
+          </button>
         ) : null}
-
-        <ApprovalFeedback task={{ ...task, approval: info }} profiles={profiles} memberId={memberId} inSection />
-
         {info.rounds.length ? <ApprovalHistory rounds={info.rounds} task={task} nameOf={nameOf} /> : null}
-      </div>
+      </details>
 
       {reviewExpanded && reviewsFiles && myRequest && latest ? (
         <ApproverReviewDialog
@@ -815,7 +901,6 @@ function ApprovalPanel({ task, profiles, memberId }: { task: TaskDetail; profile
         />
       ) : null}
       {sending ? <SendForApprovalDialog task={task} profiles={profiles} onClose={() => setSending(false)} /> : null}
-      {sendingReview ? <SendReviewDialog task={task} onClose={() => setSendingReview(false)} /> : null}
       {settingUp ? <ApprovalSetupDialog task={task} profiles={profiles} onClose={() => setSettingUp(false)} /> : null}
     </section>
   );

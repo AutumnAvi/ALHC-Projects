@@ -7,12 +7,13 @@ import { ORDER_STEP } from "../core/constants";
 import type { ApiContext } from "../core/context";
 import { check, checkUpdated, nowIso } from "../core/db";
 import { ApiError, invalid } from "../core/errors";
-import { id, text } from "../core/validate";
+import { id, text, timeZone } from "../core/validate";
 import type { QuickAddTaskInput } from "./model";
 import { recurrenceInput } from "../tasks/inputs";
 import { isCheckedMode, type CheckedMode } from "../../checklist";
 import type { Json } from "../../supabase/database.types";
 import { isIsoDate } from "../../views";
+import { zonedInstant } from "../../calendar-events";
 
 // ---------------------------------------------------------------------------------------------
 // My Tasks sections and placements
@@ -100,6 +101,13 @@ export async function quickAddTask(ctx: ApiContext, input: QuickAddTaskInput): P
   const title = text(input?.title, "Task name", { max: 1000 });
   const dueOn = input.dueOn ? (isIsoDate(input.dueOn) ? input.dueOn : null) : null;
   if (input.dueOn && !dueOn) throw invalid("Choose a valid due date");
+  // Batch 45 (Isaiah, Nov 23): the typed time, on the person's own clock (their browser's zone), so the due
+  // date stays the day they typed wherever they are.
+  const dueTime = input.dueTime ?? null;
+  if (dueTime !== null && (!dueOn || typeof dueTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime))) {
+    throw invalid("Choose a valid due time");
+  }
+  const zone = dueTime ? timeZone(input.timeZone) : null;
   const rule = input.repeat
     ? recurrenceInput({
         freq: input.repeat.freq,
@@ -120,10 +128,14 @@ export async function quickAddTask(ctx: ApiContext, input: QuickAddTaskInput): P
   check(created);
   const taskId = created.data ?? undefined;
   if (!taskId) throw new ApiError("failed", "Couldn’t add the task");
-  const update: { assignee_id?: string; due_on?: string; recurrence?: Json } = {};
+  const update: { assignee_id?: string; due_on?: string; due_at?: string; time_zone?: string; recurrence?: Json } = {};
   // create_private_task assigns the task to its creator already; a project task is assigned to me too.
   if (input.projectId) update.assignee_id = user.id;
   if (dueOn) update.due_on = dueOn;
+  if (dueOn && dueTime && zone) {
+    update.due_at = zonedInstant(dueOn, dueTime, zone);
+    update.time_zone = zone;
+  }
   if (rule) update.recurrence = rule;
   if (Object.keys(update).length > 0) checkUpdated(await supabase.from("tasks").update(update).eq("id", taskId).select("id"));
   if (!mentionId || mentionId === user.id) return { taskId, note };

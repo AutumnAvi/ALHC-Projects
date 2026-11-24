@@ -135,11 +135,12 @@ end $$;
 reset role;
 do $$
 begin
-  assert (select completed_at from public.tasks where id = (select id from b37_ids where name = 'two')) is null,
-    'the external approval doesn''t complete it either';
+  -- Nov 24 batch 45: the external approval is the last stage, so "When it''s approved" (complete) runs now.
+  assert (select completed_at from public.tasks where id = (select id from b37_ids where name = 'two')) is not null,
+    'the external approval (the last stage) runs "When it''s approved": the task is completed';
 end $$;
 
--- 4. Now the assignee completes it by hand (the green "Externally approved" badge is on).
+-- 4. The assignee may complete it once both approvals are in (batch 45: the last approval already did).
 set role authenticated;
 select set_config('request.jwt.claim.sub', 'a3100370-0000-4000-8000-000000000002', false) is not null as ok \gset
 do $$
@@ -147,9 +148,11 @@ declare
   n int;
 begin
   assert public.approval_assignee_may_complete((select id from b37_ids where name = 'two')), 'both approvals are in';
-  update public.tasks set completed_at = now() where id = (select id from b37_ids where name = 'two');
+  -- Nov 24 batch 45: the last approval already completed it (section 3); the assignee could have too.
+  update public.tasks set title = title where id = (select id from b37_ids where name = 'two');
   get diagnostics n = row_count;
-  assert n = 1, 'the assignee completes it';
+  assert n = 1, 'the assignee can still edit it';
+  assert (select completed_at from public.tasks where id = (select id from b37_ids where name = 'two')) is not null, 'completed';
 end $$;
 
 -- 5. The approver can still complete the other two-stage task (unchanged), and a non-assignee Editor

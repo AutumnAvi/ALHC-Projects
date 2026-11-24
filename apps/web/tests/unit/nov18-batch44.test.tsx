@@ -131,7 +131,8 @@ test("item 2: the heading under the name says the state and links to the section
   assert.equal(renderToStaticMarkup(<ApprovalStatusHeading task={task({ kind: "task", approval: null })} profiles={people} />), "", "nothing on other tasks");
 });
 
-test("item 2: the section has its own dark header, every action, and the approver's compact review", () => {
+// Nov 24 batch 45: the section became the blue "Team approver" block (the dark header is gone).
+test("item 2 / batch 45: the team block has its role tag, every action, and the approver's compact review", () => {
   const round: ApprovalRound = {
     id: "r1",
     number: 2,
@@ -159,20 +160,30 @@ test("item 2: the section has its own dark header, every action, and the approve
   const html = render(<ApprovalTaskBanner task={approver} profiles={people} memberId="me" />);
   assert.match(html, /<section id="approval-section-t1" tabindex="-1"/);
   assert.match(html, /data-approval-header=""/);
-  assert.match(html, /Waiting for approval · Round 2/);
-  assert.match(html, /data-approval-open-review=""/, "Open review (full screen)");
-  assert.match(html, /data-approver-review="compact"/, "and the compact review of the files, in the section");
+  assert.match(html, /data-review-block="team"/);
+  assert.match(html, /data-role-tag="team"/);
+  assert.match(html, /Team approver/);
+  assert.match(html, /Waiting on you/);
+  assert.match(html, /data-approval-open-review=""/, "Review & approve");
+  assert.match(html, /data-approver-review="compact"/, "on its own (no Review tab), the compact review of the files");
+  // Batch 45: in the pane the file-by-file review is the card's Review tab, so the block keeps only its buttons.
+  const inPane = render(<ApprovalTaskBanner task={approver} profiles={people} memberId="me" onOpenReviewTab={() => {}} />);
+  assert.doesNotMatch(inPane, /data-approver-review="compact"/);
+  assert.match(inPane, /Review &amp; approve/);
   assert.match(html, />Reject<\/button>/);
   assert.match(html, /Hand off…/);
 });
 
-test("item 2: the pane draws the heading under the name and the section between description and subtasks", () => {
+// Nov 24 batch 45: the step track replaces the heading under the name, and the review blocks sit below
+// the subtasks and above Files and comments.
+test("item 2 / batch 45: the pane draws the track at the top and the review blocks after the subtasks", () => {
   const pane = source("src/components/task/task-detail-panel.tsx");
-  assert.ok(pane.indexOf("<ApprovalStatusHeading") > pane.indexOf("<PaneTitle"));
-  const fields = pane.slice(pane.indexOf("<dl className={`mt-3 ${PANE_FIELDS}`}>"), pane.indexOf("</dl>"));
+  assert.ok(!pane.includes("<ApprovalStatusHeading"), "no status line under the name (the track says it once)");
+  assert.ok(pane.indexOf("<ApprovalTrackCard") > pane.indexOf("{head}"));
+  const fields = pane.slice(pane.indexOf("fields={"), pane.indexOf("</dl>"));
   assert.ok(!fields.includes("Approval"), "no Approval row in the field list");
-  assert.ok(pane.indexOf("<ApprovalTaskBanner") > pane.indexOf("<TaskDescription") && pane.indexOf("<ApprovalTaskBanner") < pane.indexOf("<TaskSubtasks"));
-  assert.match(pane, /<ApprovalStateProvider task=\{task\}>/, "one shared optimistic copy for the heading and the section");
+  assert.ok(pane.indexOf("<TaskReviewSection") > pane.indexOf("<TaskSubtasks") && pane.indexOf("<TaskReviewSection") < pane.indexOf("<TaskAttachments"));
+  assert.match(pane, /<ApprovalStateProvider task=\{task\}>/, "one shared optimistic copy for the track and the blocks");
 });
 
 // ---------------------------------------------------------------------------------------------

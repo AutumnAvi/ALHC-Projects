@@ -1,12 +1,14 @@
 "use client";
 
 import { useClosesPopovers } from "@/components/overlay-registry";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref, type SyntheticEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type Ref, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { Lock, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { LOCKED_FIELD_NOTE } from "@alhc/core/fields";
 import { FOCUSABLE_SELECTOR, trappedTabTarget } from "@/lib/focus-trap";
+import { DictationBar, DictationInterim, TalkButton } from "@/components/dictation-button";
+import { isDictating, textareaTarget, useDictation, type Dictation } from "@/lib/dictation";
 import {
   initialDraft,
   isSaveShortcut,
@@ -56,7 +58,13 @@ export function LongTextEditor({
   // The value as it was when the editor opened: what "changed" means, even if a refresh brings someone
   // else's edit meanwhile (an untouched draft then saves nothing and leaves their edit alone).
   const [opened] = useState(() => value);
-  const [draft, setDraft] = useState(() => initialDraft(value));
+  const [draft, setDraftState] = useState(() => initialDraft(value));
+  // Batch 45: the newest text between renders too (dictation writes into it).
+  const latestDraft = useRef(draft);
+  const setDraft = (next: string) => {
+    latestDraft.current = next;
+    setDraftState(next);
+  };
   const state = longTextDraft(draft, opened);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -66,6 +74,22 @@ export function LongTextEditor({
   // While the "Discard your changes?" question is open, the editor ignores its own Escape and outside clicks.
   const asking = useRef(false);
   const openedAt = useRef(0);
+  // Batch 45: Talk (dictation) into the box.
+  const talk = useDictation();
+  const attachTalk = talk.attach;
+  useLayoutEffect(() => {
+    if (readOnly) return;
+    const target = textareaTarget(
+      () => textareaRef.current,
+      () => latestDraft.current,
+      (next) => {
+        latestDraft.current = next;
+        setDraftState(next);
+        setSaveError(null);
+      },
+    );
+    return attachTalk(target);
+  }, [readOnly, attachTalk]);
 
   const dismiss = async () => {
     // While a save is on its way the window waits for it (it closes itself, or shows why it couldn't).
@@ -136,6 +160,8 @@ export function LongTextEditor({
         return;
       }
       if (e.key !== "Escape") return;
+      // Batch 45: while dictating, Escape stops the dictation (its own listener), not this window.
+      if (isDictating()) return;
       // Escape belongs to this window only, not to the pane or the List under it.
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -161,6 +187,7 @@ export function LongTextEditor({
       dialogRef={dialogRef}
       textareaRef={textareaRef}
       textRef={textRef}
+      talk={readOnly ? undefined : talk}
       onDraftChange={(next) => {
         setDraft(next);
         setSaveError(null);
@@ -200,7 +227,11 @@ export function LongTextEditorView({
   onCancel,
   onDismiss,
   onCloseButton,
+  talk,
 }: {
+  // Batch 45: dictation into the box (the Talk button by the buttons; the words still being heard greyed
+  // under the box).
+  talk?: Dictation;
   fieldName: string;
   taskTitle: string;
   readOnly: boolean;
@@ -312,13 +343,18 @@ export function LongTextEditorView({
               aria-labelledby={titleId}
               aria-describedby={`${taskId} ${countId} ${hintId}${saveError ? ` ${errorId}` : ""}`}
               aria-invalid={state.over > 0 ? true : undefined}
-              onChange={(e) => onDraftChange(e.currentTarget.value)}
+              onChange={(e) => {
+                // Typing while dictating ends the session (what it already wrote stays).
+                if (talk?.listening) talk.abandon();
+                onDraftChange(e.currentTarget.value);
+              }}
               onKeyDown={onKeyDown}
               className={`field field-sizing-content block h-auto max-h-[60vh] min-h-40 w-full resize-none py-2 leading-relaxed ${
                 state.over > 0 ? "border-red-300 focus:border-red-400" : ""
               }`}
             />
           )}
+          {talk ? <DictationInterim dictation={talk} className="mt-1 px-1" /> : null}
         </div>
 
         {saveError && !readOnly ? (
@@ -353,17 +389,22 @@ export function LongTextEditorView({
               </p>
             </>
           )}
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex items-center gap-2">
             {readOnly ? (
               <button type="button" onClick={onCancel} className="btn-secondary">
                 Close
               </button>
             ) : (
               <>
+                {talk?.listening ? (
+                  <DictationBar dictation={talk} compact />
+                ) : talk ? (
+                  <TalkButton dictation={talk} label={`Dictate ${fieldName}`} />
+                ) : null}
                 <button type="button" onClick={onCancel} disabled={saving} className="btn-secondary">
                   Cancel
                 </button>
-                <button type="button" onClick={onSave} disabled={!state.canSave || saving} className="btn-primary">
+                <button type="button" onClick={onSave} disabled={!state.canSave || saving || talk?.listening} className="btn-primary">
                   {saving ? "Saving…" : "Save"}
                 </button>
               </>

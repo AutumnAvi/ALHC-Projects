@@ -1,12 +1,13 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { AtSign, CalendarDays, FolderClosed, Plus, Repeat, X } from "lucide-react";
+import { AtSign, CalendarDays, Clock, FolderClosed, Plus, Repeat, X } from "lucide-react";
 import { useTabChord } from "@/components/shortcuts/keyboard";
 import { useNotify, useServerAction } from "@/components/toast";
 import { quickAddTask } from "@/lib/actions/my-tasks";
 import { QUICK_ADD_PENDING_SCOPE, checklistDueLabel } from "@alhc/core/checklist";
 import { useToday } from "@/lib/dates";
+import { formatTime } from "@alhc/core/date-input";
 import { withPendingCreate } from "@/lib/pending-creates";
 import {
   completeToken,
@@ -112,6 +113,7 @@ export function QuickAddBar({
             projectId: what.project?.id ?? null,
             mentionId: what.person?.id ?? null,
             dueOn: what.dueOn,
+            dueTime: what.dueTime,
             repeat: what.repeat,
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           }),
@@ -129,7 +131,7 @@ export function QuickAddBar({
       const where = [
         what.project ? `to ${what.project.name}` : null,
         what.person ? `with ${what.person.name} following` : null,
-        what.dueOn && today ? `due ${checklistDueLabel(what.dueOn, today)}` : null,
+        what.dueOn && today ? `due ${checklistDueLabel(what.dueOn, today)}${what.dueTime ? ` at ${formatTime(what.dueTime)}` : ""}` : null,
       ].filter(Boolean);
       const summary = result.note ?? `Added “${what.title}”${where.length ? ` ${where.join(", ")}` : ""}`;
       if (onAdded) onAdded(result.taskId ?? null, summary);
@@ -263,12 +265,13 @@ export function QuickAddBar({
 
 function chipLabel(part: QuickAddPart, parsed: NonNullable<ReturnType<typeof parseQuickAdd>>, today: string | null): string {
   if (part.kind === "date") return parsed.dueOn && today ? `Due ${checklistDueLabel(parsed.dueOn, today)}` : part.text;
+  if (part.kind === "time") return parsed.dueTime ? `At ${formatTime(parsed.dueTime)}` : part.text;
   if (part.kind === "project") return parsed.project?.name ?? part.text;
   if (part.kind === "person") return `Mentions ${parsed.person?.name ?? part.text}`;
   return parsed.repeat ? describeRepeat(parsed.repeat) : part.text;
 }
 
-const PART_ICON = { date: CalendarDays, project: FolderClosed, person: AtSign, repeat: Repeat } as const;
+const PART_ICON = { date: CalendarDays, time: Clock, project: FolderClosed, person: AtSign, repeat: Repeat } as const;
 
 function PartChip({ part, label, onIgnore }: { part: QuickAddPart; label: string; onIgnore: () => void }) {
   const Icon = PART_ICON[part.kind];
