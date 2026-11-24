@@ -164,8 +164,12 @@ test("item 2 / batch 45: the team block has its role tag, every action, and the 
   assert.match(html, /data-role-tag="team"/);
   assert.match(html, /Team approver/);
   assert.match(html, /Waiting on you/);
-  assert.match(html, /data-approval-open-review=""/, "Open review (full screen)");
-  assert.match(html, /data-approver-review="compact"/, "and the compact review of the files, in the section");
+  assert.match(html, /data-approval-open-review=""/, "Review & approve");
+  assert.match(html, /data-approver-review="compact"/, "on its own (no Review tab), the compact review of the files");
+  // Batch 45: in the pane the file-by-file review is the card's Review tab, so the block keeps only its buttons.
+  const inPane = render(<ApprovalTaskBanner task={approver} profiles={people} memberId="me" onOpenReviewTab={() => {}} />);
+  assert.doesNotMatch(inPane, /data-approver-review="compact"/);
+  assert.match(inPane, /Review &amp; approve/);
   assert.match(html, />Reject<\/button>/);
   assert.match(html, /Hand off…/);
 });

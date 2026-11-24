@@ -354,6 +354,8 @@ begin
   result := public.create_review_check((select id from b45_ids where name = 'par3'),
     array[(select id from b45_ids where name = 'par3_file')], 'bounce@example.org', null, null);
   insert into b45_ids values ('mail_check', (result ->> 'id')::uuid);
+  perform public.record_review_email((result ->> 'id')::uuid, 'sending', null, null);
+  assert (select email_status from public.review_checks where id = (result ->> 'id')::uuid) = 'sending', 'sending recorded first';
   perform public.record_review_email((result ->> 'id')::uuid, 'failed', 'Resend responded 429: rate limited', null);
   assert (select email_status from public.review_checks where id = (result ->> 'id')::uuid) = 'failed', 'failed recorded';
   assert (select email_error from public.review_checks where id = (result ->> 'id')::uuid) like 'Resend responded 429%', 'with the reason';

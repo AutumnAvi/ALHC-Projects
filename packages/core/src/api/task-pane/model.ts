@@ -413,7 +413,8 @@ export type ExternalReviewRound = {
   createdBy?: string | null;
   lastViewedAt?: string | null;
   // How its email went the last time it was sent (null = not recorded, e.g. sent before this release).
-  emailStatus?: "sent" | "failed" | "mocked" | "suppressed" | null;
+  // sending = it started and never reported back (e.g. the function was stopped midway).
+  emailStatus?: "sending" | "sent" | "failed" | "mocked" | "suppressed" | null;
   emailError?: string | null;
   emailAttemptedAt?: string | null;
   // What Resend reported afterwards (delivered, bounced, …).
