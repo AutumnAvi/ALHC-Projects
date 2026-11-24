@@ -1,0 +1,1395 @@
+<!doctype html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Geist",ui-sans-serif,system-ui,sans-serif;font-size:13px;line-height:20px;color:#18181b;-webkit-font-smoothing:antialiased;background:#fff;overflow:hidden}
+.ic{flex-shrink:0;display:inline-block;vertical-align:middle}
+b{font-weight:600}
+.muted{color:#71717a;font-weight:400}
+.small{font-size:12px;line-height:17px}
+.app{display:flex;flex-direction:column;height:100%;position:relative}
+/* top bar */
+.topbar{height:44px;background:#1e1f21;color:#d4d5d8;display:flex;align-items:center;padding:0 8px;gap:8px;flex-shrink:0}
+.tb-left,.tb-right{width:232px;display:flex;align-items:center;gap:6px}
+.tb-right{justify-content:flex-end;gap:10px}
+.tb-btn{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:#d4d5d8}
+.create{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 12px 0 9px;border-radius:999px;background:#f06a6a;color:#1e1f21;font-weight:600;font-size:13px}
+.tb-mid{flex:1;display:flex;justify-content:center}
+.search{width:520px;height:28px;border-radius:6px;background:#3a3b3e;display:flex;align-items:center;gap:8px;padding:0 10px;color:#9b9ca1}
+.search span:nth-child(2){flex:1}
+.kbd{font-size:11px;border:1px solid #55565b;border-radius:4px;padding:0 5px;line-height:16px}
+/* frame */
+.frame{flex:1;display:flex;min-height:0;position:relative}
+.sidebar{width:240px;background:#1e1f21;color:#d4d5d8;display:flex;flex-direction:column;padding:8px 8px 0;flex-shrink:0;border-top:1px solid #34353a}
+.sb-group{display:flex;flex-direction:column;gap:1px;margin-bottom:8px}
+.sb-item{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:6px;font-size:13px;white-space:nowrap;overflow:hidden}
+.sb-item.on{background:#3a3b3e;color:#fff}
+.sb-item .ic{color:#9b9ca1}
+.sb-head{display:flex;justify-content:space-between;align-items:center;padding:12px 10px 6px;color:#9b9ca1;font-size:12px;font-weight:500;border-top:1px solid #34353a;margin-top:4px}
+.pdot{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}
+.sb-foot{margin-top:auto;border-top:1px solid #34353a;padding:12px 4px}
+.invite{height:36px;border:1px solid #34353a;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:8px}
+/* main list */
+.main{flex:1;min-width:0;position:relative;background:#fff;overflow:hidden}
+.dim{position:absolute;inset:0;background:rgba(24,24,27,.10);pointer-events:none}
+.phead{height:48px;display:flex;align-items:center;gap:8px;padding:0 24px;border-bottom:1px solid #e4e4e7}
+.picon{width:28px;height:28px;border-radius:7px;background:#e5735c;color:#fff;display:inline-flex;align-items:center;justify-content:center}
+.pname{font-size:17px;font-weight:600;white-space:nowrap}
+.ptabs{display:flex;gap:16px;margin-left:16px;height:48px;align-items:stretch;overflow:hidden}
+.ptab{display:flex;align-items:center;color:#71717a;border-bottom:2px solid transparent;white-space:nowrap}
+.ptab.on{color:#18181b;border-color:#4573d2;font-weight:500}
+.phead-r{margin-left:auto;display:flex;align-items:center;gap:10px}
+.avstack{display:inline-flex}
+.avstack .av+.av{margin-left:-6px}
+.ptool{height:44px;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid #f4f4f5}
+.tool-r{margin-left:auto;display:flex;gap:2px}
+.lhead,.lrow{display:grid;grid-template-columns:minmax(0,1fr) 150px 90px 90px;align-items:center;padding:0 24px;gap:8px}
+.lhead{height:34px;color:#71717a;font-size:12px;border-bottom:1px solid #e4e4e7}
+.lsec{display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;padding:16px 24px 6px}
+.lrow{height:36px;border-bottom:1px solid #f4f4f5;grid-template-columns:22px minmax(0,1fr) 150px 90px 90px}
+.lhead{grid-template-columns:minmax(0,1fr) 150px 90px 90px;padding-left:54px}
+.lrow.sel{background:#f0f4fc}
+.lcheck{color:#a1a1aa;display:flex}
+.lname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lcell{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden}
+.lsmall{font-size:12px;color:#52525b;overflow:hidden;text-overflow:ellipsis}
+.ldate{color:#52525b;font-size:12px}
+.ladd{padding:6px 24px 6px 54px;color:#a1a1aa;font-size:12px}
+/* avatars */
+.av{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;color:#fff;font-weight:600;flex-shrink:0;letter-spacing:.02em}
+/* buttons */
+.btn-primary{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;background:#4573d2;color:#fff;font-weight:500;white-space:nowrap}
+.btn-secondary{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;color:#3f3f46;white-space:nowrap}
+.btn-secondary.disabled{opacity:.5}
+.btn-ghost{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:6px;color:#52525b;white-space:nowrap}
+.btn-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;color:#71717a}
+.btn-icon.sm{width:24px;height:24px}
+.xs{height:24px;font-size:12px;padding:0 7px}
+.muted-btn{color:#a1a1aa}
+.dim-btn{opacity:.45}
+/* pane */
+.pane{position:relative;border-left:1px solid #e4e4e7;background:#fff;display:flex;flex-direction:column;flex-shrink:0;box-shadow:-12px 0 32px rgba(24,24,27,.10);z-index:5}
+.phdr{height:48px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid #e4e4e7;flex-shrink:0}
+.hdr-r{margin-left:auto;display:flex;align-items:center;gap:2px}
+.hdr-r .av{margin-right:6px}
+.cbtn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:6px;border:1px solid #d4d4d8;font-weight:500;color:#3f3f46;background:#fff}
+.cbtn.approve{border-color:#16a34a;color:#15803d}
+.cbtn.wait{color:#71717a;background:#fafafa}
+.pscroll{flex:1;overflow:hidden;position:relative}
+.pbody{padding:16px 24px 28px}
+.numrow{margin-bottom:6px}
+.numchip{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:#52525b;background:#f4f4f5;border-radius:4px;padding:1px 6px}
+.ptitle{font-size:24px;line-height:30px;font-weight:600;letter-spacing:-.015em;margin:2px 0 12px}
+/* track */
+.track{background:#fafafa;border:1px solid #e4e4e7;border-radius:10px;padding:9px 12px 11px;margin:4px 0 14px}
+.tcap{display:flex;align-items:center;gap:5px;font-size:11px;line-height:16px;color:#71717a;font-weight:500;letter-spacing:.01em;margin-bottom:7px}
+.trow{display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+.trow.par{flex-wrap:nowrap}
+.pstack{display:flex;flex-direction:column;gap:8px}
+.fork path{stroke:#a1a1aa;stroke-width:1.6;fill:none}
+.parrow{color:#a1a1aa;display:inline-flex}
+.pill{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px 0 9px;border-radius:999px;border:1px solid #e4e4e7;background:#fff;font-size:12.5px;white-space:nowrap;color:#3f3f46;position:relative}
+.pill .pj{display:inline-flex;opacity:.75;margin-left:-1px}
+.pill .pnote{font-size:11px;color:#71717a}
+.pill.done{background:#fff;border-color:#d4d4d8;color:#3f3f46}
+.pk{width:16px;height:16px;border-radius:999px;background:#16a34a;color:#fff;display:inline-flex;align-items:center;justify-content:center}
+.pill.next{background:#fff;border:1px dashed #d4d4d8;color:#a1a1aa}
+.pill.next .pj{opacity:.5}
+.pill.now.team{background:#f0f4fc;border:2px solid #4573d2;color:#233a68;font-weight:600;padding:0 10px 0 8px}
+.pill.now.out{background:#fffbeb;border:2px solid #f59e0b;color:#78350f;font-weight:600;padding:0 10px 0 8px}
+.pill.now .pdot-now{width:8px;height:8px;border-radius:99px;background:currentColor;box-shadow:0 0 0 3px rgba(69,115,210,.18)}
+.pill.now.team .pdot-now{background:#4573d2}
+.pill.now.out .pdot-now{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2)}
+.pill.plan{border-color:#d4d4d8}
+.pill.plan.team{background:#f0f4fc;border-color:#96b2e6;color:#233a68;font-weight:500}
+.pill.plan.out{background:#fffbeb;border-color:#fcd34d;color:#78350f;font-weight:500}
+.pill.hovered{box-shadow:0 0 0 4px rgba(69,115,210,.22);cursor:pointer}
+/* tabs */
+.ttabs{display:flex;gap:20px;border-bottom:1px solid #e4e4e7;margin:0 0 12px}
+.ttab{padding:6px 0 9px;color:#71717a;font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;align-items:center;gap:6px}
+.ttab.on{color:#18181b;border-color:#4573d2}
+.tcount{font-size:11px;background:#f4f4f5;color:#52525b;border-radius:999px;padding:0 7px;line-height:18px;font-weight:500}
+/* fields */
+.fields{display:grid;grid-template-columns:7.5rem minmax(0,1fr);column-gap:12px;row-gap:2px;align-items:center}
+.fl{min-height:32px;display:flex;align-items:center;color:#71717a}
+.fv{min-height:32px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:#27272a;padding-left:8px}
+.pv{display:inline-flex;align-items:center;gap:7px}
+.pv.sp{margin-left:10px}
+.secchip{display:inline-flex;align-items:center;gap:2px;font-size:12px;color:#52525b;background:#f4f4f5;border-radius:4px;padding:0 6px;margin-left:4px}
+.tlink{color:#3a63bb}
+.fchip{display:inline-flex;align-items:center;border-radius:4px;padding:0 7px;font-size:12px;line-height:20px;font-weight:500}
+.pri-high{background:#fde2e1;color:#b42318}.pri-med{background:#fdf0d5;color:#93370d}.pri-low{background:#e0f2e9;color:#1d6b46}
+.fac{background:#e6eefb;color:#2a457f}.typ{background:#efe9fb;color:#5b3fa8}
+/* sections */
+.sec{margin-top:22px}
+.sech{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:13px;margin-bottom:8px}
+.sec-actions{display:flex;align-items:center;gap:8px;font-weight:400}
+.linkish{display:inline-flex;align-items:center;gap:4px;color:#3a63bb;font-weight:500;font-size:12px}
+.desc{border:1px solid transparent;border-radius:6px;padding:2px 8px 2px 0;color:#27272a}
+.desc p+p{margin-top:8px}
+.talk{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px 0 7px;border-radius:999px;border:1px solid #e4e4e7;background:#fff;color:#52525b;font-size:12px;font-weight:500}
+.talk.rec{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}
+.recdot{width:8px;height:8px;border-radius:99px;background:#ef4444;box-shadow:0 0 0 4px rgba(239,68,68,.2)}
+.sbar{height:4px;background:#f4f4f5;border-radius:99px;overflow:hidden;margin:-2px 0 6px}
+.sbar span{display:block;height:100%;background:#16a34a}
+.slist{border-top:1px solid #f4f4f5}
+.srow{display:flex;align-items:center;gap:10px;height:36px;border-bottom:1px solid #f4f4f5;padding:0 4px}
+.scheck{color:#a1a1aa;display:flex}
+.srow.done .scheck{color:#16a34a}
+.srow.done .sname{color:#71717a;text-decoration:line-through;text-decoration-color:#a1a1aa}
+.sname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sdate{font-size:12px;color:#71717a;width:46px;text-align:right}
+.sadd{display:flex;align-items:center;gap:6px;color:#71717a;height:34px;padding:0 4px}
+/* review blocks */
+.rblock{border:1px solid #e4e4e7;border-left-width:4px;border-radius:10px;padding:11px 14px 12px;margin-bottom:10px}
+.rblock.team{border-color:#c0d1f1;border-left-color:#4573d2;background:linear-gradient(0deg,#fff,#f6f8fd)}
+.rblock.out{border-color:#fde68a;border-left-color:#f59e0b;background:linear-gradient(0deg,#fff,#fffbf0)}
+.rb-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.rtag{display:inline-flex;align-items:center;gap:5px;font-size:11px;line-height:18px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;padding:1px 7px}
+.rtag.team{background:#dfe8f8;color:#2a457f}
+.rtag.out{background:#fef3c7;color:#92400e}
+.rtag.sm{font-size:10px;padding:0 5px;line-height:16px}
+.st{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;border-radius:999px;padding:1px 9px}
+.st-wait{background:#4573d2;color:#fff}
+.st-next{background:#f4f4f5;color:#71717a}
+.st-outnow{background:#f59e0b;color:#fff}
+.st-ok{background:#dcfce7;color:#15803d}
+.st-chg{background:#fef3c7;color:#92400e}
+.rb-people{display:flex;flex-wrap:wrap;gap:6px 16px;font-weight:500}
+.rb-meta{font-size:12px;color:#52525b;margin-top:6px;line-height:17px}
+.rb-meta b{color:#27272a;font-weight:500}
+.rb-btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.rb-btns:empty{display:none}
+.b-approve{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:6px;background:#16a34a;color:#fff;font-weight:500}
+.note-line{display:flex;align-items:center;gap:6px;font-size:12px;color:#52525b;margin-top:-2px}
+.rb2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.rb2 .rblock{margin:0}
+/* files */
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.thumb{border:1px solid #e4e4e7;border-radius:8px;overflow:hidden;background:#fff}
+.thumb>div:first-child{height:92px}
+.thn{font-size:12px;font-weight:500;padding:6px 8px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thm{font-size:11px;color:#71717a;padding:0 8px 6px}
+.th-flyer{background:linear-gradient(160deg,#7a2e1d,#c4572f 60%,#e9a24b);color:#fff7e8;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Georgia,serif}
+.tf1{font-style:italic;font-size:15px}.tf2{font-weight:700;letter-spacing:.2em;font-size:17px}.tf3{font-family:Geist;font-size:9px;opacity:.9;margin-top:3px}
+.th-banner{background:linear-gradient(120deg,#244b3c,#3f8f6b);color:#eaf6ef;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px}
+.th-banner b{font-size:15px;font-family:Georgia,serif}
+.th-doc{background:#f4f4f5;color:#a1a1aa;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;font-weight:600}
+.th-vid{background:#27272a;color:#fff;display:flex;align-items:center;justify-content:center}
+/* activity */
+.act{border-top:1px solid #e4e4e7;padding-top:4px}
+.atabs{display:flex;gap:18px;margin-bottom:10px}
+.atab{padding:6px 0 7px;color:#71717a;border-bottom:2px solid transparent;font-weight:500}
+.atab.on{color:#18181b;border-color:#4573d2}
+.cmt{display:flex;gap:10px;margin-bottom:14px}
+.cbody{flex:1;min-width:0}
+.chead{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.chead .muted{font-size:12px}
+.pinned{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:#b45309;background:#fffbeb;border-radius:4px;padding:0 5px}
+.ctext{color:#27272a;margin-top:1px}
+/* footer composer */
+.pfoot{border-top:1px solid #e4e4e7;background:#fafafa;padding:12px 24px 10px;flex-shrink:0}
+.crow{display:flex;gap:10px;align-items:flex-start}
+.cbox{flex:1;min-height:40px;border:1px solid #e4e4e7;border-radius:8px;background:#fff;display:flex;align-items:center;padding:0 6px 0 12px;justify-content:space-between}
+.cbox .ph{color:#a1a1aa}
+.cbox.small{min-height:34px;margin-top:10px}
+.cbox.rec{flex-direction:column;align-items:stretch;padding:10px 12px 8px;border-color:#fca5a5;box-shadow:0 0 0 3px rgba(239,68,68,.12)}
+.ctext-in{color:#18181b;line-height:20px}
+.interim{color:#a1a1aa}
+.caret{display:inline-block;width:1.5px;height:16px;background:#ef4444;vertical-align:-3px;margin-left:1px}
+.cbox-bar{display:flex;align-items:center;gap:6px;margin-top:10px}
+.wave{display:inline-flex;align-items:center;gap:2px;height:24px;margin-right:auto}
+.wave i{display:block;width:3px;border-radius:2px;background:#f87171}
+.frow{display:flex;align-items:center;gap:8px;margin-top:9px;padding-left:38px;font-size:12px}
+.fol{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:#52525b;font-weight:500}
+/* tooltip */
+.tip{position:absolute;z-index:50;width:320px;background:#fff;border:1px solid #e4e4e7;border-radius:10px;box-shadow:0 12px 32px rgba(24,24,27,.18),0 2px 6px rgba(24,24,27,.08);padding:12px 14px}
+.tip:before{content:"";position:absolute;top:-6px;left:58px;width:10px;height:10px;background:#fff;border-left:1px solid #e4e4e7;border-top:1px solid #e4e4e7;transform:rotate(45deg)}
+.tip-h{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.tip-p{display:flex;gap:10px;align-items:center;margin:10px 0}
+.tip-p .muted{font-size:12px;line-height:16px}
+.tip-rows{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#3f3f46;border-top:1px solid #f4f4f5;padding-top:9px}
+.tip-rows div{display:flex;align-items:center;gap:7px}
+.tip-rows .ic{color:#71717a}
+.tip-f{display:flex;align-items:center;gap:6px;font-size:12px;color:#3a63bb;font-weight:500;margin-top:10px;border-top:1px solid #f4f4f5;padding-top:8px}
+/* review tab */
+.rvgrid{display:grid;grid-template-columns:1.15fr 1fr;gap:18px}
+.bigprev{position:relative;background:#f4f4f5;border:1px solid #e4e4e7;border-radius:10px;padding:18px;display:flex;justify-content:center}
+.flyer{width:290px;height:375px;background:linear-gradient(165deg,#6d2717,#b84d29 55%,#e7a14a);color:#fff7e8;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.18);padding:18px 18px;position:relative;font-family:Georgia,serif;text-align:center}
+.fl-top{font-family:Geist;font-size:9px;letter-spacing:.14em;text-transform:uppercase;opacity:.9}
+.fl-h1{font-style:italic;font-size:36px;margin-top:12px}
+.fl-h2{font-weight:700;font-size:40px;letter-spacing:.22em;margin-top:-4px}
+.fl-sub{font-family:Geist;font-size:11px;margin-top:8px;line-height:16px}
+.fl-photo{height:92px;margin:12px 8px 0;border-radius:4px;background:radial-gradient(circle at 30% 40%,#f3d7b0 0 14px,transparent 15px),radial-gradient(circle at 55% 45%,#e8c39a 0 16px,transparent 17px),radial-gradient(circle at 76% 42%,#f0d1a8 0 13px,transparent 14px),linear-gradient(180deg,#8a4b2e,#5a2b18)}
+.fl-cta{font-family:Geist;font-size:10.5px;margin-top:12px;line-height:15px}
+.fl-logo{position:absolute;left:0;right:0;bottom:12px;font-family:Geist;font-weight:700;letter-spacing:.3em;font-size:10px}
+.vpin{position:absolute;width:24px;height:24px;border-radius:99px 99px 99px 2px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.3);border:2px solid #fff;transform:translate(-50%,-100%) rotate(0)}
+.vpin.team{background:#4573d2}.vpin.out{background:#f59e0b}
+.vpin.sm{position:static;transform:none;width:22px;height:22px;font-size:11px;flex-shrink:0;box-shadow:none}
+.fstrip{display:flex;gap:10px;margin-top:10px}
+.fs{width:150px;border-radius:9px;padding:3px;border:2px solid transparent}
+.fs.on{border-color:#4573d2}
+.fs .thumb>div:first-child{height:62px}
+.fsst{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
+.mini{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;border-radius:4px;padding:0 5px;line-height:16px}
+.mini.team{background:#dfe8f8;color:#2a457f}.mini.out{background:#fef3c7;color:#92400e}
+.decide{border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px}
+.dh{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.decide .rb-btns{margin-top:8px}
+.pinlist{margin-top:14px}
+.plh{font-weight:600;margin-bottom:8px}
+.pinc{display:flex;gap:9px;margin-bottom:10px;font-size:12.5px;line-height:18px}
+.resolved{display:inline-flex;align-items:center;gap:3px;color:#15803d;font-size:11.5px;font-weight:500;margin-left:4px}
+.rounds{margin-top:14px}
+.rnd{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e4e4e7;border-radius:8px;margin-bottom:6px;font-size:12.5px}
+.rnd .st{margin-left:auto}
+.rnd.on{border-color:#c0d1f1;background:#f6f8fd}
+/* wide */
+.overlay{position:absolute;inset:0;background:rgba(9,9,11,.8);z-index:40;display:flex;justify-content:center;padding:24px}
+.overlay.light{background:rgba(9,9,11,.45);align-items:flex-start;padding-top:40px}
+.wpanel{width:100%;max-width:1392px;background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,.25)}
+.wbody{flex:1;display:grid;grid-template-columns:270px minmax(0,1fr) 400px;min-height:0}
+.rail{background:#fafafa;border-right:1px solid #e4e4e7;padding:20px 18px;overflow:hidden}
+.rail-h{display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:10px}
+.rail-sep{border-top:1px solid #e4e4e7;margin:18px 0 14px}
+.vstep{display:flex;gap:12px;position:relative;padding-bottom:18px}
+.vstep:not(:last-of-type):before{content:"";position:absolute;left:10px;top:24px;bottom:2px;width:2px;background:#e4e4e7}
+.vstep.done:before{background:#86efac}
+.vdot{width:22px;height:22px;border-radius:99px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;position:relative;z-index:1}
+.vdot.done{background:#16a34a;color:#fff}
+.vdot.now.team{background:#f0f4fc;border:2px solid #4573d2;box-shadow:0 0 0 4px rgba(69,115,210,.15)}
+.vdot.now.team:after{content:"";width:8px;height:8px;border-radius:99px;background:#4573d2}
+.vdot.next{background:#fff;border:2px dashed #d4d4d8}
+.vstep.next.out .vdot{border-color:#fcd34d}
+.vlab{font-weight:600;font-size:13px}
+.vstep.now .vlab{color:#233a68}
+.vstep.next .vlab{color:#71717a}
+.vwho{display:flex;align-items:center;gap:6px;margin:3px 0 4px;font-size:12.5px}
+.vline{display:flex;align-items:center;gap:6px;font-size:12px;color:#52525b;line-height:18px}
+.vline .ic{color:#a1a1aa}
+.wmain{padding:18px 28px 28px;overflow:hidden;border-right:1px solid #e4e4e7}
+.wgrid2 .fields{grid-template-columns:7.5rem minmax(0,1fr) 7.5rem minmax(0,1fr)}
+.wact{display:flex;flex-direction:column;min-height:0;padding:10px 20px 0;overflow:hidden}
+.wact .act{border-top:0;flex:1;overflow:hidden}
+.pfoot.inwide{margin:0 -20px;padding:12px 20px}
+.wmain .thumbs{grid-template-columns:repeat(4,1fr)}
+/* modal */
+.modal{width:620px;background:#fff;border-radius:12px;box-shadow:0 25px 50px rgba(0,0,0,.3);overflow:hidden;display:flex;flex-direction:column;max-height:820px}
+.mh{display:flex;justify-content:space-between;align-items:flex-start;padding:16px 20px 12px}
+.mt{font-size:16px;font-weight:600}
+.mpreview{background:#fafafa;border-top:1px solid #e4e4e7;border-bottom:1px solid #e4e4e7;padding:12px 20px 14px;box-shadow:0 6px 12px -8px rgba(24,24,27,.15);position:relative;z-index:1}
+.mpreview .track{margin:0;background:#fff}
+.psum{display:flex;gap:7px;align-items:flex-start;font-size:12.5px;color:#3f3f46;margin-top:10px;line-height:18px}
+.psum .ic{margin-top:2px;color:#71717a}
+.mform{padding:6px 20px 16px;overflow:hidden}
+.mlabel{font-weight:500;margin:12px 0 6px;display:flex;align-items:center;gap:6px}
+.pchips{display:flex;gap:6px;flex-wrap:wrap}
+.pchip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 8px 0 5px;border:1px solid #e4e4e7;border-radius:999px;color:#27272a}
+.pchip .ic{color:#a1a1aa}
+.pchip.add{border-style:dashed;color:#71717a;padding:0 10px}
+.rgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.rgrid.three{grid-template-columns:1fr 1fr 1fr}
+.radio{display:flex;gap:9px;border:1px solid #e4e4e7;border-radius:8px;padding:8px 10px}
+.radio.on{border-color:#4573d2;background:#f0f4fc}
+.rdot{width:16px;height:16px;border-radius:99px;border:1.5px solid #a1a1aa;flex-shrink:0;margin-top:2px}
+.radio.on .rdot{border:5px solid #4573d2}
+.rl{font-weight:500;display:flex;align-items:center;gap:6px}
+.rh{font-size:12px;color:#71717a;line-height:16px}
+.m2{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:end}
+.field{height:36px;border:1px solid #e4e4e7;border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 12px;color:#27272a}
+.field .ic{color:#71717a}
+.toggle{display:inline-block;width:34px;height:20px;border-radius:99px;background:#4573d2;position:relative;vertical-align:middle}
+.toggle span{position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:99px;background:#fff}
+.seg{display:inline-flex;border:1px solid #e4e4e7;border-radius:8px;padding:3px;background:#f4f4f5;gap:3px}
+.seg span{padding:5px 12px;border-radius:6px;color:#52525b;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.seg span.on{background:#fff;color:#18181b;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.newtag{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#7c3aed;background:#f3e8ff;border-radius:4px;padding:0 5px;line-height:16px}
+.mf{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid #e4e4e7}
+.mf .btn-ghost{margin-right:auto}
+
+.rtag,.st{white-space:nowrap}
+.rb2 .rb-top{flex-wrap:wrap;justify-content:flex-start}
+.overlay{padding:16px}
+.wbody{grid-template-columns:250px minmax(0,1fr) 350px}
+.wmain{padding:16px 24px 24px}
+.wmain .sec{margin-top:16px}
+.wmain .ptitle{margin-bottom:8px}
+.overlay.light{padding-top:16px}
+.modal{max-height:868px}
+.mlabel{margin:9px 0 5px}
+.mh{padding:14px 20px 10px}
+.radio{padding:6px 10px}
+.rb2 .rb-people .muted{display:none}.rb2 .muted-btn{display:none}
+</style></head>
+<body style="width:1440px;height:900px"><div class="app"><div class="topbar">
+  <div class="tb-left"><span class="tb-btn"><svg
+  class="ic  lucide lucide-menu"
+  xmlns="http://www.w3.org/2000/svg"
+  width="18"
+  height="18"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M4 5h16" />
+  <path d="M4 12h16" />
+  <path d="M4 19h16" />
+</svg></span><span class="create"><svg
+  class="ic  lucide lucide-plus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
+  <path d="M12 5v14" />
+</svg> Create</span></div>
+  <div class="tb-mid"><div class="search"><svg
+  class="ic  lucide lucide-search"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m21 21-4.34-4.34" />
+  <circle cx="11" cy="11" r="8" />
+</svg><span>Search</span><span class="kbd">Ctrl K</span></div></div>
+  <div class="tb-right"><span class="tb-btn"><svg
+  class="ic  lucide lucide-circle-help"
+  xmlns="http://www.w3.org/2000/svg"
+  width="17"
+  height="17"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="M9 9.5a3 2.5 0 016 0c0 2-2 2-3 3.5" />
+  <path d="M12 17h.01" />
+</svg></span><span class="av" style="width:28px;height:28px;background:#e5735c;font-size:11px;">AW</span></div>
+</div><div class="frame"><div class="sidebar"><div class="sb-group"><div class="sb-item"><svg
+  class="ic  lucide lucide-house"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+  <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+</svg><span>Home</span></div><div class="sb-item"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg><span>My tasks</span></div><div class="sb-item"><svg
+  class="ic  lucide lucide-inbox"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+  <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+</svg><span>Inbox</span></div><div class="sb-item"><svg
+  class="ic  lucide lucide-chart-column"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+  <path d="M18 17V9" />
+  <path d="M13 17V5" />
+  <path d="M8 17v-3" />
+</svg><span>Reporting</span></div><div class="sb-item"><svg
+  class="ic  lucide lucide-folder-kanban"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+  <path d="M8 10v4" />
+  <path d="M12 10v2" />
+  <path d="M16 10v6" />
+</svg><span>Portfolios</span></div><div class="sb-item"><svg
+  class="ic  lucide lucide-target"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <circle cx="12" cy="12" r="6" />
+  <circle cx="12" cy="12" r="2" />
+</svg><span>Goals</span></div></div>
+<div class="sb-head">Projects <svg
+  class="ic  lucide lucide-plus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
+  <path d="M12 5v14" />
+</svg></div><div class="sb-group"><div class="sb-item on"><span class="pdot" style="background:#e5735c"></span><span>Marketing Requests</span></div><div class="sb-item "><span class="pdot" style="background:#8b6fd1"></span><span>Brand Refresh 2026</span></div><div class="sb-item "><span class="pdot" style="background:#2f9bb5"></span><span>Social Media Calendar</span></div><div class="sb-item "><span class="pdot" style="background:#3f8f6b"></span><span>Facility Launch Parties</span></div><div class="sb-item "><span class="pdot" style="background:#c98a1b"></span><span>Recruitment Campaigns</span></div></div>
+<div class="sb-head">Teams</div><div class="sb-group"><div class="sb-item"><svg
+  class="ic  lucide lucide-users"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+  <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+  <circle cx="9" cy="7" r="4" />
+</svg><span>Marketing</span></div><div class="sb-item"><svg
+  class="ic  lucide lucide-users"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+  <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+  <circle cx="9" cy="7" r="4" />
+</svg><span>Creative</span></div></div>
+<div class="sb-foot"><div class="invite"><svg
+  class="ic  lucide lucide-user-plus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="15"
+  height="15"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+  <circle cx="9" cy="7" r="4" />
+  <line x1="19" x2="19" y1="8" y2="14" />
+  <line x1="22" x2="16" y1="11" y2="11" />
+</svg> Invite teammates</div></div></div><div class="main"><div class="phead"><span class="picon"><svg
+  class="ic  lucide lucide-megaphone"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+  <path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14" />
+  <path d="M8 6v8" />
+</svg></span><span class="pname">Marketing Requests</span><svg
+  class="ic  lucide lucide-chevron-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="15"
+  height="15"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 9 6 6 6-6" />
+</svg><span class="ptabs"><span class="ptab ">Overview</span><span class="ptab on">List</span><span class="ptab ">Board</span></span>
+<span class="phead-r"><span class="btn-secondary"><svg
+  class="ic  lucide lucide-share-2"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="18" cy="5" r="3" />
+  <circle cx="6" cy="12" r="3" />
+  <circle cx="18" cy="19" r="3" />
+  <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+  <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+</svg> Share</span></span></div>
+<div class="ptool"><span class="btn-primary"><svg
+  class="ic  lucide lucide-plus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
+  <path d="M12 5v14" />
+</svg> Add task</span><span class="tool-r"><span class="btn-ghost"><svg
+  class="ic  lucide lucide-list-filter"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M2 5h20" />
+  <path d="M6 12h12" />
+  <path d="M9 19h6" />
+</svg> Filter</span><span class="btn-ghost"><svg
+  class="ic  lucide lucide-arrow-up-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m21 16-4 4-4-4" />
+  <path d="M17 20V4" />
+  <path d="m3 8 4-4 4 4" />
+  <path d="M7 4v16" />
+</svg> Sort</span><span class="btn-ghost"><svg
+  class="ic  lucide lucide-layers"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+  <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+  <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+</svg> Group</span><span class="btn-ghost"><svg
+  class="ic  lucide lucide-settings-2"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M14 17H5" />
+  <path d="M19 7h-9" />
+  <circle cx="17" cy="17" r="3" />
+  <circle cx="7" cy="7" r="3" />
+</svg> Options</span></span></div>
+<div class="lhead"><span class="lname">Task name</span><span class="lcell">Assignee</span><span class="lcell">Due date</span><span class="lcell">Priority</span></div>
+<div class="lsec"><svg
+  class="ic  lucide lucide-chevron-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="15"
+  height="15"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 9 6 6 6-6" />
+</svg> Design in progress</div><div class="lrow sel"><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Holiday party flyer – Autumn Lake at Glen Oaks</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#2f9bb5;font-size:9px;">CG</span><span class="lsmall">CA Green</span></span><span class="lcell ldate">Dec 12</span><span class="lcell"><span class="fchip pri-high">High</span></span></div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Lobby welcome banner – Pikesville</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#2f9bb5;font-size:9px;">CG</span><span class="lsmall">CA Green</span></span><span class="lcell ldate">Dec 15</span><span class="lcell"><span class="fchip pri-med">Medium</span></span></div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">December newsletter: send schedule</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#8b6fd1;font-size:9px;">CS</span><span class="lsmall">Chana Snyder</span></span><span class="lcell ldate">Dec 9</span><span class="lcell"><span class="fchip pri-med">Medium</span></span></div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Recruitment ad – CNA open house</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#3f8f6b;font-size:9px;">IR</span><span class="lsmall">Isaiah Rappaport</span></span><span class="lcell ldate">Dec 18</span><span class="lcell"><span class="fchip pri-low">Low</span></span></div><div class="ladd">Add task…</div><div class="lsec"><svg
+  class="ic  lucide lucide-chevron-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="15"
+  height="15"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 9 6 6 6-6" />
+</svg> Waiting on review</div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Facility brochure reprint – Hartford</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#8b6fd1;font-size:9px;">CS</span><span class="lsmall">Chana Snyder</span></span><span class="lcell ldate">Dec 10</span><span class="lcell"><span class="fchip pri-med">Medium</span></span></div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Family satisfaction survey postcard</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#2f9bb5;font-size:9px;">CG</span><span class="lsmall">CA Green</span></span><span class="lcell ldate">Dec 16</span><span class="lcell"><span class="fchip pri-low">Low</span></span></div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Instagram carousel: staff spotlight</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#8b6fd1;font-size:9px;">CS</span><span class="lsmall">Chana Snyder</span></span><span class="lcell ldate">Dec 11</span><span class="lcell"><span class="fchip pri-med">Medium</span></span></div><div class="ladd">Add task…</div><div class="lsec"><svg
+  class="ic  lucide lucide-chevron-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="15"
+  height="15"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 9 6 6 6-6" />
+</svg> Ready to publish</div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Thanksgiving thank-you video</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#3f8f6b;font-size:9px;">IR</span><span class="lsmall">Isaiah Rappaport</span></span><span class="lcell ldate">Nov 27</span><span class="lcell"><span class="fchip pri-high">High</span></span></div><div class="lrow "><span class="lcheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="lname">Website hero refresh – Baltimore</span><span class="lcell"><span class="av" style="width:22px;height:22px;background:#2f9bb5;font-size:9px;">CG</span><span class="lsmall">CA Green</span></span><span class="lcell ldate">Dec 2</span><span class="lcell"><span class="fchip pri-low">Low</span></span></div><div class="ladd">Add task…</div><div class="dim"></div></div><aside class="pane" style="width:600px"><div class="phdr"><span class="cbtn approve"><svg
+  class="ic  lucide lucide-thumbs-up"
+  xmlns="http://www.w3.org/2000/svg"
+  width="15"
+  height="15"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+  <path d="M7 10v12" />
+</svg> Approve</span>
+<span class="hdr-r"><span class="av" style="width:28px;height:28px;background:#2f9bb5;font-size:11px;">CG</span><span class="btn-icon"><svg
+  class="ic  lucide lucide-paperclip"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
+</svg></span><span class="btn-icon"><svg
+  class="ic  lucide lucide-link-2"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+  <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+  <line x1="8" x2="16" y1="12" y2="12" />
+</svg></span><span class="btn-ghost xs"><svg
+  class="ic  lucide lucide-move-horizontal"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m18 8 4 4-4 4" />
+  <path d="M2 12h20" />
+  <path d="m6 8-4 4 4 4" />
+</svg> Wide</span><span class="btn-icon"><svg
+  class="ic  lucide lucide-maximize-2"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 3h6v6" />
+  <path d="m21 3-7 7" />
+  <path d="m3 21 7-7" />
+  <path d="M9 21H3v-6" />
+</svg></span><span class="btn-icon"><svg
+  class="ic  lucide lucide-ellipsis"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="1" />
+  <circle cx="19" cy="12" r="1" />
+  <circle cx="5" cy="12" r="1" />
+</svg></span><span class="btn-icon"><svg
+  class="ic  lucide lucide-arrow-right-to-line"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M17 12H3" />
+  <path d="m11 18 6-6-6-6" />
+  <path d="M21 5v14" />
+</svg></span></span></div><div class="pscroll" id="scroll"><div class="pbody"><div class="numrow"><span class="numchip"><svg
+  class="ic  lucide lucide-hash"
+  xmlns="http://www.w3.org/2000/svg"
+  width="11"
+  height="11"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <line x1="4" x2="20" y1="9" y2="9" />
+  <line x1="4" x2="20" y1="15" y2="15" />
+  <line x1="10" x2="8" y1="3" y2="21" />
+  <line x1="16" x2="14" y1="3" y2="21" />
+</svg>Req 214 · Marketing Requests</span></div><h2 class="ptitle">Holiday party flyer – Autumn Lake at Glen Oaks</h2><div class="track"><div class="tcap"><svg
+  class="ic  lucide lucide-git-pull-request-arrow"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="5" cy="6" r="3" />
+  <path d="M5 9v12" />
+  <circle cx="19" cy="18" r="3" />
+  <path d="m15 9-3-3 3-3" />
+  <path d="M12 6h5a2 2 0 0 1 2 2v7" />
+</svg> Approval · team first, then outside · round 2</div><div class="trow"><span class="pill none done "><span class="pk"><svg
+  class="ic  lucide lucide-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="3"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M20 6 9 17l-5-5" />
+</svg></span><span class="av" style="width:18px;height:18px;background:#2f9bb5;font-size:9px;">CG</span><span class="pl">Work</span></span><span class="parrow"><svg
+  class="ic  lucide lucide-chevron-right"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m9 18 6-6-6-6" />
+</svg></span><span class="pill team now "><span class="pdot-now"></span><span class="pl">Team: Avi</span><span class="pj"><svg
+  class="ic  lucide lucide-arrow-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 5v14" />
+  <path d="m19 12-7 7-7-7" />
+</svg></span></span><span class="parrow"><svg
+  class="ic  lucide lucide-chevron-right"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m9 18 6-6-6-6" />
+</svg></span><span class="pill out next "><span class="pl">Outside: Sarah</span><span class="pj"><svg
+  class="ic  lucide lucide-arrow-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 5v14" />
+  <path d="m19 12-7 7-7-7" />
+</svg></span></span><span class="parrow"><svg
+  class="ic  lucide lucide-chevron-right"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m9 18 6-6-6-6" />
+</svg></span><span class="pill none next "><span class="pl">Done</span></span></div></div><div class="ttabs"><span class="ttab on">Task</span><span class="ttab ">Files<span class="tcount">3</span></span><span class="ttab ">Review<span class="tcount">Round 2</span></span></div><div class="fields"><div class="fl">Assignee</div><div class="fv"><span class="pv"><span class="av" style="width:24px;height:24px;background:#2f9bb5;font-size:9px;">CG</span><span>CA Green</span></span></div><div class="fl">Due date</div><div class="fv">Dec 12, 4:00 PM</div><div class="fl">Projects</div><div class="fv"><span class="pv"><span class="pdot" style="background:#e5735c"></span>Marketing Requests<span class="secchip">Design in progress <svg
+  class="ic  lucide lucide-chevron-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 9 6 6 6-6" />
+</svg></span></span></div><div class="fl">Who does what</div><div class="fv"><span class="pv">Designer · <span class="av" style="width:20px;height:20px;background:#2f9bb5;font-size:9px;">CG</span> CA Green</span><span class="pv sp">Copy · <span class="av" style="width:20px;height:20px;background:#8b6fd1;font-size:9px;">CS</span> Chana Snyder</span></div><div class="fl">Priority</div><div class="fv"><span class="fchip pri-high">High</span></div><div class="fl">Facility</div><div class="fv"><span class="fchip fac">Glen Oaks</span></div><div class="fl">Request type</div><div class="fv"><span class="fchip typ">Print · flyer</span></div></div><section class="sec"><div class="sech"><span>Description</span><span class="talk" title="Dictate"><svg
+  class="ic  lucide lucide-mic"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 19v3" />
+  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+  <rect x="9" y="2" width="6" height="13" rx="3" />
+</svg> Talk</span></div><div class="desc"><p>Letter-size flyer for the residents’ holiday party on Dec 18, 2–4 PM in the Glen Oaks dining room. Families welcome.</p><p>Use the new Autumn Lake lockup, warm palette, and include the RSVP line: Front desk, (410) 555-0142.</p></div></section><section class="sec"><div class="sech"><span>Subtasks <span class="muted">2 of 4</span></span><span class="sec-actions"><span class="btn-ghost xs"><svg
+  class="ic  lucide lucide-list-filter"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M2 5h20" />
+  <path d="M6 12h12" />
+  <path d="M9 19h6" />
+</svg> Sort</span></span></div><div class="sbar"><span style="width:50%"></span></div><div class="slist"><div class="srow done"><span class="scheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="sname">Pull resident photos from the October event</span><span class="av" style="width:20px;height:20px;background:#8b6fd1;font-size:9px;">CS</span><span class="sdate">Dec 4</span></div><div class="srow done"><span class="scheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="sname">Write headline and RSVP copy</span><span class="av" style="width:20px;height:20px;background:#8b6fd1;font-size:9px;">CS</span><span class="sdate">Dec 5</span></div><div class="srow "><span class="scheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="sname">Fix logo spacing on the footer (from Avi’s feedback)</span><span class="av" style="width:20px;height:20px;background:#2f9bb5;font-size:9px;">CG</span><span class="sdate">Dec 10</span></div><div class="srow "><span class="scheck"><svg
+  class="ic  lucide lucide-circle-check"
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="m16 9-5.5 5.5L8 12" />
+</svg></span><span class="sname">Export print-ready PDF with bleed</span><span class="av" style="width:20px;height:20px;background:#2f9bb5;font-size:9px;">CG</span><span class="sdate">Dec 12</span></div><div class="sadd"><svg
+  class="ic  lucide lucide-plus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
+  <path d="M12 5v14" />
+</svg> Add subtask</div></div></section><section class="sec review" id="review"><div class="sech"><span>Review <span class="muted">· round 2 · sent Dec 9</span></span><span class="linkish">Open Review tab <svg
+  class="ic  lucide lucide-arrow-right"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
+  <path d="m12 5 7 7-7 7" />
+</svg></span></div><div class="rblock team" id="team"><div class="rb-top"><span class="rtag team"><svg
+  class="ic  lucide lucide-users"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+  <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+  <circle cx="9" cy="7" r="4" />
+</svg> Team approver</span><span class="st st-wait"><svg
+  class="ic  lucide lucide-clock"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="M12 6v6l4 2" />
+</svg> Waiting on you · due Dec 11</span></div>
+<div class="rb-people"><span class="pv"><span class="av" style="width:24px;height:24px;background:#e5735c;font-size:9px;">AW</span><span>Avi W.</span></span></div>
+<div class="rb-meta">Any one can approve · Approval due Dec 11 · When everyone’s approved: <b>move to Ready to publish</b></div>
+<div class="rb-btns"><span class="b-approve"><svg
+  class="ic  lucide lucide-thumbs-up"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+  <path d="M7 10v12" />
+</svg> Approve</span><span class="btn-secondary">Request changes</span><span class="btn-ghost">Reject</span><span class="btn-ghost muted-btn">Hand off…</span></div></div><div class="rblock out" id="out"><div class="rb-top"><span class="rtag out"><svg
+  class="ic  lucide lucide-globe"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+  <path d="M2 12h20" />
+</svg> Outside reviewer</span><span class="st st-next"><svg
+  class="ic  lucide lucide-lock"
+  xmlns="http://www.w3.org/2000/svg"
+  width="12"
+  height="12"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+</svg> Up next, after the team approves</span></div>
+<div class="rb-people"><span class="pv"><span class="av" style="width:24px;height:24px;background:#c98a1b;font-size:9px;">SK</span><span>Sarah K.</span><span class="muted">· Administrator, Glen Oaks · sarah.k@glenoaks-al.com</span></span></div><div class="rb-meta">Reviews by email link, no login · approves each file or pins comments · due Dec 15 (shown on hover)</div><div class="rb-btns"><span class="btn-secondary disabled"><svg
+  class="ic  lucide lucide-send"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+  <path d="m21.854 2.147-10.94 10.939" />
+</svg> Send to Sarah</span><span class="btn-ghost"><svg
+  class="ic  lucide lucide-copy"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+</svg> Copy review link</span></div></div></section><section class="sec"><div class="sech"><span>Files <span class="muted">3</span></span><span class="sec-actions"><span class="linkish">Open Files tab <svg
+  class="ic  lucide lucide-arrow-right"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 12h14" />
+  <path d="m12 5 7 7-7 7" />
+</svg></span><span class="btn-ghost xs"><svg
+  class="ic  lucide lucide-paperclip"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
+</svg> Attach</span></span></div><div class="thumbs"><div class="thumb"><div class="th-flyer"><div class="tf1">Holiday</div><div class="tf2">PARTY</div><div class="tf3">Glen Oaks · Dec 18</div></div><div class="thn">holiday-flyer-v2.png</div><div class="thm">Round 2 · 2.1 MB</div></div><div class="thumb"><div class="th-doc"><svg
+  class="ic  lucide lucide-file-text"
+  xmlns="http://www.w3.org/2000/svg"
+  width="28"
+  height="28"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+  <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+  <path d="M10 9H8" />
+  <path d="M16 13H8" />
+  <path d="M16 17H8" />
+</svg><span>PDF</span></div><div class="thn">holiday-flyer-print.pdf</div><div class="thm">Round 2 · 4.8 MB</div></div><div class="thumb"><div class="th-doc"><svg
+  class="ic  lucide lucide-image"
+  xmlns="http://www.w3.org/2000/svg"
+  width="28"
+  height="28"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+  <circle cx="9" cy="9" r="2" />
+  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+</svg></div><div class="thn">resident-photos.zip</div><div class="thm">Dec 4</div></div></div></section><section class="sec act"><div class="atabs"><span class="atab on">Comments</span><span class="atab ">All activity</span><span class="atab ">Reviews</span></div><div class="cmt"><span class="av" style="width:28px;height:28px;background:#e5735c;font-size:11px;">AW</span><div class="cbody"><div class="chead"><b>Avi W.</b><span class="rtag team sm">Team approver</span><span class="muted">Dec 8, 3:12 PM</span><span class="pinned"><svg
+  class="ic  lucide lucide-pin"
+  xmlns="http://www.w3.org/2000/svg"
+  width="11"
+  height="11"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 17v5" />
+  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+</svg> Pinned</span></div><div class="ctext">Logo is crowding the footer — give it 0.25" more room, then send round 2.</div></div></div><div class="cmt"><span class="av" style="width:28px;height:28px;background:#2f9bb5;font-size:11px;">CG</span><div class="cbody"><div class="chead"><b>CA Green</b><span class="muted">Dec 9, 10:14 AM</span></div><div class="ctext">Fixed the spacing and swapped in the brighter photo. Sent round 2 for approval.</div></div></div><div class="cmt"><span class="av" style="width:28px;height:28px;background:#3f8f6b;font-size:11px;">IR</span><div class="cbody"><div class="chead"><b>Isaiah Rappaport</b><span class="muted">Dec 9, 11:02 AM</span></div><div class="ctext">Looks great. Sarah asked to see it before it goes to print, so she’s set as the outside reviewer.</div></div></div></section></div></div><div class="pfoot"><div class="crow"><span class="av" style="width:28px;height:28px;background:#e5735c;font-size:11px;">AW</span><div class="cbox"><span class="ph">Add a comment… (@ to mention)</span><span class="cbox-r"><span class="talk" title="Dictate"><svg
+  class="ic  lucide lucide-mic"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 19v3" />
+  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+  <rect x="9" y="2" width="6" height="13" rx="3" />
+</svg> Talk</span></span></div></div>
+<div class="frow"><span class="muted">Followers</span><span class="avstack"><span class="av" style="width:24px;height:24px;background:#e5735c;font-size:9px;box-shadow:0 0 0 2px #fff;">AW</span><span class="av" style="width:24px;height:24px;background:#2f9bb5;font-size:9px;box-shadow:0 0 0 2px #fff;">CG</span><span class="av" style="width:24px;height:24px;background:#3f8f6b;font-size:9px;box-shadow:0 0 0 2px #fff;">IR</span><span class="av" style="width:24px;height:24px;background:#8b6fd1;font-size:9px;box-shadow:0 0 0 2px #fff;">CS</span></span><span class="btn-icon sm"><svg
+  class="ic  lucide lucide-user-plus"
+  xmlns="http://www.w3.org/2000/svg"
+  width="14"
+  height="14"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+  <circle cx="9" cy="7" r="4" />
+  <line x1="19" x2="19" y1="8" y2="14" />
+  <line x1="22" x2="16" y1="11" y2="11" />
+</svg></span><span class="fol"><svg
+  class="ic  lucide lucide-bell"
+  xmlns="http://www.w3.org/2000/svg"
+  width="13"
+  height="13"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10.268 21a2 2 0 0 0 3.464 0" />
+  <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+</svg> Following</span></div></div></aside></div></div><script>var s=document.getElementById('scroll');var r=document.getElementById('review');s.scrollTop=r.offsetTop-150;</script></body></html>

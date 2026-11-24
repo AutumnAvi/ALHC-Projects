@@ -1,11 +1,13 @@
 "use client";
 
 import { useClosesPopovers } from "@/components/overlay-registry";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { PROJECT_STATUS_DOT } from "@/components/project-status-badge";
 import { SmartPicker } from "@/components/smart-picker";
+import { DictationBar, DictationInterim, TalkButton } from "@/components/dictation-button";
+import { textareaTarget, useDictation } from "@/lib/dictation";
 import { useNotify, useServerAction } from "@/components/toast";
 import { setProjectStatus } from "@/lib/actions/projects";
 import { PROJECT_STATUSES, PROJECT_STATUS_LABELS, type ProjectStatus } from "@alhc/core/portfolios";
@@ -36,7 +38,27 @@ export function StatusUpdatePanel({
   const notify = useNotify();
   const [title, setTitle] = useState(() => defaultStatusTitle());
   const [status, setStatus] = useState<ProjectStatus>(initialStatus);
-  const [summary, setSummary] = useState("");
+  const [summary, setSummaryState] = useState("");
+  // Batch 45: the newest summary between renders (dictation writes into it).
+  const latestSummary = useRef("");
+  const setSummary = (next: string) => {
+    latestSummary.current = next;
+    setSummaryState(next);
+  };
+  const summaryRef = useRef<HTMLTextAreaElement>(null);
+  const talk = useDictation();
+  const attachTalk = talk.attach;
+  useLayoutEffect(() => {
+    const target = textareaTarget(
+      () => summaryRef.current,
+      () => latestSummary.current,
+      (next) => {
+        latestSummary.current = next;
+        setSummaryState(next);
+      },
+    );
+    return attachTalk(target);
+  }, [attachTalk]);
   const [templateId, setTemplateId] = useState("");
   // What the last template filled in, so picking another one only asks when the summary was edited.
   const [prefilled, setPrefilled] = useState("");
@@ -176,18 +198,30 @@ export function StatusUpdatePanel({
               </div>
             </fieldset>
             <div>
-              <label htmlFor="status-update-summary" className="block text-xs font-medium text-zinc-600">
-                Summary
-              </label>
+              <div className="flex min-h-6 items-center justify-between gap-2">
+                <label htmlFor="status-update-summary" className="block text-xs font-medium text-zinc-600">
+                  Summary
+                </label>
+                {talk.listening ? (
+                  <DictationBar dictation={talk} compact />
+                ) : (
+                  <TalkButton dictation={talk} label="Dictate the summary" />
+                )}
+              </div>
               <textarea
                 id="status-update-summary"
+                ref={summaryRef}
                 value={summary}
                 rows={8}
                 maxLength={STATUS_SUMMARY_MAX}
                 placeholder="How is the project going? What’s done, what’s blocked, and what’s next."
-                onChange={(e) => setSummary(e.currentTarget.value)}
+                onChange={(e) => {
+                  if (talk.listening) talk.abandon();
+                  setSummary(e.currentTarget.value);
+                }}
                 className="field mt-1 h-auto w-full resize-y py-2 leading-relaxed"
               />
+              <DictationInterim dictation={talk} className="mt-1 px-1" />
               <p className="mt-1 text-xs text-zinc-500">
                 Everyone in the project sees it on the Overview tab, and members get a notification. Portfolios show the latest one.
               </p>

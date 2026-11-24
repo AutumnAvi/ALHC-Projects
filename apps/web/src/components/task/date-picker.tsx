@@ -11,7 +11,7 @@ import {
   monthGrid,
   monthLabel,
   monthOf,
-  parseDateInput,
+  parseDateTimeInput,
   parseTimeInput,
   shiftDays,
   shiftMonth,
@@ -203,7 +203,8 @@ export function MiniCalendar({
 }
 
 // A date box at the top of the picker: shows the date as 10/14/26 and takes typed dates (10/14,
-// Oct 14, tomorrow…) on Enter or when it loses focus.
+// Oct 14, tomorrow…) on Enter or when it loses focus. Batch 45 (Isaiah, Nov 23): a time typed with the date
+// ("tomorrow at 4 p.m.", "Jun 14th 16:00") comes along as `time` instead of the box refusing it.
 function DateBox({
   label,
   value,
@@ -217,7 +218,7 @@ function DateBox({
   value: string | null;
   active: boolean;
   onActivate: () => void;
-  onCommit: (day: string) => void;
+  onCommit: (day: string, time: string | null) => void;
   onClear?: () => void;
   autoFocus?: boolean;
 }) {
@@ -231,10 +232,10 @@ function DateBox({
     const text = draft.trim();
     setDraft(null);
     if (!text || text === shown) return;
-    const day = parseDateInput(text, today);
-    if (day) {
+    const parsed = parseDateTimeInput(text, today);
+    if (parsed) {
       setInvalid(false);
-      onCommit(day);
+      onCommit(parsed.day, parsed.time);
     } else {
       setInvalid(true);
     }
@@ -249,7 +250,7 @@ function DateBox({
         }`}
       >
         <input
-          aria-label={`${label} (type a date like 10/14 or Oct 14)`}
+          aria-label={`${label} (type a date like 10/14, Oct 14, or tomorrow at 4pm)`}
           aria-invalid={invalid || undefined}
           autoFocus={autoFocus}
           placeholder="mm/dd/yy"
@@ -301,7 +302,8 @@ export function DateRangePicker({
 }: {
   value: DateRange;
   allowStart?: boolean;
-  onChange: (next: DateRange, close: boolean) => void;
+  // `typed`: a time typed into a date box with the date (batch 45), for the parent to save with it.
+  onChange: (next: DateRange, close: boolean, typed?: { kind: "start" | "due"; time: string }) => void;
   // Extra sections under the calendar (time, Repeats).
   children?: ReactNode;
 }) {
@@ -309,11 +311,11 @@ export function DateRangePicker({
   const [active, setActive] = useState<"start" | "due">("due");
   const { start, due } = value;
 
-  function pickDue(day: string) {
-    onChange({ start: start && start <= day ? start : null, due: day }, true);
+  function pickDue(day: string, time: string | null = null) {
+    onChange({ start: start && start <= day ? start : null, due: day }, true, time ? { kind: "due", time } : undefined);
   }
-  function pickStart(day: string) {
-    onChange({ start: day, due: due && due < day ? day : due }, false);
+  function pickStart(day: string, time: string | null = null) {
+    onChange({ start: day, due: due && due < day ? day : due }, false, time ? { kind: "start", time } : undefined);
     setActive("due");
   }
   const pick = (day: string) => (active === "start" && showStart ? pickStart(day) : pickDue(day));
@@ -384,7 +386,8 @@ export function SingleDatePicker({
 }) {
   return (
     <div className="flex flex-col gap-3 p-3">
-      <DateBox label={label} value={value} active onActivate={() => undefined} onCommit={onChange} />
+      {/* A date field has no time: a typed time is left out, the day is kept. */}
+      <DateBox label={label} value={value} active onActivate={() => undefined} onCommit={(day) => onChange(day)} />
       <QuickPicks onPick={onChange} />
       <MiniCalendar due={value} onPick={onChange} autoFocus />
       {value ? (

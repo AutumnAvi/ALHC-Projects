@@ -34,4 +34,10 @@ export type ApprovalTaskSetupInput = {
   followUp: ApprovalFollowUpInput;
   // Undefined: leave who the external review is meant for as it is; an email of null clears it.
   reviewer?: { email: string | null; name: string | null };
+  // Nov 24 batch 45: the review order and the outside reviewer's due date (undefined: leave them as they are).
+  plan?: ReviewPlanInput;
 };
+
+// Nov 24 batch 45: team first then outside (sequential) or both at the same time (parallel), and when the
+// outside reviewer should answer by (task_review_settings.review_order / reviewer_due_on).
+export type ReviewPlanInput = { order: "sequential" | "parallel"; dueOn: string | null };

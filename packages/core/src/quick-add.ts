@@ -5,7 +5,7 @@
 // and is drawn as a chip linking to them; it never assigns the task) plus the parts it understood (shown as chips; a chip's × puts that text back into the name through
 // `ignored`). Pure and dependency-free so the unit tests can pin it. Dates are local days (YYYY-MM-DD).
 
-import { isoDate, parseDateInput, shiftDays, weekdayOf } from "./date-input";
+import { TIME_PATTERN, isoDate, parseDateInput, parseTimeInput, shiftDays, weekdayOf } from "./date-input";
 import { nextWeekWorkday, thisWeekDay } from "./checklist";
 import type { Frequency } from "./recurrence";
 import { titleMentionHandle } from "./title-mentions";
@@ -15,11 +15,13 @@ export type QuickAddPerson = { id: string; name: string; email?: string | null }
 
 export type QuickAddRepeat = { freq: Frequency; interval: number; weekdays: number[]; fromCompletion: boolean };
 
-export type QuickAddPart = { kind: "date" | "project" | "person" | "repeat"; text: string; start: number; end: number };
+export type QuickAddPart = { kind: "date" | "time" | "project" | "person" | "repeat"; text: string; start: number; end: number };
 
 export type QuickAddParse = {
   title: string;
   dueOn: string | null;
+  // Batch 45 (Isaiah, Nov 23): a time typed with it ("tomorrow at 4 p.m."), "HH:MM" on the person's clock.
+  dueTime: string | null;
   project: QuickAddProject | null;
   person: QuickAddPerson | null;
   repeat: QuickAddRepeat | null;
@@ -140,6 +142,53 @@ function futureDay(text: string, today: string): string | null {
   return day;
 }
 
+// Batch 45 (Isaiah, Nov 23): "tomorrow at 4 p.m." kept the date and left "at 4 p.m." in the name. A time is
+// "4pm" / "4 p.m." / "4:30 PM" anywhere, "at 16:00" / "at noon", or a bare "16:00" right next to the date.
+// A time with no date is today's.
+const MERIDIEM_TIME = new RegExp(String.raw`\b(?:at\s+)?(\d{1,2}(?::[0-5]\d)?\s?(?:a\.?\s?m\.?|p\.?\s?m\.?))(?![a-z])`, "gi");
+const AT_TIME = new RegExp(String.raw`\bat\s+(${TIME_PATTERN})`, "gi");
+const CLOCK_TIME = String.raw`(?:[01]?\d|2[0-3]):[0-5]\d(?![\d:])`;
+
+function findTime(text: string, ctx: Context, taken: (start: number, end: number) => boolean, date: Found | null): Found | null {
+  const candidates: { start: number; end: number; time: string }[] = [];
+  const add = (start: number, end: number, raw: string) => {
+    const time = parseTimeInput(raw);
+    const matched = text.slice(start, end);
+    if (time && !taken(start, end) && !ctx.ignored?.includes(matched)) candidates.push({ start, end, time });
+  };
+  for (const re of [MERIDIEM_TIME, AT_TIME]) {
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) add(m.index, m.index + m[0].length, m[1]);
+  }
+  if (date) {
+    // "tomorrow 16:00", "June 14th, at 16:00" — and "16:00 tomorrow".
+    const after = new RegExp(String.raw`^,?\s+((?:at\s+)?(${CLOCK_TIME}))`, "i").exec(text.slice(date.end));
+    if (after) {
+      const start = date.end + after[0].length - after[1].length;
+      add(start, date.end + after[0].length, after[2]);
+    }
+    const before = new RegExp(String.raw`(?:^|\s)((?:at\s+)?(${CLOCK_TIME}))\s+$`, "i").exec(text.slice(0, date.start));
+    if (before) {
+      const start = before.index + before[0].length - before[0].trimStart().length;
+      add(start, start + before[1].length, before[2]);
+    }
+  }
+  if (!candidates.length) return null;
+  // The one nearest the date (else the first), so "Call 3 vendors tomorrow at 4pm" takes "at 4pm".
+  const distance = (c: { start: number; end: number }) =>
+    date ? Math.min(Math.abs(c.start - date.end), Math.abs(date.start - c.end)) : c.start;
+  const best = candidates.sort((a, b) => distance(a) - distance(b) || a.start - b.start)[0];
+  return {
+    kind: "time",
+    start: best.start,
+    end: best.end,
+    apply: (out) => {
+      out.dueTime = best.time;
+      if (!out.dueOn) out.dueOn = ctx.today;
+    },
+  };
+}
+
 function findRepeat(text: string, ctx: Context, taken: (start: number, end: number) => boolean): Found | null {
   const re = new RegExp(
     `\\bevery(!)? ?(?:(\\d{1,3}|other) )?(day|days|weekday|workday|week|weeks|month|months|year|years|${WEEKDAY_WORD}(?:(?:,| and|,? &) ?${WEEKDAY_WORD})*)\\b( after (?:completion|done|completed))?`,
@@ -210,7 +259,7 @@ function findToken(
 }
 
 export function parseQuickAdd(text: string, ctx: Context): QuickAddParse {
-  const out: QuickAddParse = { title: "", dueOn: null, project: null, person: null, repeat: null, parts: [] };
+  const out: QuickAddParse = { title: "", dueOn: null, dueTime: null, project: null, person: null, repeat: null, parts: [] };
   const found: Found[] = [];
   const taken = (start: number, end: number) => found.some((f) => start < f.end && end > f.start);
   // Names first (a project called "Friday post" mustn't lose "Friday" to the date), then the repeat
@@ -225,8 +274,11 @@ export function parseQuickAdd(text: string, ctx: Context): QuickAddParse {
   if (repeat) found.push(repeat);
   const date = findDate(text, ctx, taken);
   if (date) found.push(date);
-  // A date before the repeat so the repeat keeps a typed start date.
-  found.sort((a, b) => (a.kind === "date" ? -1 : b.kind === "date" ? 1 : 0));
+  const time = findTime(text, ctx, taken, date);
+  if (time) found.push(time);
+  // A date before the repeat so the repeat keeps a typed start date; a time last (alone, it means today).
+  const rank = (f: Found) => (f.kind === "date" ? 0 : f.kind === "time" ? 2 : 1);
+  found.sort((a, b) => rank(a) - rank(b));
   for (const f of found) f.apply(out);
   out.parts = found
     .map((f) => ({ kind: f.kind, text: text.slice(f.start, f.end), start: f.start, end: f.end }))

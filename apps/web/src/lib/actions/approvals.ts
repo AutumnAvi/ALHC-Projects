@@ -5,12 +5,15 @@ import type {
   ApprovalDecision,
   ApprovalFollowUpInput,
   ApprovalTaskSetupInput,
+  ReviewPlanInput,
   SendForApprovalInput,
   TaskApproversInput,
 } from "@alhc/core/api/approvals/model";
 import * as approvalsApi from "@alhc/core/api/approvals/mutations";
 import type { ActionResult } from "@alhc/core/api/core/result";
+import type { ParallelReviewResult } from "@alhc/core/api/reviews/model";
 import { requestReviewThumbnails } from "@/lib/review-thumbnail-request";
+import { sendParallelReview } from "@/lib/review-send";
 import { run } from "@/lib/server/action";
 
 // ---------------------------------------------------------------------------------------------
@@ -41,6 +44,11 @@ export async function setUpApprovalTask(taskId: string, input: ApprovalTaskSetup
   return run((ctx) => approvalsApi.setUpApprovalTask(ctx, taskId, input));
 }
 
+// Nov 24 batch 45: the review order (team first, or at the same time) and the outside reviewer's due date.
+export async function setTaskReviewPlan(taskId: string, input: ReviewPlanInput): Promise<ActionResult> {
+  return run((ctx) => approvalsApi.setTaskReviewPlan(ctx, { taskId, ...input }));
+}
+
 // 45 / 45b. Approval tasks.
 export async function setTaskApprovers(taskId: string, input: TaskApproversInput): Promise<ActionResult> {
   return run((ctx) => approvalsApi.setTaskApprovers(ctx, taskId, input));
@@ -49,14 +57,23 @@ export async function setTaskApprovers(taskId: string, input: TaskApproversInput
 export async function sendForApproval(
   taskId: string,
   input: SendForApprovalInput,
-): Promise<ActionResult & { roundId?: string }> {
+): Promise<ActionResult & { roundId?: string; outsideReview?: ParallelReviewResult }> {
   let roundId: string | undefined;
   let sentFiles: string[] = [];
+  let outsideReview: ParallelReviewResult | null = null;
   const result = await run(
     async (ctx) => {
       const sent = await approvalsApi.sendForApproval(ctx, taskId, input);
       roundId = sent.roundId;
       sentFiles = sent.files;
+      // Nov 24 batch 45: reviewed at the same time (parallel order), the outside review goes out with this
+      // round — its files and final text — through the same path as Send review check. Never throws: the
+      // team round is already out, so a problem comes back as outsideReview.skipped.
+      outsideReview = await sendParallelReview(ctx, {
+        taskId,
+        attachmentIds: sent.files,
+        finalText: typeof input?.finalText === "string" ? input.finalText.trim() || null : null,
+      });
     },
     {
       beforeEmail: () =>
@@ -73,7 +90,7 @@ export async function sendForApproval(
           : Promise.resolve(),
     },
   );
-  return result.error ? result : { roundId };
+  return result.error ? result : { roundId, ...(outsideReview ? { outsideReview } : {}) };
 }
 
 export async function withdrawApproval(taskId: string): Promise<ActionResult> {

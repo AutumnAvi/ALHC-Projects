@@ -505,10 +505,12 @@ test("the pane: Mark complete waits for a pending approval; a blocked task's but
     <TaskDetailPanel task={approvalTask("editor", info({ status: "pending", rounds: [round()] }))} projects={[]} profiles={people} memberId="me" tags={[]} />,
   );
   assert.match(pending, /<button type="button" disabled=""[^>]*data-tooltip="Waiting for approval[^"]*"/);
-  // Nov 18 notes (batch 44, item 2): a status heading under the name, and the approval section below.
-  assert.match(pending, /data-approval-heading="pending"/, "the status heading under the name");
-  assert.match(pending, /data-approval-section=""/, "the approval section");
-  assert.ok(pending.indexOf("data-approval-heading") < pending.indexOf("data-approval-section"), "heading first");
+  // Nov 24 batch 45: the step track at the top of the card, and the team's block in the Review section below.
+  assert.match(pending, /data-approval-track="sequential"/, "the step track");
+  assert.match(pending, /data-track-pill="team" data-track-state="current"/, "the team step is the current one");
+  assert.match(pending, /data-approval-section=""/, "the team block");
+  assert.ok(pending.indexOf("data-approval-track") < pending.indexOf("data-approval-section"), "track first");
+  assert.doesNotMatch(pending, /data-approval-heading=/, "no status line under the name any more");
   assert.match(pending, />Assignee</, "the assignee is the assignee, not the approver");
 
   const blocked = render(

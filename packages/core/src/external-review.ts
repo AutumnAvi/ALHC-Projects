@@ -14,7 +14,15 @@ type GateTask = {
   kind: TaskKind;
   viewerRole: ProjectRole | null;
   approval: Pick<TaskApprovalInfo, "approverIds" | "rounds"> | null;
+  // Nov 24 batch 45: the review order (parallel = team and outside at the same time).
+  externalReview?: Pick<ExternalReview, "plan"> | null;
 };
+
+// Nov 24 batch 45: an approval task with approvers reviewed by the team and the outside reviewer at the
+// same time (review_check_parallel() in SQL).
+export function reviewsInParallel(task: Pick<GateTask, "kind" | "approval" | "externalReview">): boolean {
+  return reviewComesAfterApproval(task) && task.externalReview?.plan?.order === "parallel";
+}
 
 // An approval task with approvers: the review check comes second.
 export function reviewComesAfterApproval(task: Pick<GateTask, "kind" | "approval">): boolean {
@@ -41,9 +49,10 @@ export function externalReviewerSectionOpen(input: {
   return Boolean(input.savedEmail?.trim() || input.submissionEmail?.trim() || input.pendingReview);
 }
 
-// Note 183: what "When it's approved" means on a two-stage task, said where the choice is shown.
+// Note 183: what "When it's approved" means on a two-stage task, said where the choice is shown. Nov 24
+// batch 45: the step runs by itself once the last of them (team and outside reviewer) approves.
 export const TWO_STAGE_FOLLOW_UP_NOTE =
-  "This task also goes to an external reviewer, so approving it never completes it or runs the step below: it stays open for the external review. After the external reviewer approves it, its approvers or its assignee complete it by hand.";
+  "This task also goes to an outside reviewer, so the team’s approval alone doesn’t run this step. It runs by itself once the outside reviewer has approved too.";
 
 export type ReviewSendGate = {
   // "after_approval": the two-step order applies to this task.
@@ -54,6 +63,14 @@ export type ReviewSendGate = {
 };
 
 export function reviewSendGate(task: GateTask, memberId: string): ReviewSendGate {
+  // Nov 24 batch 45: at the same time, Editors and the task's approvers send it any time (it normally goes
+  // out with the team round).
+  if (reviewsInParallel(task)) {
+    const approver = task.approval!.approverIds.includes(memberId) && hasRole(task.viewerRole, "commenter");
+    return approver || hasRole(task.viewerRole, "editor")
+      ? { order: "any_time", allowed: true, reason: null }
+      : { order: "any_time", allowed: false, reason: "Only the project’s Owners and Editors, or the task’s approvers, can send the outside review." };
+  }
   if (reviewComesAfterApproval(task)) {
     const approver = task.approval!.approverIds.includes(memberId) && hasRole(task.viewerRole, "commenter");
     if (!approver) {

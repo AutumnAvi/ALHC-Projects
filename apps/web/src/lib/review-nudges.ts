@@ -7,7 +7,8 @@
 import "server-only";
 import type { ApiContext } from "@alhc/core/api/core/context";
 import { claimReviewNudges, finishReviewNudge } from "@alhc/core/api/system/mutations";
-import { sendEmailNow } from "@/lib/email";
+import { sendEmailNowResult } from "@/lib/email";
+import { sendKey } from "@/lib/email-send";
 import { backgroundOrigin } from "@/lib/origin";
 import { renderReviewEmail } from "@/lib/review-email";
 
@@ -41,9 +42,12 @@ export async function sendReviewNudges(ctx: ApiContext, max = 20) {
         })),
         reminder: true,
       });
-      await sendEmailNow(nudge.recipient_email, email, "review reminder", `review-nudge-${nudge.review_id}`);
-      sent = true;
-      counts.sent += 1;
+      // Nov 24 batch 45 (item 5): the retrying sender, and a key per reminder link — each claim makes a new
+      // link, so a later try is a new email (one shared key with a different body made Resend refuse it).
+      const result = await sendEmailNowResult(nudge.recipient_email, email, "review reminder", sendKey("review-nudge", nudge.review_id, nudge.token));
+      sent = result.outcome !== "failed";
+      if (sent) counts.sent += 1;
+      else counts.failed += 1;
     } catch (e) {
       counts.failed += 1;
       console.error("Review reminder failed", e instanceof Error ? e.message.slice(0, 80) : "error");
