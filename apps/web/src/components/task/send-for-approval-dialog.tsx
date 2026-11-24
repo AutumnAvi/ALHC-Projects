@@ -14,7 +14,7 @@ import { sendForApproval } from "@/lib/actions/approvals";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
-import { reviewerLabel, TWO_STAGE_FOLLOW_UP_NOTE } from "@alhc/core/external-review";
+import { reviewerLabel, reviewsInParallel, TWO_STAGE_FOLLOW_UP_NOTE } from "@alhc/core/external-review";
 import { FOLLOW_UP_LABELS } from "@alhc/core/approval-setup";
 import type { AfterApproval } from "@alhc/core/task-kinds";
 
@@ -100,6 +100,8 @@ export function SendForApprovalDialog({
   const approverNames = approvers.map(displayName);
   const mode = task.approval?.mode ?? "any";
   const externalReviewer = task.externalReview?.reviewer ?? null;
+  // Nov 24 batch 45: reviewed at the same time, sending also emails the outside reviewer the review link.
+  const parallel = Boolean(externalReviewer) && reviewsInParallel(task);
   // Nov 2 notes (batch 15, 113): files can be uploaded right here (Editors+: uploading is an edit); each
   // is attached to the task and picked. Thumbnails preview like the review dialog's.
   const canUpload = taskPermissions(task).canEdit;
@@ -163,7 +165,12 @@ export function SendForApprovalDialog({
         return;
       }
       const who = approverNames.length ? joinNames(approverNames) : "the approvers";
-      notify(`Sent to ${who} for approval`);
+      // Reviewed at the same time, the outside review goes out with the round: say so, or why it didn't.
+      const outside = result.outsideReview;
+      if (outside?.skipped) notify(`Sent to ${who} for approval. The outside review didn’t go out: ${outside.skipped}`);
+      else if (outside && outside.emailed === false && outside.reason) {
+        notify(`Sent to ${who} for approval. The outside review’s email didn’t go out: ${outside.reason}`);
+      } else notify(outside ? `Sent to ${who} and the outside reviewer` : `Sent to ${who} for approval`);
       onClose();
     });
   }
@@ -286,65 +293,78 @@ export function SendForApprovalDialog({
         </div>
 
         {externalReviewer ? (
-          <div data-when-approved="">
-            <p className="mb-1 text-sm text-zinc-600">When it’s approved</p>
-            <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600" data-two-step-note="" data-two-stage-note="">
-              After the internal approval, {approverNames.length ? joinNames(approverNames) : "the approver"} sends it to{" "}
-              {reviewerLabel(externalReviewer)} for the external review. {TWO_STAGE_FOLLOW_UP_NOTE}
-            </p>
-          </div>
-        ) : (
-          <fieldset className="flex flex-col gap-2" data-when-approved="">
-            <legend className="mb-1 text-sm text-zinc-600">When it’s approved</legend>
-            <AfterChoice
-              name={`${ids}-after`}
-              selected={!moreSteps}
-              label={FOLLOW_UP_LABELS.complete.label}
-              hint={FOLLOW_UP_LABELS.complete.hint}
-              onSelect={() => setMoreSteps(false)}
-            />
-            <AfterChoice
-              name={`${ids}-after`}
-              selected={moreSteps && effectiveChoice === "move_section"}
-              disabled={!canMove}
-              label={FOLLOW_UP_LABELS.move_section.label}
-              hint={
-                canMove
-                  ? FOLLOW_UP_LABELS.move_section.hint
-                  : task.isSubtask
-                    ? "Subtasks aren’t in sections."
-                    : "You can’t move it in any of its projects."
-              }
-              onSelect={() => {
-                setMoreSteps(true);
-                setChoice("move_section");
-              }}
-            >
-              {moreSteps && canMove && effectiveChoice === "move_section" ? (
-                <SmartPicker
-                  id={`${ids}-section`}
-                  label="Section to move it to on approval"
-                  placeholder="Choose a section…"
-                  value={moveSectionId}
-                  onChange={setMoveSectionId}
-                  searchable={sectionOptions.length > 7}
-                  className="mt-1.5 h-8 w-full"
-                  options={sectionOptions}
-                />
-              ) : null}
-            </AfterChoice>
-            <AfterChoice
-              name={`${ids}-after`}
-              selected={moreSteps && effectiveChoice === "notify"}
-              label={FOLLOW_UP_LABELS.notify.label}
-              hint={FOLLOW_UP_LABELS.notify.hint}
-              onSelect={() => {
-                setMoreSteps(true);
-                setChoice("notify");
-              }}
-            />
-          </fieldset>
-        )}
+          <p
+            className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600"
+            data-two-step-note=""
+            data-two-stage-note=""
+            data-review-order={parallel ? "parallel" : "sequential"}
+          >
+            {parallel ? (
+              <>
+                Sending this also emails {reviewerLabel(externalReviewer)} the review link at the same time: they review the
+                same files while {approverNames.length ? joinNames(approverNames) : "the approvers"} approve.
+                {attachmentIds.length ? "" : " Pick at least one file for the outside review."}{" "}
+              </>
+            ) : (
+              <>
+                After the team approves, {approverNames.length ? joinNames(approverNames) : "the approver"} sends it to{" "}
+                {reviewerLabel(externalReviewer)} for the outside review.{" "}
+              </>
+            )}
+            {TWO_STAGE_FOLLOW_UP_NOTE}
+          </p>
+        ) : null}
+        {/* Batch 45: the choice shows for two-stage tasks too: it runs once the last stage approves. */}
+        <fieldset className="flex flex-col gap-2" data-when-approved="">
+          <legend className="mb-1 text-sm text-zinc-600">{externalReviewer ? "When everyone has approved" : "When it’s approved"}</legend>
+          <AfterChoice
+            name={`${ids}-after`}
+            selected={!moreSteps}
+            label={FOLLOW_UP_LABELS.complete.label}
+            hint={FOLLOW_UP_LABELS.complete.hint}
+            onSelect={() => setMoreSteps(false)}
+          />
+          <AfterChoice
+            name={`${ids}-after`}
+            selected={moreSteps && effectiveChoice === "move_section"}
+            disabled={!canMove}
+            label={FOLLOW_UP_LABELS.move_section.label}
+            hint={
+              canMove
+                ? FOLLOW_UP_LABELS.move_section.hint
+                : task.isSubtask
+                  ? "Subtasks aren’t in sections."
+                  : "You can’t move it in any of its projects."
+            }
+            onSelect={() => {
+              setMoreSteps(true);
+              setChoice("move_section");
+            }}
+          >
+            {moreSteps && canMove && effectiveChoice === "move_section" ? (
+              <SmartPicker
+                id={`${ids}-section`}
+                label="Section to move it to on approval"
+                placeholder="Choose a section…"
+                value={moveSectionId}
+                onChange={setMoveSectionId}
+                searchable={sectionOptions.length > 7}
+                className="mt-1.5 h-8 w-full"
+                options={sectionOptions}
+              />
+            ) : null}
+          </AfterChoice>
+          <AfterChoice
+            name={`${ids}-after`}
+            selected={moreSteps && effectiveChoice === "notify"}
+            label={FOLLOW_UP_LABELS.notify.label}
+            hint={FOLLOW_UP_LABELS.notify.hint}
+            onSelect={() => {
+              setMoreSteps(true);
+              setChoice("notify");
+            }}
+          />
+        </fieldset>
 
         {shownProblem ? (
           <p id={`${ids}-problem`} role="alert" className="text-sm text-red-700">

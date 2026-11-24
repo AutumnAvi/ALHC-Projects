@@ -229,6 +229,8 @@ export type ApprovalRound = {
   decidedAt: string | null;
   acknowledgedAt: string | null;
   withdrawnAt: string | null;
+  // Nov 24 batch 45: "outside_changes" = ended because the outside reviewer asked for changes (parallel order).
+  closedReason?: "outside_changes" | null;
   // This round's requests (one per approver), oldest first.
   requests: TaskApproval[];
 };
@@ -386,15 +388,40 @@ export type ExternalReview = {
   reviewer: { email: string; name: string | null; source: "task" | "submitter" | "latest" } | null;
   // The reviewer set on the task itself (what the approval setup shows and edits).
   saved: { email: string; name: string | null } | null;
-  latest: {
-    id: string;
-    round: number;
-    status: "pending" | "approved" | "changes_requested" | "superseded" | "cancelled";
-    recipientEmail: string;
-    recipientName: string | null;
-    createdAt: string;
-    decidedAt: string | null;
-    nudgedAt: string | null;
-  } | null;
+  // Nov 24 batch 45: team first then outside (sequential, the default) or both at the same time
+  // (parallel), and when the outside reviewer should answer by.
+  plan?: { order: ReviewOrder; dueOn: string | null };
+  latest: ExternalReviewRound | null;
+};
+
+export type ReviewOrder = "sequential" | "parallel";
+
+export type ExternalReviewRound = {
+  id: string;
+  round: number;
+  status: "pending" | "approved" | "changes_requested" | "superseded" | "cancelled";
+  recipientEmail: string;
+  recipientName: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  nudgedAt: string | null;
+  // Nov 24 batch 45 (all optional: a database without this release's update leaves them out).
+  dueOn?: string | null;
+  // team_changes / team_rejected = closed because the team asked for changes / rejected it;
+  // withdrawn_with_round = the team round sent with it was withdrawn (parallel order).
+  closedReason?: "team_changes" | "team_rejected" | "withdrawn_with_round" | null;
+  createdBy?: string | null;
+  lastViewedAt?: string | null;
+  // How its email went the last time it was sent (null = not recorded, e.g. sent before this release).
+  // sending = it started and never reported back (e.g. the function was stopped midway).
+  emailStatus?: "sending" | "sent" | "failed" | "mocked" | "suppressed" | null;
+  emailError?: string | null;
+  emailAttemptedAt?: string | null;
+  // What Resend reported afterwards (delivered, bounced, …).
+  deliveryStatus?: "delivered" | "delayed" | "bounced" | "complained" | "suppressed" | null;
+  fileCount?: number;
+  pinCount?: number;
+  // Answered file by file: how many files were approved (null when it wasn't).
+  approvedFiles?: number | null;
 };
 

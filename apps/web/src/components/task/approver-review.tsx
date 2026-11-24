@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useId, useState, useSyncExternalStore } from "react";
+import { useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Maximize2, MessageSquare } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { Dialog } from "@/components/dialog";
@@ -67,6 +67,10 @@ export function ApproverReview({
   onExpand,
   onDone,
   onDecide,
+  extraAction,
+  intro,
+  fileId,
+  onSelectFile,
 }: {
   // Nov 2 notes (batch 16, 126): the approval card shows the decision at once.
   onDecide?: (decision: "approved" | "changes_requested", note: string) => void;
@@ -74,9 +78,19 @@ export function ApproverReview({
   requestId: string;
   round: ApprovalRound;
   attachments: readonly TaskAttachment[];
-  variant?: "compact" | "full";
+  // Batch 45: "panel" = only the controls (the Review tab draws the preview and the file strip itself and
+  // says which file is shown through `fileId`; "Next file to review" asks it to move with `onSelectFile`).
+  variant?: "compact" | "full" | "panel";
+  fileId?: string;
+  onSelectFile?: (fileId: string) => void;
   onExpand?: () => void;
   onDone?: () => void;
+  // Batch 44 (item 1): another action shown next to Submit in the pinned bar (the review page's Reject).
+  extraAction?: ReactNode;
+  // Batch 44 (item 1): what the review page shows above the files (the task's details, the final text).
+  // It's drawn inside the review so the pinned Submit bar holds from the top of the page: a sticky bar
+  // can't rise above the block it's in, so long details above that block would push it below the screen.
+  intro?: ReactNode;
 }) {
   const ids = useId();
   const key = approverReviewStorageKey(requestId);
@@ -84,12 +98,18 @@ export function ApproverReview({
   const [pending, run] = useServerAction();
   const confirm = useConfirm();
   const assets = approverReviewFiles(round, attachments);
-  const [index, setIndex] = useState(() => {
+  const [index, setIndexState] = useState(() => {
     const first = assets.findIndex((a) => approverFileStatus(a.id, stored.files) === "unreviewed");
     return first < 0 ? 0 : first;
   });
+  const noteRef = useRef<HTMLTextAreaElement>(null);
   if (assets.length === 0) return null;
-  const at = Math.min(index, assets.length - 1);
+  const shown = fileId ? assets.findIndex((a) => a.id === fileId) : -1;
+  const at = shown >= 0 ? shown : Math.min(index, assets.length - 1);
+  const setIndex = (i: number) => {
+    setIndexState(i);
+    if (assets[i]) onSelectFile?.(assets[i].id);
+  };
   const file = assets[at];
   const files = stored.files;
   const state = { pins: [], files };
@@ -98,6 +118,7 @@ export function ApproverReview({
   const problem = answerProblem(assets, state);
   const status = approverFileStatus(file.id, files);
   const full = variant === "full";
+  const panel = variant === "panel";
 
   const save = (next: Partial<Stored>) => writeStored(key, { ...stored, ...next });
   const nextOpen = nextUnreviewedIndex(assets, state, at);
@@ -146,9 +167,10 @@ export function ApproverReview({
   return (
     <div
       data-approver-review={variant}
-      className={full ? "flex min-h-0 flex-col gap-3" : "mt-2 rounded-lg border border-accent-200 bg-white p-3 shadow-sm"}
+      className={full ? "flex min-h-0 flex-col gap-3" : panel ? "flex flex-col" : "mt-2 rounded-lg border border-accent-200 bg-white p-3 shadow-sm"}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      {intro}
+      <div className={`flex flex-wrap items-center gap-2 ${panel ? "hidden" : ""}`}>
         <h3 className="text-sm font-semibold text-zinc-900">Review the files</h3>
         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium tabular-nums text-zinc-700" data-approver-progress="">
           {reviewedLabel(tally)}
@@ -160,7 +182,7 @@ export function ApproverReview({
               Expand
             </button>
           ) : null}
-          {!full ? (
+          {!full && !panel ? (
             <Link href={approverReviewHref(taskId)} className="btn-ghost h-7 px-2 text-xs">
               <ExternalLink className="size-3.5" aria-hidden />
               Open review page
@@ -169,7 +191,7 @@ export function ApproverReview({
         </span>
       </div>
 
-      <ul className="mt-2 flex gap-1.5 overflow-x-auto pb-1" aria-label="Files to review">
+      <ul className={`mt-2 flex gap-1.5 overflow-x-auto pb-1 ${panel ? "hidden" : ""}`} aria-label="Files to review">
         {assets.map((a, i) => {
           const s = approverFileStatus(a.id, files);
           return (
@@ -200,14 +222,16 @@ export function ApproverReview({
         })}
       </ul>
 
-      <div className={`mt-2 grid gap-3 ${full ? "min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_20rem]" : ""}`}>
-        <div
-          className={`flex items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 ${
-            full ? "min-h-[50vh]" : "h-44"
-          }`}
-        >
-          <FilePreview file={file} size={full ? "full" : "medium"} />
-        </div>
+      <div className={`grid gap-3 ${panel ? "" : "mt-2"} ${full ? "min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_20rem]" : ""}`}>
+        {panel ? null : (
+          <div
+            className={`flex items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 ${
+              full ? "min-h-[50vh]" : "h-44"
+            }`}
+          >
+            <FilePreview file={file} size={full ? "full" : "medium"} />
+          </div>
+        )}
         <div className="flex min-w-0 flex-col gap-2">
           <p className="flex items-center gap-1.5 text-sm text-zinc-800">
             <span className="min-w-0 flex-1 truncate font-medium" title={file.name}>
@@ -234,12 +258,25 @@ export function ApproverReview({
             }`}
           >
             <Check className="size-4" aria-hidden />
-            {status === "approved" ? "Approved" : "Approve this file"}
+            {status === "approved" ? "Approved" : panel ? "Approve file" : "Approve this file"}
           </button>
+          {panel ? (
+            <button
+              type="button"
+              aria-pressed={status === "feedback"}
+              onClick={() => noteRef.current?.focus()}
+              className="btn-secondary h-8 justify-center px-3"
+              data-approver-has-feedback=""
+            >
+              <MessageSquare className="size-4" aria-hidden />
+              Has feedback
+            </button>
+          ) : null}
           <label htmlFor={`${ids}-note`} className="text-xs font-medium text-zinc-700">
             Or leave feedback on this file
           </label>
           <textarea
+            ref={noteRef}
             id={`${ids}-note`}
             value={files[file.id]?.note ?? ""}
             onChange={(e) => save({ files: setFileNote(files, file.id, e.currentTarget.value.slice(0, 1000)) })}
@@ -247,6 +284,11 @@ export function ApproverReview({
             placeholder="What should change?"
             className="field h-auto w-full py-1.5 text-sm"
           />
+          {panel ? (
+            <span className="text-2xs tabular-nums text-zinc-500" data-approver-progress="">
+              {reviewedLabel(tally)}
+            </span>
+          ) : null}
           {nextOpen !== null ? (
             <button type="button" onClick={() => setIndex(nextOpen)} className="btn-ghost h-7 self-start px-2 text-xs">
               Next file to review
@@ -256,7 +298,14 @@ export function ApproverReview({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3">
+      {/* Nov 18 notes (batch 44, item 1): on the full review (its page, Expand) Submit never needs a scroll:
+          the note and Submit stick to the bottom of the screen while the files are in view. */}
+      <div
+        className={`mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3 ${
+          full ? "sticky bottom-0 z-10 -mx-1 rounded-b-lg bg-white px-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-10px_20px_-14px_rgba(24,24,27,0.35)]" : ""
+        }`}
+        data-approver-review-submit=""
+      >
         <label htmlFor={`${ids}-overall`} className="text-xs font-medium text-zinc-700">
           Note for the assignee <span className="font-normal text-zinc-400">(optional)</span>
         </label>
@@ -271,6 +320,7 @@ export function ApproverReview({
           <p className="mr-auto text-xs text-zinc-500" aria-live="polite" data-approver-review-problem="">
             {problem ?? (decision === "approved" ? "Every file is approved." : "Some files have feedback: this requests changes.")}
           </p>
+          {extraAction}
           <button
             type="button"
             disabled={pending || Boolean(problem)}

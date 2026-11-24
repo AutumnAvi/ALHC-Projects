@@ -55,6 +55,8 @@ export const TYPED_API_EXCLUSIONS: Record<string, string> = {
   // Single functions.
   "approvals/mutations.ts:decideApproval": "Deciding an approval is the approver’s own act on the review page; the AI never decides for anyone.",
   "approvals/mutations.ts:completeApprovalAsApprover": "Completing an approval task is its approvers’ own act.",
+  "approvals/mutations.ts:setUpApprovalTask": "The pane’s approval setup (Done makes the task an approval with its approvers and follow-up); the AI’s own approval tool sets the type and approvers in one confirmed step with its own Undo.",
+  "approvals/mutations.ts:setTaskReviewPlan": "The approval setup’s review order and outside reviewer due date (batch 45), saved with the rest of the setup by a person; the AI’s approval tool doesn’t set the outside review.",
   "automations/mutations.ts:testRule": "The Test panel (a dry run) is a read the builder already offers.",
   "automations/mutations.ts:installRulePreset": "Presets install several automations at once; create_automation covers each.",
   "automations/mutations.ts:runManualRuleOnTasks": "Bulk runs of an automation: run_automation covers one task at a time with a preview.",

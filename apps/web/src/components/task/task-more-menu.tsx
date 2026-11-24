@@ -27,7 +27,6 @@ import { MenuItem, Popover } from "@/components/popover";
 import { useNotify, useServerAction } from "@/components/toast";
 import { deleteTask, restoreTask, setTaskKind } from "@/lib/actions/tasks";
 import { setReplyThreadClosed } from "@/lib/actions/comments";
-import { type ActionResult } from "@alhc/core/api/core/result";
 import { requestApprovalAction } from "./approval-action";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { describeRecurrence } from "@alhc/core/recurrence";
@@ -72,6 +71,7 @@ export function TaskMoreMenu({
   onCopyLink,
   onDeleted,
   onApprovalSetup,
+  hasReviewBlock = false,
 }: {
   task: TaskDetail;
   canEdit: boolean;
@@ -81,7 +81,12 @@ export function TaskMoreMenu({
   onCopyLink: () => void;
   onDeleted: () => void;
   // Opens the approval setup at once; `ready` settles when the task type is saved.
-  onApprovalSetup?: (ready: Promise<ActionResult>) => void;
+  // Nov 18 notes (batch 44, item 3): Task type → Approval opens the approval setup; the type is saved
+  // with the setup's Done (leaving the setup early changes nothing).
+  onApprovalSetup?: () => void;
+  // Nov 24 batch 45: the card's amber Outside reviewer block already sends and resends the review, so the
+  // menu doesn't offer it a second time.
+  hasReviewBlock?: boolean;
 }) {
   const [, run] = useServerAction();
   const notify = useNotify();
@@ -126,24 +131,15 @@ export function TaskMoreMenu({
     ) {
       return;
     }
-    // Nov 2 notes (batch 15, 112): a new approval task opens the guided setup at once (approvers, then
-    // what happens after approval); the type is saved in the background and the setup waits for it
-    // before saving its own choices.
-    if (kind === "approval" && onApprovalSetup) {
-      let settle: (result: ActionResult) => void = () => {};
-      onApprovalSetup(new Promise<ActionResult>((resolve) => (settle = resolve)));
-      run(async () => {
-        const result = await setTaskKind(task.id, kind);
-        settle(result);
-        return result;
-      });
+    // Nov 2 notes (batch 15, 112): making it an approval opens the guided setup at once. Nov 18 notes
+    // (batch 44, item 3): nothing is saved until the setup is done — its Done makes it an approval with
+    // its approvers in one go, and leaving early leaves the task as it was.
+    if (kind === "approval") {
+      if (onApprovalSetup) onApprovalSetup();
+      else requestApprovalAction(task.id, "convert");
       return;
     }
-    run(async () => {
-      const result = await setTaskKind(task.id, kind);
-      if (!result.error && kind === "approval") requestApprovalAction(task.id, "setup");
-      return result;
-    });
+    run(() => setTaskKind(task.id, kind));
   }
 
   // Close or reopen the request's reply thread, with Undo on the toast.
@@ -228,11 +224,13 @@ export function TaskMoreMenu({
                 )}
                 {/* Oct 26 notes (batch 3): files out for review by a client (or anyone) by email. Nov 10
                     batch 36: on an approval task with approvers the approver sends it, after approving. */}
-                {reviewGate.allowed
-                  ? item(Send, "Send review check…", () => setDialog("review"), close)
-                  : reviewGate.order === "after_approval"
-                    ? item(Send, "Send review check…", () => notify(reviewGate.reason ?? ""), close)
-                    : null}
+                {hasReviewBlock
+                  ? null
+                  : reviewGate.allowed
+                    ? item(Send, "Send review check…", () => setDialog("review"), close)
+                    : reviewGate.order === "after_approval"
+                      ? item(Send, "Send review check…", () => notify(reviewGate.reason ?? ""), close)
+                      : null}
                 {canAddSubtask ? item(ListPlus, "Add subtask", onAddSubtask, close) : null}
                 {item(Paperclip, "Attach files…", onAttach, close)}
                 <div role="separator" className="my-1 border-t border-zinc-100" />
@@ -270,7 +268,7 @@ export function TaskMoreMenu({
                   : null}
               </>
             ) : null}
-            {!canEdit && reviewGate.allowed ? item(Send, "Send review check…", () => setDialog("review"), close) : null}
+            {!canEdit && reviewGate.allowed && !hasReviewBlock ? item(Send, "Send review check…", () => setDialog("review"), close) : null}
             {item(Link2, "Copy task link", onCopyLink, close)}
             {item(Printer, "Print", printTask, close)}
             {canEdit ? (

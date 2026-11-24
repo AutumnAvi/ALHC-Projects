@@ -89,7 +89,7 @@ export function PaneShell({
           aria-label={label}
           className={
             expanded
-              ? `relative flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ${wide ? "max-w-[96rem]" : "max-w-4xl"}`
+              ? `relative flex h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ${wide ? "max-w-[96rem]" : "max-w-4xl min-[1200px]:max-w-[84rem]"}`
               : "absolute inset-y-0 right-0 z-30 flex w-full flex-col border-l border-zinc-200 bg-white shadow-xl shadow-zinc-900/10 sm:max-w-[34rem] lg:max-w-none lg:shadow-none"
           }
         >

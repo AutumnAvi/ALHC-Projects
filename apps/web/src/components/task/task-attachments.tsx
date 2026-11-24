@@ -3,7 +3,7 @@
 import { useClosesPopovers } from "@/components/overlay-registry";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, LayoutGrid, List, Paperclip, Trash2, X } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, LayoutGrid, List, Paperclip, Trash2, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
@@ -91,6 +91,8 @@ export function TaskAttachments({
   upload,
   canEdit,
   initialView = "compact",
+  onOpenFilesTab,
+  bare = false,
 }: {
   attachments: TaskAttachment[];
   // Imported attachments that stayed in Asana: name + link only (files aren't copied).
@@ -99,6 +101,10 @@ export function TaskAttachments({
   canEdit: boolean;
   // How the section opens (compact; the tests render the other views).
   initialView?: AttachmentView;
+  // Nov 24 batch 45: "Open Files tab →" in the heading (the Task tab's section), and the Files tab's own
+  // copy (no top margin).
+  onOpenFilesTab?: () => void;
+  bare?: boolean;
 }) {
   const [, run] = useServerAction();
   const confirm = useConfirm();
@@ -135,7 +141,7 @@ export function TaskAttachments({
 
   return (
     <section
-      className={`mt-6 rounded-lg ${dropping ? "outline-2 outline-offset-4 outline-dashed outline-accent-400" : ""}`}
+      className={`${bare ? "" : "mt-6"} rounded-lg ${dropping ? "outline-2 outline-offset-4 outline-dashed outline-accent-400" : ""}`}
       aria-labelledby="attachments-heading"
       data-attachments-view={view}
       onDragOver={(e) => {
@@ -156,10 +162,21 @@ export function TaskAttachments({
     >
       <div className="flex items-center justify-between gap-2">
         <h3 id="attachments-heading" className="flex items-baseline gap-1.5 text-sm font-semibold text-zinc-900">
-          Attachments
+          Files
           {total > 0 ? <span className="text-xs font-normal tabular-nums text-zinc-400">{total}</span> : null}
         </h3>
         <div className="flex items-center gap-1 print:hidden">
+          {onOpenFilesTab ? (
+            <button
+              type="button"
+              onClick={onOpenFilesTab}
+              className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-accent-700 hover:underline"
+              data-open-files-tab=""
+            >
+              Open Files tab
+              <ArrowRight className="size-3.5" aria-hidden />
+            </button>
+          ) : null}
           {previews ? <span className="mr-1 text-xs text-zinc-500">Up to 25 MB each</span> : null}
           {!previews && hidden > 0 ? (
             <button

@@ -6,7 +6,7 @@ import { Popover } from "@/components/popover";
 import { useServerAction } from "@/components/toast";
 import { updateTask } from "@/lib/actions/tasks";
 import { addDays, useToday } from "@/lib/dates";
-import { dayLabel, formatTime } from "@alhc/core/date-input";
+import { dayLabel, formatTime, taskTimeOf, taskZoneLabel, timeEditPatch } from "@alhc/core/date-input";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { describeRecurrence } from "@alhc/core/recurrence";
 import { useDependencyShift } from "./dependency-shift";
@@ -16,21 +16,13 @@ import { recordTaskEdits } from "./task-edits";
 
 const subscribe = () => () => {};
 
-// "HH:MM" of an instant in the browser's zone; null while server rendering (avoids hydration drift).
-function useLocalTime(iso: string | null): string | null {
-  return useSyncExternalStore(
-    subscribe,
-    () => {
-      if (!iso) return "";
-      const d = new Date(iso);
-      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    },
-    () => null,
-  );
-}
-
 function browserTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+// The browser's zone; null while server rendering (avoids hydration drift).
+function useViewerZone(): string | null {
+  return useSyncExternalStore(subscribe, browserTimeZone, () => null);
 }
 
 export const DUE_TRIGGER_ID = "task-due-trigger";
@@ -62,8 +54,12 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
   const dateText = useDateText();
   const [dates, setDates] = useOptimistic<DateRange>({ start: task.startOn, due: task.dueOn });
   const [repeatsOpen, setRepeatsOpen] = useState(false);
-  const dueTime = useLocalTime(task.dueAt);
-  const startTime = useLocalTime(task.startAt);
+  // Batch 45 (Isaiah, Nov 23): the times on the task's own clock, like its dates (@alhc/core/date-input),
+  // with the zone's letters when it isn't the viewer's — never a viewer-clock time next to a task-clock date.
+  const viewerZone = useViewerZone();
+  const dueTime = viewerZone ? taskTimeOf(task, "due", viewerZone) : null;
+  const startTime = viewerZone ? taskTimeOf(task, "start", viewerZone) : null;
+  const zoneLabel = viewerZone ? taskZoneLabel(task, viewerZone) : null;
   const milestone = task.kind === "milestone";
   const completed = Boolean(task.completedAt);
   const { start, due } = dates;
@@ -79,8 +75,15 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
     return () => window.removeEventListener(OPEN_REPEATS_EVENT, open);
   }, [canEdit]);
 
-  function save(next: DateRange, close: () => void, shouldClose: boolean) {
+  function save(next: DateRange, close: () => void, shouldClose: boolean, typed?: { kind: "start" | "due"; time: string }) {
+    // Batch 45 (Isaiah, Nov 23): "tomorrow at 4 p.m." typed into a date box keeps its time: saved on the
+    // new day once the date has moved (or at once when the day is the same).
+    const typedDay = typed ? (typed.kind === "due" ? next.due : next.start) : null;
+    const saveTyped = () => {
+      if (typed && typedDay && !(milestone && typed.kind === "start")) saveTime(typed.kind, typed.time, typedDay);
+    };
     if (next.start === start && next.due === due) {
+      saveTyped();
       if (shouldClose) close();
       return;
     }
@@ -96,17 +99,20 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
           recordTaskEdits(moves.map((m) => ({ type: "dates" as const, taskId: m.taskId, startOn: m.startOn, dueOn: m.dueOn })));
         },
         onPrompt: close,
+        onResult: ({ moved }) => {
+          if (moved.includes(task.id)) saveTyped();
+        },
         projectId: task.memberships[0]?.projectId ?? null,
       },
     );
   }
 
-  function saveTime(kind: "start" | "due", hhmm: string | null) {
-    const day = kind === "start" ? start : due;
+  // Batch 45 (Isaiah, Nov 23): written on the task's clock, so the date stays the day shown (it used to be
+  // the browser's clock, and stamping the browser's zone when the other time was set moved that one's date).
+  function saveTime(kind: "start" | "due", hhmm: string | null, onDay?: string | null) {
+    const day = onDay ?? (kind === "start" ? start : due);
     if (!day) return;
-    const at = hhmm ? new Date(`${day}T${hhmm}`).toISOString() : null;
-    const patch = kind === "start" ? { startAt: at } : { dueAt: at };
-    run(() => updateTask(task.id, at ? { ...patch, timeZone: browserTimeZone() } : patch));
+    run(() => updateTask(task.id, timeEditPatch(task, kind, day, hhmm, browserTimeZone())));
   }
 
   const overdue = Boolean(due && today && !completed && due < today);
@@ -121,7 +127,7 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
   } else {
     text = "No due date";
   }
-  const time = dueTime ? ` ${formatTime(dueTime)}` : "";
+  const time = dueTime ? ` ${formatTime(dueTime)}${zoneLabel ? ` ${zoneLabel}` : ""}` : "";
   const label = due || start ? `${text}${time}` : text;
   const tone = !due && !start ? "text-zinc-500" : overdue ? "text-red-600" : soon ? "text-green-700" : "text-zinc-800";
 
@@ -163,8 +169,19 @@ export function TaskDueDate({ task, canEdit }: { task: TaskDetail; canEdit: bool
         }}
       >
         {(close) => (
-          <DateRangePicker value={dates} allowStart={!milestone} onChange={(next, shouldClose) => save(next, close, shouldClose)}>
-            <TimeRows start={milestone ? null : start} due={due} startTime={startTime} dueTime={dueTime} onChange={saveTime} />
+          <DateRangePicker
+            value={dates}
+            allowStart={!milestone}
+            onChange={(next, shouldClose, typed) => save(next, close, shouldClose, typed)}
+          >
+            <TimeRows
+              start={milestone ? null : start}
+              due={due}
+              startTime={startTime}
+              dueTime={dueTime}
+              zoneLabel={zoneLabel}
+              onChange={(kind, hhmm) => saveTime(kind, hhmm)}
+            />
             <TaskRecurrence key={repeatsOpen ? "open" : "closed"} task={task} defaultOpen={repeatsOpen} />
           </DateRangePicker>
         )}
@@ -190,12 +207,15 @@ function TimeRows({
   due,
   startTime,
   dueTime,
+  zoneLabel = null,
   onChange,
 }: {
   start: string | null;
   due: string | null;
   startTime: string | null;
   dueTime: string | null;
+  // The task's zone when it isn't the viewer's (its times are shown and typed on its clock).
+  zoneLabel?: string | null;
   onChange: (kind: "start" | "due", hhmm: string | null) => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -226,6 +246,7 @@ function TimeRows({
         <span className="w-16 shrink-0 text-xs text-zinc-500">Due time</span>
         <TimeInput label="Due time" value={dueTime || null} disabled={!due} onChange={(t) => onChange("due", t)} />
       </div>
+      {zoneLabel ? <p className="text-2xs text-zinc-500">Times are in {zoneLabel}, where they were set.</p> : null}
     </div>
   );
 }

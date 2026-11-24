@@ -195,6 +195,8 @@ export type QuickAddTaskInput = {
   // The @person typed in the bar: a follower, never the assignee.
   mentionId?: string | null;
   dueOn?: string | null;
+  // Batch 45 (Isaiah, Nov 23): a time typed with the date ("HH:MM" in timeZone): saved as the due time.
+  dueTime?: string | null;
   repeat?: { freq: Recurrence["freq"]; interval: number; weekdays: number[]; fromCompletion: boolean } | null;
   timeZone?: string;
 };

@@ -33,6 +33,8 @@ import {
   type TaskApprovalInfo,
   type TaskComment,
   type ExternalReview,
+  type ExternalReviewRound,
+  type ReviewOrder,
   type TaskDetail,
   type TaskEmailActivity,
   type TaskExtras,
@@ -893,6 +895,7 @@ async function loadApprovalInfo(supabase: Db, taskId: string): Promise<TaskAppro
       decidedAt: r.decided_at,
       acknowledgedAt: r.acknowledged_at,
       withdrawnAt: r.withdrawn_at,
+      closedReason: r.closed_reason === "outside_changes" ? "outside_changes" : null,
       requests: byRound.get(r.id) ?? [],
     })),
   };
@@ -1005,6 +1008,8 @@ export async function withRuleProjects(
 // (`given`), else two reads (RLS decides).
 type ExternalReviewRows = {
   reviewer: { email: string | null; name: string | null } | null;
+  // Nov 24 batch 45.
+  plan?: { order: string | null; due_on: string | null } | null;
   latest: {
     id: string;
     round: number;
@@ -1014,8 +1019,28 @@ type ExternalReviewRows = {
     created_at: string;
     decided_at: string | null;
     nudged_at: string | null;
+    due_on?: string | null;
+    closed_reason?: string | null;
+    created_by?: string | null;
+    last_viewed_at?: string | null;
+    email_status?: string | null;
+    email_error?: string | null;
+    email_attempted_at?: string | null;
+    delivery_status?: string | null;
+    file_results?: Json | null;
+    file_count?: number | null;
+    pin_count?: number | null;
   } | null;
 };
+
+const REVIEW_EMAIL_STATUSES = new Set(["sending", "sent", "failed", "mocked", "suppressed"]);
+const DELIVERY_STATUSES = new Set(["delivered", "delayed", "bounced", "complained", "suppressed"]);
+
+// Nov 24 batch 45: a round answered file by file — how many files were approved.
+function approvedFileCount(results: Json | null | undefined): number | null {
+  if (!Array.isArray(results)) return null;
+  return results.filter((r) => r && typeof r === "object" && !Array.isArray(r) && r.approved === true && !Number(r.pins) && !r.note).length;
+}
 
 async function loadExternalReview(
   supabase: ApiContext["db"],
@@ -1028,10 +1053,10 @@ async function loadExternalReview(
     rowsOf = given as ExternalReviewRows;
   } else {
     const [saved, latest] = await Promise.all([
-      supabase.from("task_review_settings").select("reviewer_email, reviewer_name").eq("task_id", taskId).maybeSingle(),
+      supabase.from("task_review_settings").select("reviewer_email, reviewer_name, review_order, reviewer_due_on").eq("task_id", taskId).maybeSingle(),
       supabase
         .from("review_checks")
-        .select("id, round, status, recipient_email, recipient_name, created_at, decided_at, nudged_at")
+        .select("id, round, status, recipient_email, recipient_name, created_at, decided_at, nudged_at, due_on, closed_reason, created_by, last_viewed_at, email_status, email_error, email_attempted_at, delivery_status, file_results")
         .eq("task_id", taskId)
         .order("round", { ascending: false })
         .limit(1)
@@ -1039,6 +1064,7 @@ async function loadExternalReview(
     ]);
     rowsOf = {
       reviewer: saved.data ? { email: saved.data.reviewer_email, name: saved.data.reviewer_name } : null,
+      plan: saved.data ? { order: saved.data.review_order, due_on: saved.data.reviewer_due_on } : null,
       latest: (latest.data as ExternalReviewRows["latest"]) ?? null,
     };
   }
@@ -1053,8 +1079,28 @@ async function loadExternalReview(
         createdAt: rowsOf.latest.created_at,
         decidedAt: rowsOf.latest.decided_at,
         nudgedAt: rowsOf.latest.nudged_at ?? null,
+        dueOn: rowsOf.latest.due_on ?? null,
+        closedReason: (["team_changes", "team_rejected", "withdrawn_with_round"].includes(rowsOf.latest.closed_reason ?? "")
+          ? rowsOf.latest.closed_reason
+          : null) as ExternalReviewRound["closedReason"],
+        createdBy: rowsOf.latest.created_by ?? null,
+        lastViewedAt: rowsOf.latest.last_viewed_at ?? null,
+        emailStatus: REVIEW_EMAIL_STATUSES.has(rowsOf.latest.email_status ?? "")
+          ? (rowsOf.latest.email_status as NonNullable<ExternalReviewRound["emailStatus"]>)
+          : null,
+        emailError: rowsOf.latest.email_error ?? null,
+        emailAttemptedAt: rowsOf.latest.email_attempted_at ?? null,
+        deliveryStatus: DELIVERY_STATUSES.has(rowsOf.latest.delivery_status ?? "")
+          ? (rowsOf.latest.delivery_status as NonNullable<ExternalReviewRound["deliveryStatus"]>)
+          : null,
+        fileCount: typeof rowsOf.latest.file_count === "number" ? rowsOf.latest.file_count : undefined,
+        pinCount: typeof rowsOf.latest.pin_count === "number" ? rowsOf.latest.pin_count : undefined,
+        approvedFiles: approvedFileCount(rowsOf.latest.file_results),
       }
     : null;
+  const plan = rowsOf.plan
+    ? { order: (rowsOf.plan.order === "parallel" ? "parallel" : "sequential") as ReviewOrder, dueOn: rowsOf.plan.due_on ?? null }
+    : { order: "sequential" as ReviewOrder, dueOn: null };
   const reviewer: ExternalReview["reviewer"] = saved
     ? { ...saved, source: "task" }
     : submitter
@@ -1062,6 +1108,6 @@ async function loadExternalReview(
       : latest
         ? { email: latest.recipientEmail, name: latest.recipientName, source: "latest" }
         : null;
-  return { reviewer, saved, latest };
+  return { reviewer, saved, plan, latest };
 }
 

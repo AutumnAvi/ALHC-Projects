@@ -3306,6 +3306,18 @@ export type Database = {
           nudge_attempts: number;
           nudge_claimed_at: string | null;
           nudge_token_hash: string | null;
+          // Nov 24 batch 45: the outside reviewer's due date, why the round closed beside the team's
+          // (parallel order), and how its email went (record_review_email; delivery from Resend's events).
+          // The copied link's hash and Resend's id aren't client-readable.
+          due_on: string | null;
+          closed_reason: string | null;
+          email_status: string | null;
+          email_error: string | null;
+          email_attempted_at: string | null;
+          provider_message_id: string | null;
+          delivery_status: string | null;
+          delivery_event_at: string | null;
+          copy_token_hash: string | null;
           created_by: string;
           created_at: string;
           updated_at: string;
@@ -5538,12 +5550,21 @@ export type Database = {
           task_id: string;
           reviewer_email: string | null;
           reviewer_name: string | null;
+          // Nov 24 batch 45: sequential (team first) | parallel (at the same time), and the outside due date.
+          review_order: string;
+          reviewer_due_on: string | null;
           updated_by: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { task_id: string; reviewer_email?: string | null; reviewer_name?: string | null };
-        Update: { reviewer_email?: string | null; reviewer_name?: string | null };
+        Insert: {
+          task_id: string;
+          reviewer_email?: string | null;
+          reviewer_name?: string | null;
+          review_order?: string;
+          reviewer_due_on?: string | null;
+        };
+        Update: { reviewer_email?: string | null; reviewer_name?: string | null; review_order?: string; reviewer_due_on?: string | null };
         Relationships: [];
       };
       approval_rounds: {
@@ -5569,6 +5590,8 @@ export type Database = {
           withdrawn_at: string | null;
           reminded_soon_at: string | null;
           reminded_overdue_at: string | null;
+          // Nov 24 batch 45: outside_changes = ended by the outside reviewer's changes (parallel order).
+          closed_reason: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -6161,6 +6184,20 @@ export type Database = {
       set_task_external_reviewer: {
         Args: { target_task: string; reviewer: string | null; reviewer_display?: string | null };
         Returns: undefined;
+      };
+      // Nov 24 batch 45: the review order and the outside reviewer's due date; how a review check's email
+      // went; its own copyable link.
+      set_task_review_plan: {
+        Args: { target_task: string; plan_order: string; plan_due_on?: string | null };
+        Returns: undefined;
+      };
+      record_review_email: {
+        Args: { target_review: string; outcome: string; error_text?: string | null; provider_id?: string | null };
+        Returns: undefined;
+      };
+      review_check_copy_link: {
+        Args: { target_review: string };
+        Returns: string;
       };
       claim_scheduled_emails: {
         Args: { max_items?: number; only_id?: string | null };

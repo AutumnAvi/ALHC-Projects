@@ -4,6 +4,8 @@
 import type {
   ApprovalDecision,
   ApprovalFollowUpInput,
+  ApprovalTaskSetupInput,
+  ReviewPlanInput,
   SendForApprovalInput,
   SentForApproval,
   TaskApproversInput,
@@ -12,6 +14,8 @@ import type { ApiContext } from "../core/context";
 import { check } from "../core/db";
 import { invalid } from "../core/errors";
 import { id, optionalDate, optionalText } from "../core/validate";
+import { setTaskExternalReviewer } from "../reviews/mutations";
+import { setTaskKind } from "../tasks/mutations";
 
 // ---------------------------------------------------------------------------------------------
 // Approval requests
@@ -143,6 +147,51 @@ export async function setApprovalFollowUp(ctx: ApiContext, taskId: string, input
   });
   if (result.error?.code === "PGRST202") throw invalid("The approval follow-up needs this release’s database update");
   check(result);
+}
+
+// Nov 24 batch 45: the review order and the outside reviewer's due date, on the task's review settings
+// (set_task_review_plan: Editors+). The database refuses changing the order while a team round or an outside
+// review is open.
+export async function setTaskReviewPlan(ctx: ApiContext, input: { taskId: string } & ReviewPlanInput): Promise<void> {
+  const task = id(input.taskId, "task");
+  if (input.order !== "sequential" && input.order !== "parallel") throw invalid("Unknown review order");
+  const dueOn = optionalDate(input.dueOn ?? null, "outside reviewer due date");
+  check(
+    await ctx.db.rpc("set_task_review_plan", { target_task: task, plan_order: input.order, plan_due_on: dueOn }),
+    "Only Owners and Editors can change how this task is reviewed",
+  );
+}
+
+// Nov 18 notes (batch 44, item 3): make a task an approval from its setup, all or nothing. Nothing is
+// written until every required choice is made (at least one approver, a section when it moves on
+// approval); then the kind, the approvers, the follow-up, and the reviewer are saved in that order, and a
+// failure on the way clears the approvers and puts the kind back, so the task stays what it was. An
+// approval task that is already one (Finish setup) just gets its settings.
+export async function setUpApprovalTask(ctx: ApiContext, taskId: string, input: ApprovalTaskSetupInput): Promise<void> {
+  const task = id(taskId, "task");
+  const from = input?.fromKind;
+  if (from !== "task" && from !== "milestone" && from !== "approval") throw invalid("Unknown task type");
+  if (!Array.isArray(input.approvers?.approverIds) || input.approvers.approverIds.length === 0) {
+    throw invalid("Choose who approves it");
+  }
+  if (input.followUp?.followUp === "move_section" && !input.followUp.sectionId) throw invalid("Choose the section to move it to");
+  if (input.plan && input.plan.order !== "sequential" && input.plan.order !== "parallel") throw invalid("Unknown review order");
+  if (from !== "approval") await setTaskKind(ctx, task, "approval");
+  try {
+    // Nov 24 batch 45: the review plan first — the one step the database may refuse because a round is
+    // open (changing the order) — so a refusal leaves the rest as it was.
+    if (input.plan) await setTaskReviewPlan(ctx, { taskId: task, ...input.plan });
+    await setTaskApprovers(ctx, task, input.approvers);
+    await setApprovalFollowUp(ctx, task, input.followUp);
+    if (input.reviewer) await setTaskExternalReviewer(ctx, { taskId: task, email: input.reviewer.email, name: input.reviewer.name });
+  } catch (error) {
+    if (from !== "approval") {
+      // Best effort: the error the person sees is the first one.
+      await setTaskApprovers(ctx, task, { approverIds: [], mode: input.approvers.mode, dueOn: null }).catch(() => undefined);
+      await setTaskKind(ctx, task, from).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 // Nov 1 notes, batch 9a: an approval task's approver completes it (approvers often have only Commenter

@@ -4,14 +4,36 @@ import type { AttachmentFileRow } from "../attachments/model";
 import type { ActionResult } from "../core/result";
 import type { ReviewDecision, RoundProject } from "../../review-checks";
 
-export type SendReviewResult = ActionResult & {
+// Nov 24 batch 45 (item 5): how a round's email went (also stored on the round: record_review_email).
+// sent = Resend took it; failed = it didn't go out (reason says why; Retry = resendReviewCheck);
+// mocked = no email provider on this site; suppressed = the address bounced before, so nothing was sent.
+export type ReviewEmailOutcome = "sent" | "failed" | "mocked" | "suppressed";
+
+export type ReviewDelivery = {
+  reviewId?: string;
   round?: number;
   // The email went out (false: no email provider here, sending failed, or the address is suppressed).
   emailed?: boolean;
+  emailStatus?: ReviewEmailOutcome;
+  // Only when it didn't go out: why, in plain words (never an address).
+  reason?: string;
   // The address bounced or marked an earlier email as spam (Admin console → Email): no email was sent.
   suppressed?: boolean;
   // Only when the email didn't go out: the link, shown once so the sender can pass it on themselves.
   link?: string;
+};
+
+export type SendReviewResult = ActionResult & ReviewDelivery;
+
+// Nov 24 batch 45: the parallel order's outside review, sent with the team round (sendForApproval).
+// skipped = it wasn't sent, and why (no file in the round, no reviewer, your role…); the round still went out.
+export type ParallelReviewResult = ReviewDelivery & { skipped?: string };
+
+// Who the task's outside review goes to and in what order (task_review_settings, else the form's
+// requester, else the latest round's address — the pane's ExternalReview.reviewer rule).
+export type OutsideReviewPlan = {
+  order: "sequential" | "parallel";
+  reviewer: { email: string; name: string | null } | null;
 };
 
 // A round the database just made (create_review_check) or gave a new link (rotate_review_check_token):
