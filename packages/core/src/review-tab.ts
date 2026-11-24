@@ -9,7 +9,7 @@
 // with changes says which files have pins; a file without a pin in such a round is "answered" (its own
 // note, if any, isn't in this data).
 
-import type { ApprovalRound, TaskApproval, TaskAttachment } from "./api/task-pane/model";
+import type { ApprovalRound, TaskApproval, TaskAttachment, TaskComment } from "./api/task-pane/model";
 import type { ReviewPin, TaskReviewRound } from "./review-checks";
 import type { TrackState } from "./approval-track";
 import { parseDecisionNote } from "./approval-feedback";
@@ -114,23 +114,35 @@ export function outsideFileChip(
 
 export type FileComment = {
   key: string;
-  role: "team" | "outside";
+  // "comment": a teammate's comment posted from the Review tab's box ("<file name>: …" in the task's comments).
+  role: "team" | "outside" | "comment";
   // Team notes are numbered 1, 2, 3 on this file (oldest first); outside pins keep their own numbers.
   number: number;
   authorId: string | null;
   authorName: string;
-  round: number;
+  // The round it was said in (null for a comment, which isn't part of a round).
+  round: number | null;
   text: string;
   pin: Pick<ReviewPin, "page" | "x" | "y" | "time"> | null;
 };
 
-// The comments on one file: every team approver's note on it (each decided round, oldest first) and the
-// outside reviewer's pins on it (each round, oldest first).
+// The task comment the Review tab's box posts for a file (so it reads on its own in the task's comments).
+export function fileCommentBody(fileName: string, text: string): string {
+  return `${fileName}: ${text}`;
+}
+
+// The comments on one file: every team approver's note on it (each decided round, oldest first), the
+// outside reviewer's pins on it (each round, oldest first), and the task comments posted for it from the
+// Review tab ("<file name>: …", oldest first).
 export function fileComments(
   file: { attachmentId: string; name: string },
   teamRounds: readonly Pick<ApprovalRound, "number" | "attachmentIds" | "requests">[],
   outsideRounds: readonly Pick<TaskReviewRound, "id" | "round" | "assets" | "pins" | "recipientName" | "recipientEmail">[],
-  options: { nameOf: (id: string) => string; roundFileNames: (round: Pick<ApprovalRound, "attachmentIds">) => string[] },
+  options: {
+    nameOf: (id: string) => string;
+    roundFileNames: (round: Pick<ApprovalRound, "attachmentIds">) => string[];
+    comments?: readonly Pick<TaskComment, "id" | "authorId" | "body" | "createdAt" | "deleted">[];
+  },
 ): FileComment[] {
   const team: FileComment[] = [];
   for (const round of [...teamRounds].sort((a, b) => a.number - b.number)) {
@@ -172,7 +184,24 @@ export function fileComments(
       });
     }
   }
-  return [...team, ...outside];
+  const prefix = fileCommentBody(file.name, "");
+  const posted: FileComment[] = [];
+  for (const comment of [...(options.comments ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    if (comment.deleted || !comment.authorId || !comment.body.startsWith(prefix)) continue;
+    const text = comment.body.slice(prefix.length).trim();
+    if (!text) continue;
+    posted.push({
+      key: `comment:${comment.id}`,
+      role: "comment",
+      number: posted.length + 1,
+      authorId: comment.authorId,
+      authorName: options.nameOf(comment.authorId),
+      round: null,
+      text,
+      pin: null,
+    });
+  }
+  return [...team, ...outside, ...posted];
 }
 
 export type RoundTone = "blue" | "amber" | "green" | "red" | "grey";

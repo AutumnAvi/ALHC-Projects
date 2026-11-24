@@ -72,7 +72,7 @@ alter table public.review_checks
   add column delivery_status text,
   add column delivery_event_at timestamptz,
   add column copy_token_hash text,
-  add constraint review_checks_closed_reason_check check (closed_reason is null or closed_reason in ('team_changes', 'withdrawn_with_round')),
+  add constraint review_checks_closed_reason_check check (closed_reason is null or closed_reason in ('team_changes', 'team_rejected', 'withdrawn_with_round')),
   add constraint review_checks_email_status_check check (email_status is null or email_status in ('sending', 'sent', 'failed', 'mocked', 'suppressed')),
   add constraint review_checks_email_error_check check (email_error is null or char_length(email_error) <= 300),
   add constraint review_checks_provider_message_check check (provider_message_id is null or provider_message_id ~ '^[A-Za-z0-9_-]{1,100}$'),
@@ -82,7 +82,8 @@ alter table public.review_checks
 
 comment on column public.review_checks.closed_reason is
   'Nov 24 batch 45: why an open round was closed by the approval beside it (parallel order): team_changes = the '
-  'team asked for changes (the next round goes to both); withdrawn_with_round = the team round was withdrawn.';
+  'team asked for changes (the next round goes to both); team_rejected = the team rejected it; '
+  'withdrawn_with_round = the team round was withdrawn.';
 comment on column public.review_checks.email_status is
   'Nov 24 batch 45: how the round''s email went when it was last sent (sending = started and not reported back '
   'yet, sent, failed, mocked = no email provider, suppressed = the address bounced before). Written by '
@@ -105,8 +106,8 @@ alter table public.approval_rounds
   add constraint approval_rounds_closed_reason_check check (closed_reason is null or closed_reason in ('outside_changes'));
 
 comment on column public.approval_rounds.closed_reason is
-  'Nov 24 batch 45: outside_changes = the outside reviewer asked for changes while this round was open (parallel '
-  'order), which ended it for the team too; the next round goes to both.';
+  'Nov 24 batch 45: outside_changes = the outside reviewer asked for changes on this round (parallel order), '
+  'which ended it for the team too, even once the team had approved it; the next round goes to both.';
 
 -- 2. Is the task reviewed at the same time? About the task, never the caller ----------------------------
 
@@ -133,7 +134,10 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  if tg_op = 'UPDATE' and new.review_order is distinct from old.review_order and public.is_client_role() and (
+  if public.is_client_role() and (
+    tg_op = 'INSERT' and new.review_order <> 'sequential'
+    or tg_op = 'UPDATE' and new.review_order is distinct from old.review_order
+  ) and (
     exists (select 1 from public.approval_rounds r where r.task_id = new.task_id and r.status = 'pending')
     or exists (select 1 from public.review_checks x where x.task_id = new.task_id and x.status = 'pending')
   ) then
@@ -148,8 +152,33 @@ revoke all on function public.guard_task_review_order() from public, anon;
 grant execute on function public.guard_task_review_order() to authenticated;
 
 create trigger task_review_settings_06_order
-  before update on public.task_review_settings
+  before insert or update on public.task_review_settings
   for each row execute function public.guard_task_review_order();
+
+-- The review order and the outside reviewer's due date, from the approval setup (an upsert through the API
+-- would need UPDATE on task_id). Invoker: RLS and the guards decide (Editors+; the order can't change under an
+-- open round).
+create or replace function public.set_task_review_plan(target_task uuid, plan_order text, plan_due_on date default null)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if not public.has_task_role(target_task, 'editor') then
+    raise exception 'Only Owners and Editors can change how this task is reviewed' using errcode = 'insufficient_privilege';
+  end if;
+  if plan_order is null or plan_order not in ('sequential', 'parallel') then
+    raise exception 'Unknown review order' using errcode = 'check_violation';
+  end if;
+  insert into public.task_review_settings (task_id, review_order, reviewer_due_on)
+  values (target_task, plan_order, plan_due_on)
+  on conflict (task_id) do update
+    set review_order = excluded.review_order, reviewer_due_on = excluded.reviewer_due_on;
+end;
+$$;
+
+revoke all on function public.set_task_review_plan(uuid, text, date) from public, anon;
+grant execute on function public.set_task_review_plan(uuid, text, date) to authenticated;
 
 -- An open round follows a changed due date (its reminder too).
 create or replace function public.sync_review_due_on()
@@ -159,7 +188,8 @@ security definer
 set search_path = ''
 as $$
 begin
-  if new.reviewer_due_on is distinct from old.reviewer_due_on then
+  if tg_op = 'INSERT' and new.reviewer_due_on is not null
+    or tg_op = 'UPDATE' and new.reviewer_due_on is distinct from old.reviewer_due_on then
     update public.review_checks x
     set due_on = new.reviewer_due_on, updated_at = now()
     where x.task_id = new.task_id and x.status = 'pending';
@@ -171,7 +201,7 @@ $$;
 revoke all on function public.sync_review_due_on() from public, anon, authenticated;
 
 create trigger task_review_settings_zz_due_on
-  after update on public.task_review_settings
+  after insert or update on public.task_review_settings
   for each row execute function public.sync_review_due_on();
 
 -- A new round takes the task's outside reviewer due date.
@@ -201,9 +231,10 @@ select public.alhc_patch_function(
   'public.review_check_send_problem(uuid)'::regprocedure,
   $old$  if public.review_check_after_approval(target_task) then$old$,
   $new$  -- Nov 24 batch 45: reviewed at the same time, the outside review goes out with the team round, so
-  -- Editors and the task's approvers (Commenter+) send it any time.
+  -- whoever sends that round (Editors, the assignee: approval_can_act) and the task's approvers
+  -- (Commenter+) send it any time.
   if public.review_check_parallel(target_task) then
-    if public.has_task_role(target_task, 'editor') or (
+    if public.approval_can_act(target_task) or (
       exists (
         select 1 from public.task_approvers a
         where a.task_id = target_task and a.profile_id = me and a.deleted_at is null
@@ -271,12 +302,23 @@ begin$old$,
   last_round public.approval_rounds;
 begin$new$,
   $old$  return jsonb_build_object('status', 'ok', 'review_status', decision);$old$,
-  $new$  -- Nov 24 batch 45: reviewed at the same time, changes from the outside reviewer end the team's open
-  -- round as well (the round first, so closing its requests can't settle it), and the next round goes to both.
+  $new$  -- Nov 24 batch 45: reviewed at the same time, changes from the outside reviewer end the team's round as
+  -- well: an open one (the round first, so closing its requests can't settle it), or one the team already
+  -- approved that is still waiting on the outside reviewer (no outside approval since it was sent), so its
+  -- approval can't count for a later outside round. The next round goes to both.
   if decision = 'changes_requested' and public.review_check_parallel(r.task_id) then
     update public.approval_rounds ar
     set status = 'withdrawn', withdrawn_at = now(), closed_reason = 'outside_changes', updated_at = now()
-    where ar.task_id = r.task_id and ar.status = 'pending';
+    where ar.id = (
+        select lr.id from public.approval_rounds lr where lr.task_id = r.task_id order by lr.round_number desc limit 1
+      )
+      and (
+        ar.status = 'pending'
+        or ar.status = 'approved' and not exists (
+          select 1 from public.review_checks y
+          where y.task_id = ar.task_id and y.status = 'approved' and y.created_at >= ar.sent_at
+        )
+      );
     update public.approval_requests q
     set status = 'cancelled', cancel_reason = 'round_closed'
     from public.approval_rounds ar
@@ -311,7 +353,9 @@ select public.alhc_patch_function(
     -- Nov 24 batch 45: reviewed at the same time, the outside reviewer's open round ends with the team's.
     if public.review_check_parallel(r.task_id) then
       update public.review_checks x
-      set status = 'superseded', closed_reason = 'team_changes', updated_at = now()
+      set status = 'superseded',
+          closed_reason = case when new.status = 'rejected' then 'team_rejected' else 'team_changes' end,
+          updated_at = now()
       where x.task_id = r.task_id and x.status = 'pending' and x.created_at >= r.sent_at;
     end if;
     return null;$new$
@@ -356,13 +400,15 @@ select public.alhc_patch_function(
 select public.alhc_patch_function(
   'public.claim_review_nudges(integer)'::regprocedure,
   $old$      and x.created_at <= now() - interval '24 hours' and x.created_at > now() - interval '72 hours'$old$,
-  $new$      and (x.due_on is not null or (x.created_at <= now() - interval '24 hours' and x.created_at > now() - interval '72 hours'))$new$
+  $new$      -- Nov 24 batch 45: only rounds whose reminder is due now (with a due date that's the day before it),
+      -- before the batch limit, so rounds that aren't due never fill the batch ahead of one that is.
+      and x.created_at <= now() - interval '12 hours' and public.review_nudge_due(x)$new$
 );
 
 select public.alhc_patch_function(
   'public.alhc_kick_delivery()'::regprocedure,
   $old$         and x.created_at <= now() - interval '24 hours' and x.created_at > now() - interval '72 hours'$old$,
-  $new$         and (x.due_on is not null or (x.created_at <= now() - interval '24 hours' and x.created_at > now() - interval '72 hours'))$new$
+  $new$         and x.created_at <= now() - interval '12 hours'$new$
 );
 
 -- 6. How the round's email went -------------------------------------------------------------------------
@@ -398,8 +444,13 @@ begin
   set email_status = outcome,
       email_error = case when outcome = 'failed' then left(coalesce(nullif(btrim(error_text), ''), 'The email couldn''t be sent'), 300) end,
       email_attempted_at = now(),
+      -- Resend's id, unless another email already has it (delivery events match on it, so an id copied from
+      -- another email can't put this round's address on the suppression list).
       provider_message_id = case
-        when outcome = 'sent' and provider_id ~ '^[A-Za-z0-9_-]{1,100}$' then provider_id
+        when outcome = 'sent' and provider_id ~ '^[A-Za-z0-9_-]{1,100}$'
+          and not exists (select 1 from public.review_checks y where y.provider_message_id = provider_id and y.id <> r.id)
+          and not exists (select 1 from public.email_outbox o where o.provider_message_id = provider_id)
+        then provider_id
       end,
       delivery_status = null,
       delivery_event_at = null,
@@ -485,7 +536,8 @@ select public.alhc_patch_function(
 -- 7. "Copy review link": its own link per round ----------------------------------------------------------
 
 -- A fresh copyable link for an open round (returned once; only its hash is kept). The emailed link keeps
--- working; copying again replaces the previous copied link. Editors, and whoever may send the round.
+-- working; copying again replaces the previous copied link. Only whoever may send the round (so on an
+-- approval task reviewed in order, only its approvers, as for sending).
 create or replace function public.review_check_copy_link(target_review uuid)
 returns text
 language plpgsql
@@ -500,8 +552,9 @@ begin
   if not found or not public.has_task_role(r.task_id, 'viewer') then
     raise exception 'Review not found' using errcode = 'no_data_found';
   end if;
-  if not public.has_task_role(r.task_id, 'editor') and public.review_check_send_problem(r.task_id) is not null then
-    raise exception 'Only Owners, Editors, and the task''s approvers can copy the review link' using errcode = 'insufficient_privilege';
+  if public.review_check_send_problem(r.task_id) is not null then
+    raise exception '%', public.review_check_send_message(public.review_check_send_problem(r.task_id))
+      using errcode = 'insufficient_privilege';
   end if;
   if r.status <> 'pending' or r.expires_at <= now() then
     raise exception 'This review round is closed' using errcode = 'check_violation';

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  fileCommentBody,
   fileComments,
   mergeReviewRounds,
   outsideFileChip,
@@ -171,6 +172,31 @@ test("comments on a file: team notes numbered oldest first, outside pins keep th
   assert.deepEqual(list[2].pin, { page: null, x: 0.2, y: 0.3, time: null });
   // An approved file has no comments.
   assert.deepEqual(fileComments({ attachmentId: "a2", name: "print.pdf" }, [r2], [], { nameOf, roundFileNames }), []);
+});
+
+test("comments posted from the Review tab's box list on their file (review round 1)", () => {
+  const comment = (id: string, body: string, createdAt: string, extra: { deleted?: boolean; authorId?: string | null } = {}) => ({
+    id,
+    authorId: extra.authorId === undefined ? "u1" : extra.authorId,
+    body,
+    createdAt,
+    deleted: extra.deleted ?? false,
+  });
+  const comments = [
+    comment("c2", fileCommentBody("flyer.png", "And the date"), "2026-12-10T12:00:00Z"),
+    comment("c1", fileCommentBody("flyer.png", "Logo looks small"), "2026-12-09T12:00:00Z"),
+    comment("c3", fileCommentBody("print.pdf", "Bleed"), "2026-12-09T13:00:00Z"),
+    comment("c4", "flyer.png looks good overall", "2026-12-09T14:00:00Z"),
+    comment("c5", fileCommentBody("flyer.png", "Gone"), "2026-12-09T15:00:00Z", { deleted: true }),
+  ];
+  const list = fileComments({ attachmentId: "a1", name: "flyer.png" }, [], [], { nameOf, roundFileNames, comments });
+  assert.deepEqual(
+    list.map((c) => [c.role, c.number, c.round, c.text]),
+    [
+      ["comment", 1, null, "Logo looks small"],
+      ["comment", 2, null, "And the date"],
+    ],
+  );
 });
 
 test("rounds merge newest first with plain status words and role tones", () => {

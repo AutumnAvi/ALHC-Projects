@@ -190,12 +190,17 @@ test("after: editing times keeps every date on the day shown, whoever edits it a
       assert.deepEqual([withStart.startOn, withStart.dueOn], ["2027-06-14", "2027-06-14"], `${setter} → ${viewer}`);
       assert.equal(taskTimeOf(withStart, "start", viewer), "08:00");
 
-      // The due time changed (no start time): now the viewer's, still June 14.
+      // The due time changed (no start time): read on the task's clock, as shown, still June 14.
       for (const time of ["00:30", "16:00", "23:30"]) {
         const moved = store(task, timeEditPatch(task, "due", "2027-06-14", time, viewer));
         assert.equal(moved.dueOn, "2027-06-14", `${time}, ${setter} → ${viewer}`);
+        assert.equal(moved.timeZone, setter, "the task keeps its zone");
         assert.equal(taskTimeOf(moved, "due", viewer), time);
       }
+
+      // Typing the time that's shown again changes nothing (review round 1: it used to move to the viewer's zone).
+      const same = store(task, timeEditPatch(task, "due", "2027-06-14", "21:00", viewer));
+      assert.equal(same.dueAt, task.dueAt, `${setter} seen from ${viewer}`);
 
       // A new date typed ("June 14th" on a task due June 20 at 9 PM): the time stays 9 PM on June 14.
       const later: Row = { ...task, dueOn: "2027-06-20", dueAt: zonedInstant("2027-06-20", "21:00", setter) };

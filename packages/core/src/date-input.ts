@@ -257,15 +257,16 @@ export function taskZoneLabel(task: TaskClock, viewerZone: string): string | nul
 export type TimePatch = { startAt?: string | null; dueAt?: string | null; timeZone?: string };
 
 // What to save when the viewer sets one of the task's times to `hhmm` on `day` (the day as shown), or
-// clears it (null). With the other time set, the task keeps its zone (changing it would move the other
-// time's date); else the time is the viewer's, in their zone. Either way the saved date is `day`.
+// clears it (null). A task with any time keeps its zone: its times are shown on that clock, so the typed
+// time is read on it too (changing the zone would also move the other time's date). An untimed task takes
+// the viewer's zone. Either way the saved date is `day`.
 export function timeEditPatch(task: TaskClock, kind: "start" | "due", day: string, hhmm: string | null, viewerZone: string): TimePatch {
   const key = kind === "due" ? "dueAt" : "startAt";
   if (!hhmm) return { [key]: null };
-  const other = kind === "due" ? task.startAt : task.dueAt;
-  const zone = other ? task.timeZone || "UTC" : viewerZone;
+  const timed = Boolean(task.dueAt || task.startAt);
+  const zone = timed ? task.timeZone || "UTC" : viewerZone;
   const patch: TimePatch = { [key]: zonedInstant(day, hhmm, zone) };
-  if (!other) patch.timeZone = viewerZone;
+  if (!timed) patch.timeZone = viewerZone;
   return patch;
 }
 

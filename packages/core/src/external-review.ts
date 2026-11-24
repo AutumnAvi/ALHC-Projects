@@ -13,6 +13,8 @@ export const TWO_STEP_NOTE =
 type GateTask = {
   kind: TaskKind;
   viewerRole: ProjectRole | null;
+  // Nov 24 batch 45: whoever sends the team round (the assignee, Commenter+) sends the outside review with it.
+  assigneeId?: string | null;
   approval: Pick<TaskApprovalInfo, "approverIds" | "rounds"> | null;
   // Nov 24 batch 45: the review order (parallel = team and outside at the same time).
   externalReview?: Pick<ExternalReview, "plan"> | null;
@@ -63,13 +65,19 @@ export type ReviewSendGate = {
 };
 
 export function reviewSendGate(task: GateTask, memberId: string): ReviewSendGate {
-  // Nov 24 batch 45: at the same time, Editors and the task's approvers send it any time (it normally goes
-  // out with the team round).
+  // Nov 24 batch 45: at the same time, whoever sends the team round (Editors, the assignee) and the task's
+  // approvers send it any time (it normally goes out with the team round). Mirrors review_check_send_problem.
   if (reviewsInParallel(task)) {
-    const approver = task.approval!.approverIds.includes(memberId) && hasRole(task.viewerRole, "commenter");
-    return approver || hasRole(task.viewerRole, "editor")
+    const commenter = hasRole(task.viewerRole, "commenter");
+    const approver = task.approval!.approverIds.includes(memberId) && commenter;
+    const assignee = Boolean(task.assigneeId) && task.assigneeId === memberId && commenter;
+    return approver || assignee || hasRole(task.viewerRole, "editor")
       ? { order: "any_time", allowed: true, reason: null }
-      : { order: "any_time", allowed: false, reason: "Only the project’s Owners and Editors, or the task’s approvers, can send the outside review." };
+      : {
+          order: "any_time",
+          allowed: false,
+          reason: "Only the project’s Owners and Editors, the task’s assignee, or its approvers can send the outside review.",
+        };
   }
   if (reviewComesAfterApproval(task)) {
     const approver = task.approval!.approverIds.includes(memberId) && hasRole(task.viewerRole, "commenter");

@@ -150,15 +150,14 @@ export async function setApprovalFollowUp(ctx: ApiContext, taskId: string, input
 }
 
 // Nov 24 batch 45: the review order and the outside reviewer's due date, on the task's review settings
-// (RLS: Editors+). The database refuses changing the order while a team round or an outside review is open.
+// (set_task_review_plan: Editors+). The database refuses changing the order while a team round or an outside
+// review is open.
 export async function setTaskReviewPlan(ctx: ApiContext, input: { taskId: string } & ReviewPlanInput): Promise<void> {
   const task = id(input.taskId, "task");
   if (input.order !== "sequential" && input.order !== "parallel") throw invalid("Unknown review order");
   const dueOn = optionalDate(input.dueOn ?? null, "outside reviewer due date");
   check(
-    await ctx.db
-      .from("task_review_settings")
-      .upsert({ task_id: task, review_order: input.order, reviewer_due_on: dueOn }, { onConflict: "task_id" }),
+    await ctx.db.rpc("set_task_review_plan", { target_task: task, plan_order: input.order, plan_due_on: dueOn }),
     "Only Owners and Editors can change how this task is reviewed",
   );
 }

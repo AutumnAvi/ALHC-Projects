@@ -277,7 +277,7 @@ function OutsideReviewerBlock({
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5" data-outside-actions="">
         {open ? (
           <>
-            {emailFailed ? (
+            {emailFailed && gate.allowed ? (
               <button type="button" disabled={pending} onClick={() => resend("retry")} className="btn-primary h-8 bg-amber-600 px-2.5 text-xs hover:bg-amber-700" data-outside-retry="">
                 <RotateCcw className="size-3.5" aria-hidden />
                 Retry email

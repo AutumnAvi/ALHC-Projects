@@ -6185,7 +6185,12 @@ export type Database = {
         Args: { target_task: string; reviewer: string | null; reviewer_display?: string | null };
         Returns: undefined;
       };
-      // Nov 24 batch 45: how a review check's email went, and its own copyable link.
+      // Nov 24 batch 45: the review order and the outside reviewer's due date; how a review check's email
+      // went; its own copyable link.
+      set_task_review_plan: {
+        Args: { target_task: string; plan_order: string; plan_due_on?: string | null };
+        Returns: undefined;
+      };
       record_review_email: {
         Args: { target_review: string; outcome: string; error_text?: string | null; provider_id?: string | null };
         Returns: undefined;
