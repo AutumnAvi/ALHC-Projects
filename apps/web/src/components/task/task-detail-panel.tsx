@@ -374,7 +374,13 @@ export function TaskDetailPanel({
             onCopyLink={copyLink}
             onDeleted={close}
             onApprovalSetup={() => setMakeApproval({})}
-            hasReviewBlock={Boolean(task.externalReview?.latest) || (task.kind === "approval" && Boolean(task.approval?.approverIds.length && task.externalReview?.reviewer))}
+            // The amber block (with its own Send) shows exactly when the card has a track.
+            hasReviewBlock={
+              approvalTrack(
+                { kind: task.kind, completedAt: task.completedAt, assigneeId: task.assigneeId, approval: task.approval, externalReview: task.externalReview },
+                { nameOf: () => "" },
+              ) !== null
+            }
           />
           <CloseButton />
         </div>
@@ -702,32 +708,35 @@ function PaneBody({
     </>
   );
 
-  if (threeColumns) {
-    return (
-      <div className="flex min-h-0 flex-1" data-pane-layout="three">
-        {track ? (
-          <aside className={`w-[270px] shrink-0 border-r min-[1400px]:w-[300px] border-zinc-200 px-6 py-5 ${SCROLL_AREA}`} data-pane-rail="">
-            <TrackRail track={track} profiles={profiles} onStep={goToStep} extras={extras} />
-          </aside>
-        ) : null}
-        <div className={`min-w-0 flex-1 ${SCROLL_AREA}`}>
-          <div className={`mx-auto w-full px-8 py-4 ${wide ? "" : "max-w-4xl"}`}>{card}</div>
-        </div>
-        <div className="flex w-[360px] shrink-0 flex-col border-l border-zinc-200 min-[1400px]:w-[420px]" data-pane-comments="">
-          <div className={`min-h-0 flex-1 px-6 pb-4 ${SCROLL_AREA}`}>{activity}</div>
-          <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
-        </div>
-      </div>
-    );
-  }
-
+  // One tree for both layouts, so switching between the side pane and the wide full screen never remounts the
+  // comment box (its draft lives in it): the rail and the comments column only change their class.
   return (
-    <>
+    <div className={`flex min-h-0 flex-1 ${threeColumns ? "" : "flex-col"}`} data-pane-layout={threeColumns ? "three" : "one"}>
+      {threeColumns && track ? (
+        <aside className={`w-[270px] shrink-0 border-r min-[1400px]:w-[300px] border-zinc-200 px-6 py-5 ${SCROLL_AREA}`} data-pane-rail="">
+          <TrackRail track={track} profiles={profiles} onStep={goToStep} extras={extras} />
+        </aside>
+      ) : null}
+      {/* A scroll area, so it can shrink beside the rail and comments (min-width: auto is 0 for it). */}
       <div className={`min-h-0 flex-1 ${SCROLL_AREA}`}>
-        <div className={`py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`}>{card}</div>
+        <div
+          className={
+            threeColumns
+              ? `mx-auto w-full px-8 py-4 ${wide ? "" : "max-w-4xl"}`
+              : `py-4 ${expanded ? `mx-auto w-full px-6 sm:px-10 ${wide ? "" : "max-w-3xl"}` : "px-gutter"}`
+          }
+        >
+          {card}
+        </div>
       </div>
-      <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
-    </>
+      <div
+        className={threeColumns ? "flex w-[360px] shrink-0 flex-col border-l border-zinc-200 min-[1400px]:w-[420px]" : "contents"}
+        data-pane-comments={threeColumns ? "" : undefined}
+      >
+        {threeColumns ? <div className={`min-h-0 flex-1 px-6 pb-4 ${SCROLL_AREA}`}>{activity}</div> : null}
+        <TaskPaneFooter task={task} profiles={profiles} memberId={memberId} />
+      </div>
+    </div>
   );
 }
 

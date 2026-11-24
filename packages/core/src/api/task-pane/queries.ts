@@ -1080,7 +1080,7 @@ async function loadExternalReview(
         decidedAt: rowsOf.latest.decided_at,
         nudgedAt: rowsOf.latest.nudged_at ?? null,
         dueOn: rowsOf.latest.due_on ?? null,
-        closedReason: (rowsOf.latest.closed_reason === "team_changes" || rowsOf.latest.closed_reason === "withdrawn_with_round"
+        closedReason: (["team_changes", "team_rejected", "withdrawn_with_round"].includes(rowsOf.latest.closed_reason ?? "")
           ? rowsOf.latest.closed_reason
           : null) as ExternalReviewRound["closedReason"],
         createdBy: rowsOf.latest.created_by ?? null,

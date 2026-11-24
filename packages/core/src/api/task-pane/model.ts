@@ -407,9 +407,9 @@ export type ExternalReviewRound = {
   nudgedAt: string | null;
   // Nov 24 batch 45 (all optional: a database without this release's update leaves them out).
   dueOn?: string | null;
-  // team_changes = closed because the team asked for changes; withdrawn_with_round = the team round
-  // sent with it was withdrawn (parallel order).
-  closedReason?: "team_changes" | "withdrawn_with_round" | null;
+  // team_changes / team_rejected = closed because the team asked for changes / rejected it;
+  // withdrawn_with_round = the team round sent with it was withdrawn (parallel order).
+  closedReason?: "team_changes" | "team_rejected" | "withdrawn_with_round" | null;
   createdBy?: string | null;
   lastViewedAt?: string | null;
   // How its email went the last time it was sent (null = not recorded, e.g. sent before this release).

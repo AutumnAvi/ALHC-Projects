@@ -165,7 +165,12 @@ export function SendForApprovalDialog({
         return;
       }
       const who = approverNames.length ? joinNames(approverNames) : "the approvers";
-      notify(`Sent to ${who} for approval`);
+      // Reviewed at the same time, the outside review goes out with the round: say so, or why it didn't.
+      const outside = result.outsideReview;
+      if (outside?.skipped) notify(`Sent to ${who} for approval. The outside review didn’t go out: ${outside.skipped}`);
+      else if (outside && outside.emailed === false && outside.reason) {
+        notify(`Sent to ${who} for approval. The outside review’s email didn’t go out: ${outside.reason}`);
+      } else notify(outside ? `Sent to ${who} and the outside reviewer` : `Sent to ${who} for approval`);
       onClose();
     });
   }

@@ -129,13 +129,11 @@ function fakeDb(answer: (call: Call) => { data: unknown; error: unknown }) {
 const TASK = "11111111-1111-4111-8111-111111111111";
 const SAM = "22222222-2222-4222-8222-222222222222";
 
-test("setTaskReviewPlan upserts the order and due date on the task's review settings", async () => {
+test("setTaskReviewPlan saves the order and due date through set_task_review_plan (never a table upsert)", async () => {
   const { db, calls } = fakeDb(() => ({ data: null, error: null }));
   await setTaskReviewPlan(createApiContext(db), { taskId: TASK, order: "parallel", dueOn: "2026-12-15" });
-  assert.equal(calls[0].target, "table:task_review_settings");
-  const upsert = calls[0].steps.find(([name]) => name === "upsert")!;
-  assert.deepEqual(upsert[1][0], { task_id: TASK, review_order: "parallel", reviewer_due_on: "2026-12-15" });
-  assert.deepEqual(upsert[1][1], { onConflict: "task_id" });
+  assert.equal(calls[0].target, "rpc:set_task_review_plan");
+  assert.deepEqual(calls[0].steps[0][1][0], { target_task: TASK, plan_order: "parallel", plan_due_on: "2026-12-15" });
   for (const bad of [{ order: "later" as never, dueOn: null }, { order: "parallel" as const, dueOn: "Dec 15" }]) {
     await assert.rejects(setTaskReviewPlan(createApiContext(db), { taskId: TASK, ...bad }), (e) => isApiError(e) && e.code === "invalid");
   }
@@ -151,12 +149,12 @@ test("setUpApprovalTask saves the plan first, and a refused order change puts a 
   });
   assert.deepEqual(
     ok.calls.map((c) => c.target),
-    ["table:task_review_settings", "rpc:set_task_approvers", "rpc:set_approval_followup"],
+    ["rpc:set_task_review_plan", "rpc:set_task_approvers", "rpc:set_approval_followup"],
   );
 
   const refused = fakeDb((call) => {
     if (call.target === "table:tasks") return { data: [{ id: TASK }], error: null };
-    if (call.target === "table:task_review_settings") {
+    if (call.target === "rpc:set_task_review_plan") {
       return { data: null, error: { code: "23514", message: "Change the review order once the current round is decided or withdrawn" } };
     }
     return { data: null, error: null };

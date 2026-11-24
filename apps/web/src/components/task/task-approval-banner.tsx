@@ -56,6 +56,7 @@ import { feedbackSubtaskTitle } from "@alhc/core/feedback-subtask";
 import { canAddSubtask } from "./task-subtasks";
 import { externallyApproved, isTwoStageApproval, reviewsInParallel } from "@alhc/core/external-review";
 import { RoleTag } from "./approval-track";
+import { outsideBelongsToRound } from "@alhc/core/approval-track";
 import { APPROVAL_SETUP_UNFINISHED } from "@alhc/core/approval-setup";
 
 // Oct 27 notes (batch 6, items 45 / 45b): the approval panel of an approval task's pane (Nov 4 notes,
@@ -384,9 +385,17 @@ function ApprovalPanel({
   const approverNames = approvers.map((a) => nameOf(a.id));
   // Nov 24 batch 45: the outside reviewer has their own (amber) block; this one is the team's.
   const externalReviewer = task.approval?.approverIds.length ? (task.externalReview?.reviewer ?? null) : null;
+  // Reviewed at the same time: while the outside review sent with this (approved) round is still open, a new
+  // round would replace the one the outside reviewer is on, so there's nothing to send again yet.
+  const outsideStillReviewing =
+    status === "approved" &&
+    reviewsInParallel(task) &&
+    task.externalReview?.latest?.status === "pending" &&
+    outsideBelongsToRound(task.externalReview.latest, latest, "parallel");
   const canSend =
     canAct &&
     !completed &&
+    !outsideStillReviewing &&
     (status === "not_sent" || ((status === "changes_requested" || status === "rejected") && !paused) || status === "approved");
 
   function reveal() {
@@ -455,7 +464,9 @@ function ApprovalPanel({
   if (status === "not_sent") {
     if (completed) headline = "The task is complete. It wasn’t sent for approval.";
     else if (settings.approverIds.length === 0) headline = `${APPROVAL_SETUP_UNFINISHED}. Choose who approves this before anything is sent.`;
-    else if (latest?.status === "withdrawn") headline = "The request was withdrawn. Send it again with Ready for approval when it’s ready.";
+    else if (latest?.status === "withdrawn" && latest.closedReason === "outside_changes") {
+      headline = `${externalReviewer?.name?.trim() || "The outside reviewer"} asked for changes, which ended this round for the team too. Send it again with Ready for approval when it’s ready: the next round goes to both.`;
+    } else if (latest?.status === "withdrawn") headline = "The request was withdrawn. Send it again with Ready for approval when it’s ready.";
     else headline = `Not sent yet. When it’s ready, Ready for approval sends it to ${joinNames(approverNames)}.`;
   } else if (status === "pending") {
     const waiting = (latest?.requests ?? []).filter((r) => r.status === "pending").map((r) => nameOf(r.approverId));

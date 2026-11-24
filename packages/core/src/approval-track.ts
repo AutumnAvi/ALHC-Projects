@@ -149,7 +149,9 @@ function outsideStepFromCheck(
             : "Reviewing now"
           : check.closedReason === "team_changes"
             ? "Round ended: the team asked for changes"
-            : check.status === "cancelled"
+            : check.closedReason === "team_rejected"
+              ? "Round ended: the team rejected it"
+              : check.status === "cancelled"
               ? "Withdrawn"
               : "Replaced by a newer round";
   return step("outside", `Outside: ${name}`, state, status, {

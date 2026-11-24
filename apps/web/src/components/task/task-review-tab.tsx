@@ -17,6 +17,7 @@ import { displayName } from "@alhc/core/people";
 import { taskPermissions } from "@alhc/core/permissions";
 import { reviewMediaKind, type TaskReviewRound } from "@alhc/core/review-checks";
 import {
+  fileCommentBody,
   fileComments,
   mergeReviewRounds,
   outsideFileChip,
@@ -152,7 +153,7 @@ export function TaskReviewTab({ task, profiles, memberId }: { task: TaskDetail; 
           .map((p) => ({ key: `outside:${outsideRoundForFile.id}:${p.number}`, number: p.number, page: p.page, x: p.x, y: p.y, time: p.time, body: p.body }))
       : [];
   const comments = selected
-    ? fileComments(selected, teamRounds, outsideRounds, { nameOf, roundFileNames })
+    ? fileComments(selected, teamRounds, outsideRounds, { nameOf, roundFileNames, comments: task.comments })
     : [];
   const merged = mergeReviewRounds(teamRounds, outsideRounds, nameOf);
   const outsideAnswered = outsideStep?.state === "done" || outsideStep?.state === "changes" || outsideRounds.some((r) => r.decidedAt);
@@ -274,14 +275,16 @@ export function TaskReviewTab({ task, profiles, memberId }: { task: TaskDetail; 
                         onClick={() => setActivePin(key)}
                         aria-label={pinned ? `Show comment ${c.number} on the file` : `Comment ${c.number}`}
                         className={`inline-flex size-[22px] shrink-0 items-center justify-center rounded-[99px_99px_99px_2px] border-2 border-white text-[11px] font-bold text-white disabled:cursor-default ${
-                          c.role === "team" ? "bg-accent-500" : "bg-amber-500"
+                          c.role === "team" ? "bg-accent-500" : c.role === "comment" ? "bg-zinc-500" : "bg-amber-500"
                         } ${activePin === key ? "ring-2 ring-amber-300" : ""}`}
                       >
                         {c.number}
                       </button>
                       <span className="min-w-0">
                         <span className="text-zinc-500">
-                          <b className="font-semibold text-zinc-900">{c.authorName}</b> · {c.role === "team" ? "Team approver" : "Outside reviewer"} · round {c.round}
+                          <b className="font-semibold text-zinc-900">{c.authorName}</b> ·{" "}
+                          {c.role === "team" ? "Team approver" : c.role === "comment" ? "Comment" : "Outside reviewer"}
+                          {c.round !== null ? ` · round ${c.round}` : ""}
                         </span>
                         <span className="block whitespace-pre-line text-zinc-800">{c.text}</span>
                       </span>
@@ -557,7 +560,7 @@ function FileCommentBox({ task, memberId, file }: { task: TaskDetail; memberId: 
   function submit() {
     const text = draft.trim();
     if (!text || talk.listening) return;
-    const body = `${file.name}: ${text}`;
+    const body = fileCommentBody(file.name, text);
     const tempId = `pending-${crypto.randomUUID()}`;
     addPendingComment({
       tempId,
