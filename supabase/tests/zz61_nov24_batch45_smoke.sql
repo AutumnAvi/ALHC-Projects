@@ -38,6 +38,12 @@ begin
   assert not has_function_privilege('anon', 'public.review_check_copy_link(uuid)', 'execute'), 'not anon';
   assert not has_function_privilege('authenticated', 'public.review_check_parallel(uuid)', 'execute'), 'internal';
   assert not has_function_privilege('authenticated', 'public.approval_external_done(uuid)', 'execute'), 'internal';
+  assert not has_function_privilege('authenticated', 'public.approval_task_lock(uuid)', 'execute'), 'internal';
+  assert not has_function_privilege('anon', 'public.approval_task_lock(uuid)', 'execute'), 'internal';
+  assert position('approval_task_lock' in pg_get_functiondef('public.decide_approval(uuid,text,text)'::regprocedure)) > 0
+     and position('approval_task_lock' in pg_get_functiondef('public.withdraw_approval(uuid)'::regprocedure)) > 0
+     and position('approval_task_lock' in pg_get_functiondef('public.review_check_decide(text,text,text,jsonb)'::regprocedure)) > 0,
+    'the team decision, withdraw, and the outside answer take the task''s approval lock first';
   assert not has_function_privilege('authenticated', 'public.record_review_email_event(text,text,timestamptz,text,text)', 'execute'), 'service only';
   assert has_function_privilege('service_role', 'public.record_review_email_event(text,text,timestamptz,text,text)', 'execute'), 'service';
   assert not has_function_privilege('authenticated', 'public.sync_review_due_on()', 'execute'), 'trigger';
