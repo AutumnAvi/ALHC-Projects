@@ -222,11 +222,12 @@ test("pending: an approver sees Approve / Request changes / Reject and Hand off;
   assert.match(approver, /Waiting on you to approve\./);
   assert.match(approver, /Your decision/);
   // Nov 2 notes (batch 15, 114): a round with files is decided file by file; since Nov 4 notes (batch 27,
-  // 161) the row's next step is Open review (the full-screen review in the app); Reject stays in the row.
+  // 161) the row's next step opens the file-by-file review (batch 45: "Review & approve"; in the pane it's the
+  // card's Review tab); Reject stays in the row.
   assert.ok(button(approver, "Reject"));
   assert.ok(!button(approver, "Approve"), "files are approved one by one, not with one button");
   assert.match(approver, /data-approval-open-review=""/);
-  assert.match(approver, />Open review<\/button>/);
+  assert.match(approver, />Review &amp; approve<\/button>/);
   const textOnly = banner(
     approvalTask("commenter", info({ approverIds: ["me"], status: "pending", waitingOnMe: true, rounds: [round({ attachmentIds: [], requests: [request({ id: "req-me", approverId: "me" })] })] })),
   );

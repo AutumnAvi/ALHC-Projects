@@ -149,10 +149,10 @@ export async function setTaskExternalReviewer(
 // the send dialog is gone. A database without this release's update has nowhere to keep it: skipped.
 export async function recordReviewEmail(
   ctx: ApiContext,
-  input: { reviewId: string; outcome: "sent" | "failed" | "mocked" | "suppressed"; error?: string | null; providerId?: string | null },
+  input: { reviewId: string; outcome: "sending" | "sent" | "failed" | "mocked" | "suppressed"; error?: string | null; providerId?: string | null },
 ): Promise<void> {
   const reviewId = id(input.reviewId, "review check");
-  if (!["sent", "failed", "mocked", "suppressed"].includes(input.outcome)) throw invalid("Unknown email outcome");
+  if (!["sending", "sent", "failed", "mocked", "suppressed"].includes(input.outcome)) throw invalid("Unknown email outcome");
   const providerId = input.providerId && /^[A-Za-z0-9_-]{1,100}$/.test(input.providerId) ? input.providerId : null;
   const { error } = await ctx.db.rpc("record_review_email", {
     target_review: reviewId,

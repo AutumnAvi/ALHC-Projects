@@ -1033,7 +1033,7 @@ type ExternalReviewRows = {
   } | null;
 };
 
-const REVIEW_EMAIL_STATUSES = new Set(["sent", "failed", "mocked", "suppressed"]);
+const REVIEW_EMAIL_STATUSES = new Set(["sending", "sent", "failed", "mocked", "suppressed"]);
 const DELIVERY_STATUSES = new Set(["delivered", "delayed", "bounced", "complained", "suppressed"]);
 
 // Nov 24 batch 45: a round answered file by file — how many files were approved.

@@ -146,10 +146,12 @@ function PillContent({ step, profilesById }: { step: TrackStep; profilesById: Ma
         <RotateCcw className="size-3.5 shrink-0" aria-hidden />
       ) : step.state === "rejected" ? (
         <X className="size-3.5 shrink-0" aria-hidden />
-      ) : step.state === "locked" ? (
-        <Lock className="size-3 shrink-0" aria-hidden />
       ) : null}
-      {person ? <Avatar name={displayName(person)} src={person.avatar_url} profileId={person.id} /> : null}
+      {person ? (
+        <span className="inline-flex max-[420px]:hidden">
+          <Avatar name={displayName(person)} src={person.avatar_url} profileId={person.id} />
+        </span>
+      ) : null}
       <span>{step.label}</span>
       {jump ? <ArrowDown className={`size-3 shrink-0 ${step.state === "waiting" || step.state === "locked" ? "opacity-50" : "opacity-75"}`} strokeWidth={2.5} aria-hidden /> : null}
     </>
@@ -243,7 +245,7 @@ export function StepFacts({ step, profilesById, modeLabel, afterLabel, nameOf }:
           <span className="text-sm font-semibold text-zinc-900">{name(step.personIds[0])}</span>
         </div>
       ) : null}
-      <p className="mt-2 text-xs font-medium text-zinc-700">{step.status}</p>
+      {step.role === "work" && step.sentAt && step.state === "done" ? null : <p className="mt-2 text-xs font-medium text-zinc-700">{step.status}</p>}
       {rows.length ? (
         <ul className="mt-2 space-y-1.5 border-t border-zinc-100 pt-2 text-[13px] text-zinc-600">
           {rows.map((r) => (
@@ -391,7 +393,7 @@ function Pill({
 
 function Fork({ join = false }: { join?: boolean }) {
   return (
-    <svg width="26" height="72" viewBox="0 0 26 72" aria-hidden className="shrink-0 text-zinc-400">
+    <svg width="26" height="72" viewBox="0 0 26 72" preserveAspectRatio="none" aria-hidden className="w-[26px] shrink-0 text-zinc-400 max-[420px]:w-[18px]">
       <path
         d={join ? "M0 16 C13 16 13 36 26 36 M0 56 C13 56 13 36 26 36" : "M0 36 C13 36 13 16 26 16 M0 36 C13 36 13 56 26 56"}
         stroke="currentColor"
@@ -425,7 +427,11 @@ function PlanPill({ step, profilesById }: { step: TrackStep; profilesById: Map<s
   const person = step.role === "work" && step.personIds[0] ? profilesById.get(step.personIds[0]) : undefined;
   return (
     <span data-plan-pill={step.role} className={`${PLAN_PILL} ${PLAN_TINT[step.role]} ${!person && step.role === "work" ? "pl-[11px]" : ""}`}>
-      {person ? <Avatar name={displayName(person)} src={person.avatar_url} profileId={person.id} /> : null}
+      {person ? (
+        <span className="inline-flex max-[420px]:hidden">
+          <Avatar name={displayName(person)} src={person.avatar_url} profileId={person.id} />
+        </span>
+      ) : null}
       <span>{step.label}</span>
     </span>
   );

@@ -73,7 +73,7 @@ alter table public.review_checks
   add column delivery_event_at timestamptz,
   add column copy_token_hash text,
   add constraint review_checks_closed_reason_check check (closed_reason is null or closed_reason in ('team_changes', 'withdrawn_with_round')),
-  add constraint review_checks_email_status_check check (email_status is null or email_status in ('sent', 'failed', 'mocked', 'suppressed')),
+  add constraint review_checks_email_status_check check (email_status is null or email_status in ('sending', 'sent', 'failed', 'mocked', 'suppressed')),
   add constraint review_checks_email_error_check check (email_error is null or char_length(email_error) <= 300),
   add constraint review_checks_provider_message_check check (provider_message_id is null or provider_message_id ~ '^[A-Za-z0-9_-]{1,100}$'),
   add constraint review_checks_delivery_status_check check (
@@ -84,8 +84,9 @@ comment on column public.review_checks.closed_reason is
   'Nov 24 batch 45: why an open round was closed by the approval beside it (parallel order): team_changes = the '
   'team asked for changes (the next round goes to both); withdrawn_with_round = the team round was withdrawn.';
 comment on column public.review_checks.email_status is
-  'Nov 24 batch 45: how the round''s email went when it was last sent (sent, failed, mocked = no email provider, '
-  'suppressed = the address bounced before). Written by record_review_email.';
+  'Nov 24 batch 45: how the round''s email went when it was last sent (sending = started and not reported back '
+  'yet, sent, failed, mocked = no email provider, suppressed = the address bounced before). Written by '
+  'record_review_email.';
 comment on column public.review_checks.copy_token_hash is
   'Nov 24 batch 45: sha256 of the round''s "Copy review link" link (the emailed link keeps working). Not readable '
   'by clients.';
@@ -366,8 +367,9 @@ select public.alhc_patch_function(
 
 -- 6. How the round's email went -------------------------------------------------------------------------
 
--- The app reports each send of a round's email (the first one and every "Send again"). Whoever sent the
--- round, or anyone who may send it now. Sent (with Resend's id) clears an earlier failure.
+-- The app reports each send of a round's email (the first one and every "Send again"): "sending" before it
+-- tries (so a send cut off midway is visible), then how it went. Whoever sent the round, or anyone who may
+-- send it now. Sent (with Resend's id) clears an earlier failure.
 create or replace function public.record_review_email(
   target_review uuid,
   outcome text,
@@ -389,7 +391,7 @@ begin
   if r.created_by is distinct from auth.uid() and public.review_check_send_problem(r.task_id) is not null then
     raise exception 'Only whoever may send this review can record its email' using errcode = 'insufficient_privilege';
   end if;
-  if outcome is null or outcome not in ('sent', 'failed', 'mocked', 'suppressed') then
+  if outcome is null or outcome not in ('sending', 'sent', 'failed', 'mocked', 'suppressed') then
     raise exception 'Unknown email outcome' using errcode = 'check_violation';
   end if;
   update public.review_checks x

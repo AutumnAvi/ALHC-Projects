@@ -17,7 +17,6 @@ import { setTaskCompleted, updateTask } from "@/lib/actions/tasks";
 import type { Profile } from "@alhc/core/api/people/model";
 import type { TaskDetail } from "@alhc/core/api/task-pane/model";
 import { taskPermissions } from "@alhc/core/permissions";
-import { ExternalReviewBadge } from "@/components/project/task-meta";
 import type { Tag } from "@alhc/core/tags";
 import type { TaskKind } from "@alhc/core/task-kinds";
 import { completeModeLabel, completeModeOf, EXTERNAL_PENDING_REASON } from "@alhc/core/approval-complete";
@@ -375,6 +374,7 @@ export function TaskDetailPanel({
             onCopyLink={copyLink}
             onDeleted={close}
             onApprovalSetup={() => setMakeApproval({})}
+            hasReviewBlock={Boolean(task.externalReview?.latest) || (task.kind === "approval" && Boolean(task.approval?.approverIds.length && task.externalReview?.reviewer))}
           />
           <CloseButton />
         </div>
@@ -408,7 +408,7 @@ export function TaskDetailPanel({
         }
         fields={
           <>
-          <dl className={`mt-3 ${PANE_FIELDS}`}>
+          <dl className={PANE_FIELDS}>
             <dt className={PANE_LABEL}>{assigneeLabel}</dt>
             <dd className="min-w-0">
               {canEdit ? (
@@ -643,7 +643,7 @@ function PaneBody({
 
   const taskTab = (
     <>
-      <dl className={PANE_FIELDS}>{fields}</dl>
+      {fields}
 
       <TaskFields task={task} profiles={profiles} canEdit={canEdit} />
 
@@ -692,7 +692,8 @@ function PaneBody({
   const card = (
     <>
       {head}
-      {track ? <ApprovalTrackCard track={track} profiles={profiles} onStep={goToStep} extras={extras} /> : null}
+      {/* The wide view's rail says it (on the left); the side pane's card has the pills. */}
+      {track && !threeColumns ? <ApprovalTrackCard track={track} profiles={profiles} onStep={goToStep} extras={extras} /> : null}
       {tabBar}
       <div id={`${tabIds}-panel`} role="tabpanel" aria-labelledby={`${tabIds}-${tab}`} data-card-panel={tab}>
         {tab === "task" ? taskTab : tab === "files" ? filesTab : <TaskReviewTab task={task} profiles={profiles} memberId={memberId} />}
@@ -834,13 +835,10 @@ function RequestBadges({ task }: { task: TaskDetail }) {
   const [pending, run] = useServerAction();
   // C46: only people who can edit the task number it (the database needs Editor).
   const canNumber = task.canAssignRequestNumber && !task.requestLabel && taskPermissions(task).canEdit;
-  // Nov 10 batch 36: the external review's state (green once approved) on any task that has one; an
-  // approval task shows it in its Approval row instead.
-  const external = task.kind !== "approval" ? (task.externalReview?.latest?.status ?? null) : null;
-  if (!task.requestLabel && !task.submission && !canNumber && !external) return null;
+  // Nov 24 batch 45: the outside review's state is the step track's and the amber block's (not a badge here).
+  if (!task.requestLabel && !task.submission && !canNumber) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-      {external ? <ExternalReviewBadge status={external} /> : null}
       {canNumber ? (
         <button
           type="button"

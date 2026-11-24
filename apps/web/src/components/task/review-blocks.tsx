@@ -7,7 +7,7 @@
 // parallel order a note says Done needs both. Each indicator appears once here; the step track at the top
 // of the card jumps to these blocks.
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Check, Copy, Eye, Info, Lock, Mail, PanelsTopLeft, RotateCcw, Send, TriangleAlert, Bell, ArrowRight } from "lucide-react";
 import type { ApprovalTrack, TrackStep } from "@alhc/core/approval-track";
 import { currentRoles } from "@alhc/core/approval-track";
@@ -21,6 +21,16 @@ import { formatDueDate } from "@/lib/dates";
 import { ApprovalTaskBanner } from "./task-approval-banner";
 import { SendReviewDialog } from "./send-review-dialog";
 import { LocalDateTime, OutsideAvatar, RoleTag } from "./approval-track";
+
+// A clock that ticks every 30 seconds (null while rendering on the server), for "not confirmed" below.
+function subscribeClock(callback: () => void) {
+  const timer = window.setInterval(callback, 30_000);
+  return () => window.clearInterval(timer);
+}
+const clockNow = () => Math.floor(Date.now() / 30_000) * 30_000;
+
+// A send that started but never reported back within two minutes (the function was stopped midway).
+const SENDING_STALE_MS = 2 * 60_000;
 
 export function outsideBlockId(taskId: string) {
   return `outside-review-${taskId}`;
@@ -135,7 +145,7 @@ function OutsideReviewerBlock({
   const [pending, run] = useServerAction();
   const [sending, setSending] = useState(false);
   // The send state the person just caused (until the pane's data catches up).
-  const [justSent, setJustSent] = useState<{ status: "sent" | "failed" | "mocked" | "suppressed"; reason?: string } | null>(null);
+  const [justSent, setJustSent] = useState<{ status: "sending" | "sent" | "failed" | "mocked" | "suppressed"; reason?: string } | null>(null);
   const reviewer = step.outside!;
   const name = reviewer.name?.trim() || reviewer.email;
   const first = reviewer.name?.trim().split(/\s+/)[0] ?? reviewer.email.split("@")[0];
@@ -144,8 +154,13 @@ function OutsideReviewerBlock({
   const round = step.sentAt && latest && latest.createdAt === step.sentAt ? latest : null;
   const open = round?.status === "pending";
   const gate = reviewSendGate(task, memberId);
-  const emailStatus = justSent?.status ?? round?.emailStatus ?? null;
-  const emailFailed = open && emailStatus === "failed";
+  const now = useSyncExternalStore(subscribeClock, clockNow, () => null);
+  const recorded = justSent?.status ?? round?.emailStatus ?? null;
+  // "sending" for more than two minutes: it never reported back, so it may not have gone out.
+  const unconfirmed =
+    recorded === "sending" && now !== null && Boolean(round?.emailAttemptedAt) && now - Date.parse(round!.emailAttemptedAt!) > SENDING_STALE_MS;
+  const emailStatus = recorded;
+  const emailFailed = open && (emailStatus === "failed" || unconfirmed);
   const badge = outsideBadge(step, Boolean(emailFailed));
   const due = step.dueOn;
 
@@ -249,6 +264,8 @@ function OutsideReviewerBlock({
             )
           ) : emailStatus === "failed" ? (
             <>The email didn’t go out{(justSent?.reason ?? round.emailError) ? `: ${justSent?.reason ?? round.emailError}` : ""}.</>
+          ) : emailStatus === "sending" ? (
+            unconfirmed ? <>The email wasn’t confirmed: sending stopped partway. Retry to be sure {first} gets it.</> : <>Sending the email…</>
           ) : emailStatus === "mocked" ? (
             <>No email provider is set up here, so no email went out. Copy the review link and send it yourself.</>
           ) : (

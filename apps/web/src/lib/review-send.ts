@@ -45,7 +45,12 @@ function withCap<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([work.catch(() => fallback), cap]).finally(() => clearTimeout(timer));
 }
 
-async function record(ctx: ApiContext, review: ReviewRoundLink, delivery: ReviewDelivery, providerId: string | null = null) {
+async function record(
+  ctx: ApiContext,
+  review: ReviewRoundLink,
+  delivery: { emailStatus?: ReviewDelivery["emailStatus"] | "sending"; reason?: string },
+  providerId: string | null = null,
+) {
   try {
     await reviewsApi.recordReviewEmail(ctx, {
       reviewId: review.reviewId,
@@ -71,6 +76,8 @@ export async function deliverReviewRound(ctx: ApiContext, review: ReviewRoundLin
   }
   let delivery: ReviewDelivery;
   let providerId: string | null = null;
+  // "sending" first: if this function is stopped midway, the card says the email isn't confirmed (Retry).
+  await record(ctx, review, { ...base, emailStatus: "sending" });
   try {
     const assets: RoundAsset[] = await reviewsQueries.roundAssets(ctx, review.reviewId).catch(() => []);
     // Thumbnails of the images and PDFs (first page), drawn as this same person by the one route that ships

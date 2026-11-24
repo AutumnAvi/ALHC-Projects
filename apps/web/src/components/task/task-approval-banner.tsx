@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Eye,
   History,
   MessageSquareText,
   PanelsTopLeft,
@@ -405,7 +404,11 @@ function ApprovalPanel({
         return;
       }
       if (action === "decide") {
-        if (canDecide && reviewsFiles) setReviewExpanded(true);
+        // Batch 45: a round with files is reviewed file by file in the card's Review tab.
+        if (canDecide && reviewsFiles) {
+          if (onOpenReviewTab) onOpenReviewTab();
+          else setReviewExpanded(true);
+        }
         else if (canDecide) setDecision((current) => ({ choice: "approved", nonce: (current?.nonce ?? 0) + 1 }));
         else notify(decideRefusal);
         return;
@@ -523,9 +526,15 @@ function ApprovalPanel({
     action = (
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Your decision">
         {reviewsFiles ? (
-          <button type="button" disabled={pending} onClick={() => setReviewExpanded(true)} className={`btn-primary ${small}`} data-approval-open-review="">
-            <Eye className="size-3.5" aria-hidden />
-            Open review
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => (onOpenReviewTab ? onOpenReviewTab() : setReviewExpanded(true))}
+            className={`btn-primary bg-green-600 hover:bg-green-700 ${small}`}
+            data-approval-open-review=""
+          >
+            <ThumbsUp className="size-3.5" aria-hidden />
+            Review &amp; approve
           </button>
         ) : (
           <>
@@ -769,7 +778,7 @@ function ApprovalPanel({
       ) : null}
 
       {/* The approver's compact review of the round's files, right here (Expand / Open review: full screen). */}
-      {reviewsFiles && myRequest && latest && !decision ? (
+      {reviewsFiles && myRequest && latest && !decision && !onOpenReviewTab ? (
         <ApproverReview
           taskId={task.id}
           requestId={myRequest.id}
