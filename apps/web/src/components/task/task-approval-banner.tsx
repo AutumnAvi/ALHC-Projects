@@ -385,13 +385,13 @@ function ApprovalPanel({
   const approverNames = approvers.map((a) => nameOf(a.id));
   // Nov 24 batch 45: the outside reviewer has their own (amber) block; this one is the team's.
   const externalReviewer = task.approval?.approverIds.length ? (task.externalReview?.reviewer ?? null) : null;
-  // Reviewed at the same time: while the outside review sent with this (approved) round is still open, a new
-  // round would replace the one the outside reviewer is on, so there's nothing to send again yet.
+  // While the outside review of this (approved) round is still open, a new team round would leave the outside
+  // reviewer on an old one (and, in order, lock its link's Copy / Remind / Retry until the team approves
+  // again), so there's nothing to send again until they answer (or the review is withdrawn).
   const outsideStillReviewing =
     status === "approved" &&
-    reviewsInParallel(task) &&
     task.externalReview?.latest?.status === "pending" &&
-    outsideBelongsToRound(task.externalReview.latest, latest, "parallel");
+    outsideBelongsToRound(task.externalReview.latest, latest, reviewsInParallel(task) ? "parallel" : "sequential");
   const canSend =
     canAct &&
     !completed &&

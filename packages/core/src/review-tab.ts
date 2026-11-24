@@ -133,7 +133,7 @@ export function fileCommentBody(fileName: string, text: string): string {
 
 // The comments on one file: every team approver's note on it (each decided round, oldest first), the
 // outside reviewer's pins on it (each round, oldest first), and the task comments posted for it from the
-// Review tab ("<file name>: …", oldest first).
+// Review tab ("<file name>: …", oldest first) — of the comments the pane has loaded (its newest page).
 export function fileComments(
   file: { attachmentId: string; name: string },
   teamRounds: readonly Pick<ApprovalRound, "number" | "attachmentIds" | "requests">[],

@@ -170,10 +170,14 @@ begin
   if plan_order is null or plan_order not in ('sequential', 'parallel') then
     raise exception 'Unknown review order' using errcode = 'check_violation';
   end if;
-  insert into public.task_review_settings (task_id, review_order, reviewer_due_on)
-  values (target_task, plan_order, plan_due_on)
-  on conflict (task_id) do update
-    set review_order = excluded.review_order, reviewer_due_on = excluded.reviewer_due_on;
+  -- Update first: an insert's BEFORE INSERT guard would see the order as new even when the row exists.
+  update public.task_review_settings s
+  set review_order = plan_order, reviewer_due_on = plan_due_on
+  where s.task_id = target_task;
+  if not found then
+    insert into public.task_review_settings (task_id, review_order, reviewer_due_on)
+    values (target_task, plan_order, plan_due_on);
+  end if;
 end;
 $$;
 
@@ -328,10 +332,14 @@ begin$new$,
   -- Nov 24 batch 45: the last stage approved (sequential: the outside reviewer after the team; parallel:
   -- whichever answered last): run the task's "When it's approved" step.
   if decision = 'approved' and public.approval_two_stage(r.task_id) then
+    -- The round row is the lock both stages share (settle_approval_round locks it too): a team approval
+    -- deciding at the same moment either finished first (seen here, re-read after the wait) or waits and
+    -- then sees this approval, so "When it's approved" runs exactly once.
     select * into last_round from public.approval_rounds ar
     where ar.task_id = r.task_id
     order by ar.round_number desc
-    limit 1;
+    limit 1
+    for update;
     if found and last_round.status = 'approved' and public.approval_external_done(last_round.id) then
       perform public.finish_approved_round(last_round.id);
     end if;

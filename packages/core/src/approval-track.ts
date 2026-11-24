@@ -256,12 +256,15 @@ export function approvalTrack(task: TrackTask, { nameOf }: TrackOptions): Approv
     } else if (order === "sequential") {
       outside = step("outside", `Outside: ${name}`, "current", `Ready to send to ${name}`, { outside: reviewer, dueOn });
     } else {
-      const sentRound = latest && latest.status !== "withdrawn";
+      // Parallel: normally it goes out with the team round. If it didn't (skipped at send time), it can be
+      // sent while that round is open, and still once the team approved it (then the outside approval is
+      // the last stage).
+      const sendable = latest?.status === "pending" || latest?.status === "approved";
       outside = step(
         "outside",
         `Outside: ${name}`,
-        sentRound && latest?.status === "pending" ? "current" : "waiting",
-        sentRound && latest?.status === "pending" ? "Not sent yet" : "Goes out with the team round",
+        sendable ? "current" : "waiting",
+        sendable ? "Not sent yet" : "Goes out with the team round",
         { outside: reviewer, dueOn },
       );
     }

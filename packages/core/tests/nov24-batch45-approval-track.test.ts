@@ -133,12 +133,12 @@ test("parallel: team and outside side by side; Done needs both in the same round
   // Both approved the same round: Done.
   const bothYes = task({ approval: info([round(1, "approved", { sentAt: "2026-12-09T10:00:00Z", decidedAt: "2026-12-10T08:00:00Z" })], ["is"]), externalReview: review("parallel", check("approved", "2026-12-09T10:00:05Z")) });
   assert.equal(states(bothYes), "work:done team:done outside:done done:done");
-  // A previous round's outside approval doesn't count for round 2.
+  // A previous round's outside approval doesn't count for round 2 (its outside review is still to send).
   const stale = task({
     approval: info([round(2, "approved", { sentAt: "2026-12-12T10:00:00Z", decidedAt: "2026-12-12T12:00:00Z" }), round(1, "changes_requested")], ["is"]),
     externalReview: review("parallel", check("approved", "2026-12-09T10:00:05Z")),
   });
-  assert.equal(states(stale), "work:done team:done outside:waiting done:waiting");
+  assert.equal(states(stale), "work:done team:done outside:current done:waiting");
 });
 
 test("parallel: changes from either side send it back for round 2 to both", () => {
@@ -194,6 +194,20 @@ test("the parallel order lets Editors and approvers send the outside review any 
   assert.equal(reviewSendGate({ ...t, viewerRole: "commenter" }, "al").allowed, true, "an approver who is a Commenter");
   assert.equal(reviewSendGate({ ...t, viewerRole: "commenter" }, "ed").allowed, false);
   assert.equal(reviewSendGate({ ...t, externalReview: { plan: { order: "sequential", dueOn: null } } }, "ed").allowed, false, "sequential unchanged");
+  // Review round 1: the assignee who sends the team round (a Commenter) sends the outside review with it.
+  assert.equal(reviewSendGate({ ...t, viewerRole: "commenter", assigneeId: "cy" }, "cy").allowed, true, "the assignee, a Commenter");
+  assert.equal(reviewSendGate({ ...t, viewerRole: "viewer", assigneeId: "cy" }, "cy").allowed, false, "not below Commenter");
+});
+
+test("parallel: an outside review skipped at send time can still go out once the team approved (review round 2)", () => {
+  const approved = task({
+    approval: info([round(1, "approved", { sentAt: "2026-12-09T10:00:00Z", decidedAt: "2026-12-10T08:00:00Z" })], ["is"]),
+    externalReview: review("parallel", null),
+  });
+  assert.equal(states(approved), "work:done team:done outside:current done:waiting");
+  assert.equal(approvalTrack(approved, { nameOf })!.steps.find((s) => s.role === "outside")!.status, "Not sent yet");
+  // Before the round is sent, it waits for the round.
+  assert.match(states(task({ approval: info([], ["is"]), externalReview: review("parallel", null) })), /outside:waiting/);
 });
 
 test("the setup's plain-English summary", () => {
