@@ -497,6 +497,15 @@ begin
   result := public.create_review_check((select id from b45_ids where name = 'par4'),
     array[(select id from b45_ids where name = 'par4_file')], 'client@example.org', 'Sarah K.', null);
   insert into b45_tokens values ('par4', result ->> 'token');
+  -- Round 2 fix: the due date changes through the app's call while the round is open (same order).
+  perform public.set_task_review_plan((select id from b45_ids where name = 'par4'), 'parallel', current_date + 9);
+  assert (select due_on from public.review_checks where id = (result ->> 'id')::uuid) = current_date + 9,
+    'the open round follows a due date changed through set_task_review_plan';
+  begin
+    perform public.set_task_review_plan((select id from b45_ids where name = 'par4'), 'sequential', current_date + 9);
+    raise exception 'the order still can''t change under an open round';
+  exception when check_violation then null;
+  end;
 end $$;
 select set_config('request.jwt.claim.sub', 'a3100450-0000-4000-8000-000000000003', false) is not null as ok \gset
 do $$

@@ -374,13 +374,13 @@ export function TaskDetailPanel({
             onCopyLink={copyLink}
             onDeleted={close}
             onApprovalSetup={() => setMakeApproval({})}
-            // The amber block (with its own Send) shows exactly when the card has a track.
-            hasReviewBlock={
+            // The amber block (with its own Send) shows exactly when the card's track has an outside step.
+            hasReviewBlock={Boolean(
               approvalTrack(
                 { kind: task.kind, completedAt: task.completedAt, assigneeId: task.assigneeId, approval: task.approval, externalReview: task.externalReview },
                 { nameOf: () => "" },
-              ) !== null
-            }
+              )?.steps.some((s) => s.role === "outside"),
+            )}
           />
           <CloseButton />
         </div>
