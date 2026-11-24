@@ -251,6 +251,47 @@ select public.alhc_patch_function(
   if public.review_check_after_approval(target_task) then$new$
 );
 
+-- One lock per task for the decisions that touch both the team round and the outside review — the team's
+-- decision (decide_approval), withdrawing the round, and the outside reviewer's answer — taken before any row
+-- lock, so two of them at the same moment run one after the other (each sees the other's result) instead of
+-- deadlocking on the round and review rows they each update.
+create or replace function public.approval_task_lock(target_task uuid)
+returns void
+language sql
+volatile
+set search_path = ''
+as $$
+  select pg_advisory_xact_lock(hashtextextended('alhc.approval:' || target_task::text, 0));
+$$;
+
+revoke all on function public.approval_task_lock(uuid) from public, anon, authenticated;
+
+select public.alhc_patch_function(
+  'public.decide_approval(uuid,text,text)'::regprocedure,
+  $old$  select * into a from public.approval_requests where id = target_approval and deleted_at is null for update;$old$,
+  $new$  -- Nov 24 batch 45: the task's approval lock before any row lock (approval_task_lock).
+  perform public.approval_task_lock((select q.task_id from public.approval_requests q where q.id = target_approval));
+  select * into a from public.approval_requests where id = target_approval and deleted_at is null for update;$new$
+);
+
+select public.alhc_patch_function(
+  'public.withdraw_approval(uuid)'::regprocedure,
+  $old$  select * into r from public.approval_rounds where task_id = target_task and status = 'pending' for update;$old$,
+  $new$  -- Nov 24 batch 45: the task's approval lock before any row lock (approval_task_lock).
+  perform public.approval_task_lock(target_task);
+  select * into r from public.approval_rounds where task_id = target_task and status = 'pending' for update;$new$
+);
+
+select public.alhc_patch_function(
+  'public.review_check_decide(text,text,text,jsonb)'::regprocedure,
+  $old$  if r.id is not null then
+    perform 1 from public.review_checks x where x.id = r.id for update;$old$,
+  $new$  if r.id is not null then
+    -- Nov 24 batch 45: the task's approval lock before any row lock (approval_task_lock).
+    perform public.approval_task_lock(r.task_id);
+    perform 1 from public.review_checks x where x.id = r.id for update;$new$
+);
+
 -- 4. Done needs both: the outside approval that belongs to a team round --------------------------------
 
 -- True when the task's latest review check is approved and belongs to this team round: sent after the
