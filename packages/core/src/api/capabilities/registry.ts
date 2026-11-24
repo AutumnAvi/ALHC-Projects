@@ -74,6 +74,8 @@ export const TYPED_API_EXCLUSIONS: Record<string, string> = {
   "dependencies/mutations.ts:setDependencyShiftMode": "A project setting about future date changes; left out this round.",
   "fields/mutations.ts:addLibraryField": "Adding a shared library field links data across projects; left out this round.",
   "forms/mutations.ts:submitForm": "Submitting a form is the public’s act (anonymous), not a workspace change.",
+  "forms/mutations.ts:cleanQuestions": "Not a write: the save layer's check of a form's questions (updateForm runs it); exported for its tests.",
+  "forms/mutations.ts:duplicateForm": "Batch 43's Duplicate form (a copy that starts off); left out this round.",
   "goals/mutations.ts:linkGoal": "Goal links; left out this round.",
   "goals/mutations.ts:unlinkGoal": "Goal links; left out this round.",
   "goals/mutations.ts:deleteGoalStatusUpdate": "Status history; left out.",

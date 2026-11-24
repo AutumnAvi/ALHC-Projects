@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, FileInput, Plus } from "lucide-react";
+import { CopyPlus, ExternalLink, FileInput, Plus } from "lucide-react";
 import { FormStatusBadge } from "@/components/forms/form-status";
 import { useProjectPermissions } from "@/components/project/project-access";
 import { Timestamp } from "@/components/timestamp";
 import { useServerAction } from "@/components/toast";
-import { createForm } from "@/lib/actions/forms";
+import { createForm, duplicateForm } from "@/lib/actions/forms";
 import type { FormSummary } from "@alhc/core/api/forms/model";
 import { EmptyState } from "@/components/ui";
 
@@ -82,6 +82,19 @@ export function FormsList({
                 </p>
               </div>
               <FormStatusBadge live={form.acceptingResponses} />
+              {canEdit ? (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => run(() => duplicateForm(form.id, projectId))}
+                  aria-label={`Duplicate ${form.title}`}
+                  data-tooltip="Duplicate (the copy starts off)"
+                  className="btn-ghost h-7 text-xs"
+                >
+                  <CopyPlus className="size-3.5" aria-hidden />
+                  Duplicate
+                </button>
+              ) : null}
               <a
                 href={`${origin}/forms/${form.id}`}
                 target="_blank"

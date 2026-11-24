@@ -4,6 +4,7 @@ import { type ApiContext, read } from "../core/context";
 import { maybe, rows } from "../core/db";
 import type { FormSummary } from "./model";
 import { type FormDef, parseQuestions, type PublicForm } from "../../forms";
+import { withoutPathMetadata } from "../../form-paths";
 import { toFormDef } from "../../row-mappers";
 
 export const listProjectForms = read(async (ctx: ApiContext, projectId: string): Promise<FormSummary[]> => {
@@ -58,7 +59,8 @@ export const getPublicForm = read(async (ctx: ApiContext, formId: string): Promi
     title: String(data.title),
     description: typeof data.description === "string" ? data.description : null,
     acceptingResponses: data.accepting_responses === true,
-    questions: parseQuestions(data.questions ?? []),
+    // Batch 43: the browser gets the rules the form walks, not the builder's path names.
+    questions: withoutPathMetadata(parseQuestions(data.questions ?? [])),
     viewerEmail: typeof data.viewer_email === "string" ? data.viewer_email : null,
     verifiedDomains:
       data.verified_domains_only === true && Array.isArray(data.verified_domains)
